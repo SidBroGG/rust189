@@ -10,6 +10,9 @@
 # Runtime downloaded assets (downloaded on first run)
 /assets/
 
+# Reference source files
+/ref/
+
 # Local client runtime data & user configs
 /config.toml
 /servers.dat
