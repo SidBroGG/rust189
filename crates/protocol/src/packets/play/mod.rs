@@ -1,0 +1,382 @@
+pub mod clientbound;
+pub mod serverbound;
+
+pub use clientbound::*;
+pub use serverbound::*;
+
+use crate::error::ProtocolError;
+use bytes::Bytes;
+
+/// High-level enum representing recognized clientbound Play packets.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClientboundPlayPacket {
+    KeepAlive(ClientboundKeepAlivePacket),
+    JoinGame(ClientboundJoinGamePacket),
+    Chat(ClientboundChatPacket),
+    TimeUpdate(ClientboundTimeUpdatePacket),
+    Respawn(ClientboundRespawnPacket),
+    PlayerPosLook(ClientboundPlayerPosLookPacket),
+    ChunkData(ClientboundChunkDataPacket),
+    MultiBlockChange(ClientboundMultiBlockChangePacket),
+    BlockChange(ClientboundBlockChangePacket),
+    MapChunkBulk(ClientboundMapChunkBulkPacket),
+    PlayerListItem(ClientboundPlayerListItemPacket),
+    ScoreboardObjective(ClientboundScoreboardObjectivePacket),
+    UpdateScore(ClientboundUpdateScorePacket),
+    DisplayScoreboard(ClientboundDisplayScoreboardPacket),
+    Teams(ClientboundTeamsPacket),
+    Disconnect(ClientboundDisconnectPlayPacket),
+    SpawnPlayer(ClientboundSpawnPlayerPacket),
+    SpawnMob(ClientboundSpawnMobPacket),
+    SpawnObject(ClientboundSpawnObjectPacket),
+    DestroyEntities(ClientboundDestroyEntitiesPacket),
+    Entity(ClientboundEntityPacket),
+    EntityRelMove(ClientboundEntityRelMovePacket),
+    EntityLook(ClientboundEntityLookPacket),
+    EntityLookMove(ClientboundEntityLookMovePacket),
+    EntityTeleport(ClientboundEntityTeleportPacket),
+    EntityHeadLook(ClientboundEntityHeadLookPacket),
+    Animation(ClientboundAnimationPacket),
+    EntityVelocity(ClientboundEntityVelocityPacket),
+    EntityEquipment(ClientboundEntityEquipmentPacket),
+    EntityMetadata(ClientboundEntityMetadataPacket),
+    Unknown { id: i32, payload_len: usize },
+}
+
+impl ClientboundPlayPacket {
+    /// Attempts to parse a raw packet by its packet ID.
+    pub fn decode(id: i32, payload: &mut Bytes) -> Result<Self, ProtocolError> {
+        match id {
+            ClientboundKeepAlivePacket::PACKET_ID => {
+                Ok(Self::KeepAlive(ClientboundKeepAlivePacket::decode(payload)?))
+            }
+            ClientboundJoinGamePacket::PACKET_ID => {
+                Ok(Self::JoinGame(ClientboundJoinGamePacket::decode(payload)?))
+            }
+            ClientboundChatPacket::PACKET_ID => {
+                Ok(Self::Chat(ClientboundChatPacket::decode(payload)?))
+            }
+            ClientboundTimeUpdatePacket::PACKET_ID => {
+                Ok(Self::TimeUpdate(ClientboundTimeUpdatePacket::decode(payload)?))
+            }
+            ClientboundRespawnPacket::PACKET_ID => {
+                Ok(Self::Respawn(ClientboundRespawnPacket::decode(payload)?))
+            }
+            ClientboundPlayerPosLookPacket::PACKET_ID => {
+                Ok(Self::PlayerPosLook(ClientboundPlayerPosLookPacket::decode(payload)?))
+            }
+            ClientboundChunkDataPacket::PACKET_ID => {
+                Ok(Self::ChunkData(ClientboundChunkDataPacket::decode(payload)?))
+            }
+            ClientboundMultiBlockChangePacket::PACKET_ID => {
+                Ok(Self::MultiBlockChange(ClientboundMultiBlockChangePacket::decode(payload)?))
+            }
+            ClientboundBlockChangePacket::PACKET_ID => {
+                Ok(Self::BlockChange(ClientboundBlockChangePacket::decode(payload)?))
+            }
+            ClientboundMapChunkBulkPacket::PACKET_ID => {
+                Ok(Self::MapChunkBulk(ClientboundMapChunkBulkPacket::decode(payload)?))
+            }
+            ClientboundPlayerListItemPacket::PACKET_ID => {
+                Ok(Self::PlayerListItem(ClientboundPlayerListItemPacket::decode(payload)?))
+            }
+            ClientboundScoreboardObjectivePacket::PACKET_ID => {
+                Ok(Self::ScoreboardObjective(ClientboundScoreboardObjectivePacket::decode(payload)?))
+            }
+            ClientboundUpdateScorePacket::PACKET_ID => {
+                Ok(Self::UpdateScore(ClientboundUpdateScorePacket::decode(payload)?))
+            }
+            ClientboundDisplayScoreboardPacket::PACKET_ID => {
+                Ok(Self::DisplayScoreboard(ClientboundDisplayScoreboardPacket::decode(payload)?))
+            }
+            ClientboundTeamsPacket::PACKET_ID => {
+                Ok(Self::Teams(ClientboundTeamsPacket::decode(payload)?))
+            }
+            ClientboundDisconnectPlayPacket::PACKET_ID => {
+                Ok(Self::Disconnect(ClientboundDisconnectPlayPacket::decode(payload)?))
+            }
+            ClientboundSpawnPlayerPacket::PACKET_ID => {
+                Ok(Self::SpawnPlayer(ClientboundSpawnPlayerPacket::decode(payload)?))
+            }
+            ClientboundSpawnMobPacket::PACKET_ID => {
+                Ok(Self::SpawnMob(ClientboundSpawnMobPacket::decode(payload)?))
+            }
+            ClientboundSpawnObjectPacket::PACKET_ID => {
+                Ok(Self::SpawnObject(ClientboundSpawnObjectPacket::decode(payload)?))
+            }
+            ClientboundDestroyEntitiesPacket::PACKET_ID => {
+                Ok(Self::DestroyEntities(ClientboundDestroyEntitiesPacket::decode(payload)?))
+            }
+            ClientboundEntityPacket::PACKET_ID => {
+                Ok(Self::Entity(ClientboundEntityPacket::decode(payload)?))
+            }
+            ClientboundEntityRelMovePacket::PACKET_ID => {
+                Ok(Self::EntityRelMove(ClientboundEntityRelMovePacket::decode(payload)?))
+            }
+            ClientboundEntityLookPacket::PACKET_ID => {
+                Ok(Self::EntityLook(ClientboundEntityLookPacket::decode(payload)?))
+            }
+            ClientboundEntityLookMovePacket::PACKET_ID => {
+                Ok(Self::EntityLookMove(ClientboundEntityLookMovePacket::decode(payload)?))
+            }
+            ClientboundEntityTeleportPacket::PACKET_ID => {
+                Ok(Self::EntityTeleport(ClientboundEntityTeleportPacket::decode(payload)?))
+            }
+            ClientboundEntityHeadLookPacket::PACKET_ID => {
+                Ok(Self::EntityHeadLook(ClientboundEntityHeadLookPacket::decode(payload)?))
+            }
+            ClientboundAnimationPacket::PACKET_ID => {
+                Ok(Self::Animation(ClientboundAnimationPacket::decode(payload)?))
+            }
+            ClientboundEntityVelocityPacket::PACKET_ID => {
+                Ok(Self::EntityVelocity(ClientboundEntityVelocityPacket::decode(payload)?))
+            }
+            ClientboundEntityEquipmentPacket::PACKET_ID => {
+                Ok(Self::EntityEquipment(ClientboundEntityEquipmentPacket::decode(payload)?))
+            }
+            ClientboundEntityMetadataPacket::PACKET_ID => {
+                Ok(Self::EntityMetadata(ClientboundEntityMetadataPacket::decode(payload)?))
+            }
+            other => Ok(Self::Unknown {
+                id: other,
+                payload_len: payload.len(),
+            }),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::BytesMut;
+
+    #[test]
+    fn test_keep_alive_roundtrip() {
+        let pkt = ClientboundKeepAlivePacket { keep_alive_id: 123456 };
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundKeepAlivePacket::decode(&mut bytes).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_join_game_roundtrip() {
+        let pkt = ClientboundJoinGamePacket {
+            entity_id: 42,
+            game_mode: 0,
+            dimension: 0,
+            difficulty: 2,
+            max_players: 100,
+            level_type: "default".into(),
+            reduced_debug_info: false,
+        };
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundJoinGamePacket::decode(&mut bytes).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_chat_packet_roundtrip() {
+        let pkt = ClientboundChatPacket {
+            message: "{\"text\":\"Hello Server!\"}".into(),
+            position: 0,
+        };
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundChatPacket::decode(&mut bytes).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_player_pos_look_roundtrip() {
+        let pkt = ClientboundPlayerPosLookPacket {
+            x: 100.5,
+            y: 64.0,
+            z: -250.75,
+            yaw: 90.0,
+            pitch: -15.5,
+            flags: 0,
+        };
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundPlayerPosLookPacket::decode(&mut bytes).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_scoreboard_packets_roundtrip() {
+        let obj = ClientboundScoreboardObjectivePacket {
+            name: "test_obj".into(),
+            action: 0,
+            display_text: Some("§6Rankings".into()),
+            objective_type: Some("integer".into()),
+        };
+        let mut buf = BytesMut::new();
+        obj.encode(&mut buf).unwrap();
+
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundScoreboardObjectivePacket::decode(&mut bytes).unwrap();
+        assert_eq!(obj, decoded);
+
+        let score = ClientboundUpdateScorePacket {
+            score_holder: "Alex".into(),
+            action: 0,
+            objective_name: "test_obj".into(),
+            value: Some(1500),
+        };
+        let mut buf2 = BytesMut::new();
+        score.encode(&mut buf2).unwrap();
+
+        let mut bytes2 = buf2.freeze();
+        let decoded2 = ClientboundUpdateScorePacket::decode(&mut bytes2).unwrap();
+        assert_eq!(score, decoded2);
+    }
+
+    #[test]
+    fn test_entity_packets_roundtrip() {
+        use uuid::Uuid;
+
+        // 1. Spawn player
+        let spawn_player = ClientboundSpawnPlayerPacket {
+            entity_id: 101,
+            player_id: Uuid::from_u128(0x1234567890abcdef1234567890abcdef),
+            x: 3200,
+            y: 2048,
+            z: -1600,
+            yaw: 45,
+            pitch: -10,
+            current_item: 276, // Diamond sword
+            metadata: vec![],
+        };
+        let mut buf = BytesMut::new();
+        spawn_player.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundSpawnPlayerPacket::decode(&mut bytes).unwrap();
+        assert_eq!(spawn_player, decoded);
+
+        // 2. Spawn mob
+        let spawn_mob = ClientboundSpawnMobPacket {
+            entity_id: 102,
+            mob_type: 54, // Zombie
+            x: 100,
+            y: 200,
+            z: 300,
+            yaw: 10,
+            pitch: 20,
+            head_pitch: 15,
+            velocity_x: 50,
+            velocity_y: 60,
+            velocity_z: 70,
+            metadata: vec![],
+        };
+        let mut buf = BytesMut::new();
+        spawn_mob.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundSpawnMobPacket::decode(&mut bytes).unwrap();
+        assert_eq!(spawn_mob, decoded);
+
+        // 3. Spawn object
+        let spawn_obj = ClientboundSpawnObjectPacket {
+            entity_id: 103,
+            object_type: 60, // Arrow
+            x: 10,
+            y: 20,
+            z: 30,
+            pitch: 5,
+            yaw: -5,
+            data: 1,
+            velocity_x: 100,
+            velocity_y: 200,
+            velocity_z: 300,
+        };
+        let mut buf = BytesMut::new();
+        spawn_obj.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundSpawnObjectPacket::decode(&mut bytes).unwrap();
+        assert_eq!(spawn_obj, decoded);
+
+        // 4. Destroy entities
+        let destroy = ClientboundDestroyEntitiesPacket {
+            entity_ids: vec![101, 102, 103],
+        };
+        let mut buf = BytesMut::new();
+        destroy.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundDestroyEntitiesPacket::decode(&mut bytes).unwrap();
+        assert_eq!(destroy, decoded);
+
+        // 5. Rel move and look
+        let rel_move = ClientboundEntityRelMovePacket {
+            entity_id: 101,
+            delta_x: 4,
+            delta_y: -2,
+            delta_z: 8,
+            on_ground: true,
+        };
+        let mut buf = BytesMut::new();
+        rel_move.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundEntityRelMovePacket::decode(&mut bytes).unwrap();
+        assert_eq!(rel_move, decoded);
+
+        let look_move = ClientboundEntityLookMovePacket {
+            entity_id: 101,
+            delta_x: 2,
+            delta_y: 3,
+            delta_z: -1,
+            yaw: 64,
+            pitch: -32,
+            on_ground: false,
+        };
+        let mut buf = BytesMut::new();
+        look_move.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundEntityLookMovePacket::decode(&mut bytes).unwrap();
+        assert_eq!(look_move, decoded);
+
+        // 6. Teleport
+        let tp = ClientboundEntityTeleportPacket {
+            entity_id: 101,
+            x: 6400,
+            y: 3200,
+            z: -3200,
+            yaw: 120,
+            pitch: 0,
+            on_ground: true,
+        };
+        let mut buf = BytesMut::new();
+        tp.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundEntityTeleportPacket::decode(&mut bytes).unwrap();
+        assert_eq!(tp, decoded);
+    }
+
+    #[test]
+    fn test_teams_packet_roundtrip() {
+        let pkt = ClientboundTeamsPacket {
+            team_name: "red_team".into(),
+            action: 0,
+            display_name: Some("Red Team".into()),
+            prefix: Some("§c[RED] ".into()),
+            suffix: Some("§r".into()),
+            friendly_flags: Some(1),
+            name_tag_visibility: Some("always".into()),
+            color: Some(12),
+            players: vec!["Alice".into(), "Bob".into()],
+        };
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundTeamsPacket::decode(&mut bytes).unwrap();
+        assert_eq!(pkt, decoded);
+    }
+}

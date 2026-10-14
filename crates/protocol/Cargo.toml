@@ -1,0 +1,23 @@
+[package]
+name = "protocol"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["io-util", "net", "sync"] }
+bytes.workspace = true
+byteorder.workspace = true
+flate2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+aes.workspace = true
+cfb-mode.workspace = true
+sha1.workspace = true
+md-5.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+bitvec.workspace = true
+
+[dev-dependencies]
+world.workspace = true

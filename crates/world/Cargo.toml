@@ -1,0 +1,16 @@
+[package]
+name = "world"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+protocol.workspace = true
+glam.workspace = true
+hashbrown.workspace = true
+bitvec.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+

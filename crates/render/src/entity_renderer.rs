@@ -1,0 +1,1299 @@
+use crate::camera::Camera;
+use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Quat, Vec3};
+use hashbrown::HashMap;
+use image::RgbaImage;
+use std::f32::consts::PI;
+use uuid::Uuid;
+use world::entity::{EntityKind, EntityTracker, TrackedEntity};
+
+/// Represents a single vertex in entity 3D meshes.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Pod, Zeroable)]
+pub struct EntityVertex {
+    pub position: [f32; 3],
+    pub uv: [f32; 2],
+    pub normal: [f32; 3],
+    pub color: [f32; 4],
+}
+
+impl EntityVertex {
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+        const ATTRIBUTES: [wgpu::VertexAttribute; 4] = [
+            wgpu::VertexAttribute {
+                offset: 0,
+                shader_location: 0,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: 12,
+                shader_location: 1,
+                format: wgpu::VertexFormat::Float32x2,
+            },
+            wgpu::VertexAttribute {
+                offset: 20,
+                shader_location: 2,
+                format: wgpu::VertexFormat::Float32x3,
+            },
+            wgpu::VertexAttribute {
+                offset: 32,
+                shader_location: 3,
+                format: wgpu::VertexFormat::Float32x4,
+            },
+        ];
+
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<EntityVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &ATTRIBUTES,
+        }
+    }
+}
+
+/// Uniforms buffer passed to `entity.wgsl`.
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
+pub struct EntityUniforms {
+    pub view_proj: [[f32; 4]; 4],
+    pub camera_pos: [f32; 4],
+    pub fog_color: [f32; 4],
+    pub fog_params: [f32; 4],
+    pub sun_direction: [f32; 4],
+}
+
+/// GPU Texture and BindGroup handle for skin/entity textures.
+pub struct GpuSkin {
+    pub texture: wgpu::Texture,
+    pub view: wgpu::TextureView,
+    pub bind_group: wgpu::BindGroup,
+}
+
+/// High-performance entity renderer for players, mobs, and projectiles.
+pub struct EntityRenderer {
+    pipeline: wgpu::RenderPipeline,
+    uniform_buffer: wgpu::Buffer,
+    uniform_bind_group: wgpu::BindGroup,
+    texture_bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+
+    default_skin: GpuSkin,
+    arrow_skin: GpuSkin,
+    skin_cache: HashMap<Uuid, GpuSkin>,
+
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    vertex_capacity: usize,
+    index_capacity: usize,
+}
+
+impl EntityRenderer {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        default_skin_img: &RgbaImage,
+        arrow_skin_img: Option<&RgbaImage>,
+    ) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("entity-shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("entity.wgsl").into()),
+        });
+
+        // 1. Uniform bind group layout
+        let uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("entity-uniform-bgl"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("entity-uniform-buffer"),
+            size: std::mem::size_of::<EntityUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("entity-uniform-bg"),
+            layout: &uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+        // 2. Texture bind group layout
+        let texture_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("entity-texture-bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("entity-sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            mipmap_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        let default_skin = Self::create_gpu_skin(
+            device,
+            queue,
+            &texture_bind_group_layout,
+            &sampler,
+            default_skin_img,
+            "default-steve",
+        );
+
+        let fallback_arrow = image::ImageBuffer::from_pixel(32, 32, image::Rgba([180, 160, 130, 255]));
+        let arrow_img = arrow_skin_img.unwrap_or(&fallback_arrow);
+        let arrow_skin = Self::create_gpu_skin(
+            device,
+            queue,
+            &texture_bind_group_layout,
+            &sampler,
+            arrow_img,
+            "arrow-texture",
+        );
+
+        // 3. Pipeline layout & pipeline
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("entity-pipeline-layout"),
+            bind_group_layouts: &[&uniform_bind_group_layout, &texture_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("entity-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[EntityVertex::desc()],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: Default::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None, // Double sided for model outerwear & small parts
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview: None,
+            cache: None,
+        });
+
+        let vertex_capacity = 8192;
+        let index_capacity = 16384;
+
+        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("entity-vertex-buffer"),
+            size: (vertex_capacity * std::mem::size_of::<EntityVertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("entity-index-buffer"),
+            size: (index_capacity * std::mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            pipeline,
+            uniform_buffer,
+            uniform_bind_group,
+            texture_bind_group_layout,
+            sampler,
+            default_skin,
+            arrow_skin,
+            skin_cache: HashMap::new(),
+            vertex_buffer,
+            index_buffer,
+            vertex_capacity,
+            index_capacity,
+        }
+    }
+
+    fn create_gpu_skin(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        img: &RgbaImage,
+        label: &str,
+    ) -> GpuSkin {
+        let width = img.width().max(1);
+        let height = img.height().max(1);
+
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(label),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            img.as_raw(),
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            size,
+        );
+
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(&format!("{}-bg", label)),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+
+        GpuSkin {
+            texture,
+            view,
+            bind_group,
+        }
+    }
+
+    /// Uploads or caches a skin texture for a player UUID.
+    pub fn ensure_skin(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        uuid: Uuid,
+        skin_img: &RgbaImage,
+    ) {
+        if !self.skin_cache.contains_key(&uuid) {
+            let gpu_skin = Self::create_gpu_skin(
+                device,
+                queue,
+                &self.texture_bind_group_layout,
+                &self.sampler,
+                skin_img,
+                &format!("skin-{}", uuid),
+            );
+            self.skin_cache.insert(uuid, gpu_skin);
+        }
+    }
+
+    /// Updates uniform buffer (matrices, fog, camera pos).
+    pub fn update_uniforms(
+        &self,
+        queue: &wgpu::Queue,
+        camera: &Camera,
+        render_distance_blocks: f32,
+    ) {
+        let view_proj = camera.view_proj_matrix();
+        let uniforms = EntityUniforms {
+            view_proj: view_proj.to_cols_array_2d(),
+            camera_pos: [camera.position.x, camera.position.y, camera.position.z, 1.0],
+            fog_color: [0.70, 0.80, 1.00, 1.0],
+            fog_params: [render_distance_blocks * 0.75, render_distance_blocks, 0.0, 0.0],
+            sun_direction: [0.4, 0.9, 0.2, 0.0],
+        };
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    /// Renders all entities from the entity tracker.
+    pub fn render<'a>(
+        &'a mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        rpass: &mut wgpu::RenderPass<'a>,
+        tracker: &EntityTracker,
+        partial_ticks: f32,
+    ) {
+        if tracker.count() == 0 {
+            return;
+        }
+
+        let mut vertices: Vec<EntityVertex> = Vec::with_capacity(4096);
+        let mut indices: Vec<u32> = Vec::with_capacity(8192);
+
+        // Group entities by skin bind group to batch draw calls
+        struct DrawBatch {
+            index_start: u32,
+            index_count: u32,
+            is_arrow: bool,
+            player_uuid: Option<Uuid>,
+        }
+
+        let mut batches: Vec<DrawBatch> = Vec::new();
+
+        for entity in tracker.entities.values() {
+            // Do not render invisible entities
+            if entity.is_invisible {
+                continue;
+            }
+
+            let batch_start = indices.len() as u32;
+
+            match &entity.kind {
+                EntityKind::Player { uuid, .. } => {
+                    build_player_model(
+                        &mut vertices,
+                        &mut indices,
+                        entity,
+                        partial_ticks,
+                    );
+                    let count = (indices.len() as u32) - batch_start;
+                    if count > 0 {
+                        batches.push(DrawBatch {
+                            index_start: batch_start,
+                            index_count: count,
+                            is_arrow: false,
+                            player_uuid: Some(*uuid),
+                        });
+                    }
+                }
+                EntityKind::Mob { mob_type } => {
+                    // Only render humanoid mobs (51 Skeleton, 54 Zombie, 57 Zombie Pigman).
+                    // Skip ArmorStand (mob ID 30) and other unhandled mobs so they are not rendered as humanoid bodies.
+                    if matches!(*mob_type, 51 | 54 | 57) {
+                        build_mob_model(
+                            &mut vertices,
+                            &mut indices,
+                            entity,
+                            *mob_type,
+                            partial_ticks,
+                        );
+                        let count = (indices.len() as u32) - batch_start;
+                        if count > 0 {
+                            batches.push(DrawBatch {
+                                index_start: batch_start,
+                                index_count: count,
+                                is_arrow: false,
+                                player_uuid: None,
+                            });
+                        }
+                    }
+                }
+                EntityKind::Object { object_type, .. } => {
+                    build_object_model(
+                        &mut vertices,
+                        &mut indices,
+                        entity,
+                        *object_type,
+                        partial_ticks,
+                    );
+                    let count = (indices.len() as u32) - batch_start;
+                    if count > 0 {
+                        batches.push(DrawBatch {
+                            index_start: batch_start,
+                            index_count: count,
+                            is_arrow: *object_type == 60,
+                            player_uuid: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        if vertices.is_empty() || indices.is_empty() {
+            return;
+        }
+
+        // Expand buffers if necessary
+        if vertices.len() > self.vertex_capacity {
+            self.vertex_capacity = vertices.len() * 2;
+            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("entity-vertex-buffer-resized"),
+                size: (self.vertex_capacity * std::mem::size_of::<EntityVertex>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        if indices.len() > self.index_capacity {
+            self.index_capacity = indices.len() * 2;
+            self.index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("entity-index-buffer-resized"),
+                size: (self.index_capacity * std::mem::size_of::<u32>()) as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+        queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(&indices));
+
+        // Draw passes
+        rpass.set_pipeline(&self.pipeline);
+        rpass.set_bind_group(0, &self.uniform_bind_group, &[]);
+        rpass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+
+        for batch in batches {
+            let bg = if batch.is_arrow {
+                &self.arrow_skin.bind_group
+            } else if let Some(uuid) = batch.player_uuid {
+                if let Some(gpu_skin) = self.skin_cache.get(&uuid) {
+                    &gpu_skin.bind_group
+                } else {
+                    &self.default_skin.bind_group
+                }
+            } else {
+                &self.default_skin.bind_group
+            };
+
+            rpass.set_bind_group(1, bg, &[]);
+            rpass.draw_indexed(batch.index_start..(batch.index_start + batch.index_count), 0, 0..1);
+        }
+    }
+}
+
+/// Helper to add a textured 3D cuboid box to the vertex and index lists following ModelBox specification.
+pub fn add_box_geom(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    part_matrix: Mat4,
+    tex_u: f32,
+    tex_v: f32,
+    origin: Vec3,
+    size: Vec3,
+    expand: f32,
+    mirror: bool,
+    tex_w: f32,
+    tex_h: f32,
+    color: [f32; 4],
+) {
+    let x1 = origin.x - expand;
+    let y1 = origin.y - expand;
+    let z1 = origin.z - expand;
+    let mut x2 = origin.x + size.x + expand;
+    let y2 = origin.y + size.y + expand;
+    let z2 = origin.z + size.z + expand;
+
+    let mut x1_val = x1;
+    if mirror {
+        let tmp = x2;
+        x2 = x1_val;
+        x1_val = tmp;
+    }
+
+    let v7 = Vec3::new(x1_val, y1, z1);
+    let v0 = Vec3::new(x2, y1, z1);
+    let v1 = Vec3::new(x2, y2, z1);
+    let v2 = Vec3::new(x1_val, y2, z1);
+    let v3 = Vec3::new(x1_val, y1, z2);
+    let v4 = Vec3::new(x2, y1, z2);
+    let v5 = Vec3::new(x2, y2, z2);
+    let v6 = Vec3::new(x1_val, y2, z2);
+
+    let w = size.x;
+    let h = size.y;
+    let d = size.z;
+
+    // 6 quads matching ModelBox.java:
+    let quads = [
+        // Quad 0 (+X face): {v4, v0, v1, v5}
+        ([v4, v0, v1, v5], tex_u + d + w, tex_v + d, tex_u + d + w + d, tex_v + d + h),
+        // Quad 1 (-X face): {v7, v3, v6, v2}
+        ([v7, v3, v6, v2], tex_u, tex_v + d, tex_u + d, tex_v + d + h),
+        // Quad 2 (-Y face / top): {v4, v3, v7, v0}
+        ([v4, v3, v7, v0], tex_u + d, tex_v, tex_u + d + w, tex_v + d),
+        // Quad 3 (+Y face / bottom): {v1, v2, v6, v5}
+        ([v1, v2, v6, v5], tex_u + d + w, tex_v + d, tex_u + d + w + w, tex_v),
+        // Quad 4 (-Z face / front): {v0, v7, v2, v1}
+        ([v0, v7, v2, v1], tex_u + d, tex_v + d, tex_u + d + w, tex_v + d + h),
+        // Quad 5 (+Z face / back): {v3, v4, v5, v6}
+        ([v3, v4, v5, v6], tex_u + d + w + d, tex_v + d, tex_u + d + w + d + w, tex_v + d + h),
+    ];
+
+    for (raw_verts, u1, v1, u2, v2) in quads {
+        let mut uv = [
+            [u2 / tex_w, v1 / tex_h],
+            [u1 / tex_w, v1 / tex_h],
+            [u1 / tex_w, v2 / tex_h],
+            [u2 / tex_w, v2 / tex_h],
+        ];
+        let mut qverts = raw_verts;
+        if mirror {
+            qverts.reverse();
+            uv.reverse();
+        }
+
+        let raw_normal = (qverts[2] - qverts[1]).cross(qverts[0] - qverts[1]).normalize();
+        let world_normal = part_matrix.transform_vector3(raw_normal).normalize().to_array();
+
+        let base_idx = vertices.len() as u32;
+        for (mcp_pos, uv_coord) in qverts.iter().zip(uv.iter()) {
+            let world_pos = part_matrix.transform_point3(*mcp_pos * (1.0 / 16.0));
+            vertices.push(EntityVertex {
+                position: world_pos.to_array(),
+                uv: *uv_coord,
+                normal: world_normal,
+                color,
+            });
+        }
+
+        indices.extend_from_slice(&[
+            base_idx,
+            base_idx + 1,
+            base_idx + 2,
+            base_idx,
+            base_idx + 2,
+            base_idx + 3,
+        ]);
+    }
+}
+
+/// Helper to add a simple axis-aligned 3D cuboid box in local units.
+pub fn add_box(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    transform: Mat4,
+    min: Vec3,
+    max: Vec3,
+    u0: f32,
+    v0: f32,
+    _w: f32,
+    _h: f32,
+    _d: f32,
+    color: [f32; 4],
+) {
+    let size = max - min;
+    add_box_geom(
+        vertices,
+        indices,
+        transform,
+        u0,
+        v0,
+        min * 16.0,
+        size * 16.0,
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+}
+
+/// Builds the full hierarchical 3D player model with base layer, outerwear, animations & held item.
+pub fn build_player_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let body_yaw = entity.interpolated_render_yaw_offset(partial_ticks);
+    let head_yaw = entity.interpolated_head_yaw(partial_ticks);
+    let pitch = entity.interpolated_pitch(partial_ticks);
+    let (limb_swing, limb_amount) = entity.interpolated_limb_swing(partial_ticks);
+    let swing_prog = entity.swing_progress;
+    let age_in_ticks = entity.ticks_existed as f32 + partial_ticks;
+
+    let is_sneak = entity.is_sneaking;
+    let color = [1.0, 1.0, 1.0, 1.0];
+
+    // Vanilla entity root transformation:
+    // Translate(pos) * RotateY(180 - bodyYaw) * Scale(-1, -1, 1) * Translate(0, -1.5078125, 0)
+    let mut root_matrix = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - body_yaw).to_radians())
+        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
+        * Mat4::from_translation(Vec3::new(0.0, -1.5078125, 0.0));
+
+    if is_sneak {
+        root_matrix *= Mat4::from_translation(Vec3::new(0.0, 0.2, 0.0));
+    }
+
+    let get_part_matrix = |rot_point: Vec3, rot_angles: Vec3| -> Mat4 {
+        root_matrix
+            * Mat4::from_translation(rot_point * (1.0 / 16.0))
+            * Mat4::from_rotation_z(rot_angles.z)
+            * Mat4::from_rotation_y(rot_angles.y)
+            * Mat4::from_rotation_x(rot_angles.x)
+    };
+
+    // 1. Head & Headwear (independent at root)
+    let net_head_yaw = head_yaw - body_yaw;
+    let head_rot_y = net_head_yaw.to_radians();
+    let head_rot_x = pitch.to_radians();
+    let head_pivot_y = if is_sneak { 1.0 } else { 0.0 };
+    let head_matrix = get_part_matrix(
+        Vec3::new(0.0, head_pivot_y, 0.0),
+        Vec3::new(head_rot_x, head_rot_y, 0.0),
+    );
+
+    // Head base layer (8x8x8 px)
+    add_box_geom(
+        vertices,
+        indices,
+        head_matrix,
+        0.0,
+        0.0,
+        Vec3::new(-4.0, -8.0, -4.0),
+        Vec3::new(8.0, 8.0, 8.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+    // Headwear outer layer (+0.5 px inflation)
+    add_box_geom(
+        vertices,
+        indices,
+        head_matrix,
+        32.0,
+        0.0,
+        Vec3::new(-4.0, -8.0, -4.0),
+        Vec3::new(8.0, 8.0, 8.0),
+        0.5,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // 2. Torso / Body & Bodywear
+    let body_rot_x = if is_sneak { 0.5 } else { 0.0 };
+    let mut body_rot_y = 0.0f32;
+    if swing_prog > 0.0 {
+        body_rot_y = ((swing_prog.sqrt() * PI * 2.0).sin()) * 0.2;
+    }
+    let body_matrix = get_part_matrix(Vec3::ZERO, Vec3::new(body_rot_x, body_rot_y, 0.0));
+
+    // Torso base layer (8x12x4 px)
+    add_box_geom(
+        vertices,
+        indices,
+        body_matrix,
+        16.0,
+        16.0,
+        Vec3::new(-4.0, 0.0, -2.0),
+        Vec3::new(8.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+    // Torso outerwear (+0.25 px inflation)
+    add_box_geom(
+        vertices,
+        indices,
+        body_matrix,
+        16.0,
+        32.0,
+        Vec3::new(-4.0, 0.0, -2.0),
+        Vec3::new(8.0, 12.0, 4.0),
+        0.25,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // 3. Right Arm & Right Armwear
+    let mut r_arm_pivot = Vec3::new(-5.0, 2.0, 0.0);
+    let mut r_arm_rot_x = (limb_swing * 0.6662 + PI).cos() * 2.0 * limb_amount * 0.5;
+    let mut r_arm_rot_y = 0.0f32;
+    let mut r_arm_rot_z = 0.0f32;
+
+    // Check held item
+    let has_held_item = if let EntityKind::Player { held_item, .. } = &entity.kind {
+        *held_item != 0
+    } else {
+        false
+    };
+    if has_held_item {
+        r_arm_rot_x = r_arm_rot_x * 0.5 - (PI / 10.0);
+    }
+
+    if swing_prog > 0.0 {
+        r_arm_pivot.z = body_rot_y.sin() * 5.0;
+        r_arm_pivot.x = -body_rot_y.cos() * 5.0;
+        r_arm_rot_y += body_rot_y * 2.0;
+        r_arm_rot_z += (swing_prog * PI).sin() * -0.4;
+
+        let f = 1.0 - swing_prog;
+        let punch = 1.0 - f * f * f * f;
+        let f1 = (punch * PI).sin();
+        let f2 = (swing_prog * PI).sin() * -(head_rot_x - 0.7) * 0.75;
+        r_arm_rot_x -= f1 * 1.2 + f2;
+    }
+
+    if is_sneak {
+        r_arm_rot_x += 0.4;
+    }
+
+    // Idle breathing sway
+    r_arm_rot_z += (age_in_ticks * 0.09).cos() * 0.05 + 0.05;
+    r_arm_rot_x += (age_in_ticks * 0.067).sin() * 0.05;
+
+    let r_arm_matrix = get_part_matrix(
+        r_arm_pivot,
+        Vec3::new(r_arm_rot_x, r_arm_rot_y, r_arm_rot_z),
+    );
+
+    // Right arm base layer (4x12x4 px)
+    add_box_geom(
+        vertices,
+        indices,
+        r_arm_matrix,
+        40.0,
+        16.0,
+        Vec3::new(-3.0, -2.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+    // Right armwear (+0.25 px inflation)
+    add_box_geom(
+        vertices,
+        indices,
+        r_arm_matrix,
+        40.0,
+        32.0,
+        Vec3::new(-3.0, -2.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.25,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // Held 3D item attached to right arm
+    if has_held_item {
+        let item_local = Mat4::from_translation(Vec3::new(-1.0, 10.0, 0.0) * (1.0 / 16.0))
+            * Mat4::from_rotation_x(0.8)
+            * Mat4::from_rotation_z(0.3);
+        let item_matrix = r_arm_matrix * item_local;
+        add_box_geom(
+            vertices,
+            indices,
+            item_matrix,
+            0.0,
+            0.0,
+            Vec3::new(-0.5, -6.0, -0.5),
+            Vec3::new(1.0, 14.0, 1.0),
+            0.0,
+            false,
+            64.0,
+            64.0,
+            [0.85, 0.85, 1.0, 1.0],
+        );
+    }
+
+    // 4. Left Arm & Left Armwear
+    let mut l_arm_pivot = Vec3::new(5.0, 2.0, 0.0);
+    let mut l_arm_rot_x = (limb_swing * 0.6662).cos() * 2.0 * limb_amount * 0.5;
+    let mut l_arm_rot_y = 0.0f32;
+    let mut l_arm_rot_z = 0.0f32;
+
+    if swing_prog > 0.0 {
+        l_arm_pivot.z = -body_rot_y.sin() * 5.0;
+        l_arm_pivot.x = body_rot_y.cos() * 5.0;
+        l_arm_rot_y += body_rot_y;
+        l_arm_rot_x += body_rot_y;
+    }
+
+    if is_sneak {
+        l_arm_rot_x += 0.4;
+    }
+
+    l_arm_rot_z -= (age_in_ticks * 0.09).cos() * 0.05 + 0.05;
+    l_arm_rot_x -= (age_in_ticks * 0.067).sin() * 0.05;
+
+    let l_arm_matrix = get_part_matrix(
+        l_arm_pivot,
+        Vec3::new(l_arm_rot_x, l_arm_rot_y, l_arm_rot_z),
+    );
+
+    // Left arm base layer (4x12x4 px)
+    add_box_geom(
+        vertices,
+        indices,
+        l_arm_matrix,
+        32.0,
+        48.0,
+        Vec3::new(-1.0, -2.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+    // Left armwear (+0.25 px inflation)
+    add_box_geom(
+        vertices,
+        indices,
+        l_arm_matrix,
+        48.0,
+        48.0,
+        Vec3::new(-1.0, -2.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.25,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // 5. Right Leg & Right Legwear
+    let r_leg_pivot = Vec3::new(
+        -1.9,
+        if is_sneak { 9.0 } else { 12.0 },
+        if is_sneak { 4.0 } else { 0.1 },
+    );
+    let r_leg_rot_x = (limb_swing * 0.6662).cos() * 1.4 * limb_amount;
+    let r_leg_matrix = get_part_matrix(r_leg_pivot, Vec3::new(r_leg_rot_x, 0.0, 0.0));
+
+    // Right leg base layer (4x12x4 px)
+    add_box_geom(
+        vertices,
+        indices,
+        r_leg_matrix,
+        0.0,
+        16.0,
+        Vec3::new(-2.0, 0.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+    // Right legwear (+0.25 px inflation)
+    add_box_geom(
+        vertices,
+        indices,
+        r_leg_matrix,
+        0.0,
+        32.0,
+        Vec3::new(-2.0, 0.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.25,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // 6. Left Leg & Left Legwear
+    let l_leg_pivot = Vec3::new(
+        1.9,
+        if is_sneak { 9.0 } else { 12.0 },
+        if is_sneak { 4.0 } else { 0.1 },
+    );
+    let l_leg_rot_x = (limb_swing * 0.6662 + PI).cos() * 1.4 * limb_amount;
+    let l_leg_matrix = get_part_matrix(l_leg_pivot, Vec3::new(l_leg_rot_x, 0.0, 0.0));
+
+    // Left leg base layer (4x12x4 px)
+    add_box_geom(
+        vertices,
+        indices,
+        l_leg_matrix,
+        16.0,
+        48.0,
+        Vec3::new(-2.0, 0.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+    // Left legwear (+0.25 px inflation)
+    add_box_geom(
+        vertices,
+        indices,
+        l_leg_matrix,
+        0.0,
+        48.0,
+        Vec3::new(-2.0, 0.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.25,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // 7. Cape
+    let cape_pivot = Vec3::new(0.0, if is_sneak { 2.0 } else { 0.0 }, 2.0);
+    let cape_rot_x = 0.1 + (limb_amount * 0.5);
+    let cape_matrix = get_part_matrix(cape_pivot, Vec3::new(cape_rot_x, 0.0, 0.0));
+    add_box_geom(
+        vertices,
+        indices,
+        cape_matrix,
+        0.0,
+        0.0,
+        Vec3::new(-5.0, 0.0, -0.5),
+        Vec3::new(10.0, 16.0, 1.0),
+        0.0,
+        false,
+        64.0,
+        32.0,
+        [0.9, 0.2, 0.2, 1.0],
+    );
+}
+
+/// Builds mob models (e.g. Zombie / Skeleton humanoid with forward arms, Creeper).
+pub fn build_mob_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    _mob_type: u8,
+    partial_ticks: f32,
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let body_yaw = entity.interpolated_render_yaw_offset(partial_ticks);
+    let head_yaw = entity.interpolated_head_yaw(partial_ticks);
+    let pitch = entity.interpolated_pitch(partial_ticks);
+    let (limb_swing, limb_amount) = entity.interpolated_limb_swing(partial_ticks);
+
+    let color = [0.4, 0.7, 0.4, 1.0]; // Mob tint
+
+    let root_matrix = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - body_yaw).to_radians())
+        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
+        * Mat4::from_translation(Vec3::new(0.0, -1.5078125, 0.0));
+
+    let get_part_matrix = |rot_point: Vec3, rot_angles: Vec3| -> Mat4 {
+        root_matrix
+            * Mat4::from_translation(rot_point * (1.0 / 16.0))
+            * Mat4::from_rotation_z(rot_angles.z)
+            * Mat4::from_rotation_y(rot_angles.y)
+            * Mat4::from_rotation_x(rot_angles.x)
+    };
+
+    // Head
+    let net_head_yaw = head_yaw - body_yaw;
+    let head_matrix = get_part_matrix(
+        Vec3::ZERO,
+        Vec3::new(pitch.to_radians(), net_head_yaw.to_radians(), 0.0),
+    );
+    add_box_geom(
+        vertices,
+        indices,
+        head_matrix,
+        0.0,
+        0.0,
+        Vec3::new(-4.0, -8.0, -4.0),
+        Vec3::new(8.0, 8.0, 8.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // Torso
+    let torso_matrix = get_part_matrix(Vec3::ZERO, Vec3::ZERO);
+    add_box_geom(
+        vertices,
+        indices,
+        torso_matrix,
+        16.0,
+        16.0,
+        Vec3::new(-4.0, 0.0, -2.0),
+        Vec3::new(8.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // Zombie arms outstretched forward (-90 deg X rotation)
+    let arm_rot_x = -PI / 2.0;
+    let r_arm_matrix = get_part_matrix(
+        Vec3::new(-5.0, 2.0, 0.0),
+        Vec3::new(arm_rot_x, 0.0, 0.0),
+    );
+    add_box_geom(
+        vertices,
+        indices,
+        r_arm_matrix,
+        40.0,
+        16.0,
+        Vec3::new(-3.0, -2.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    let l_arm_matrix = get_part_matrix(
+        Vec3::new(5.0, 2.0, 0.0),
+        Vec3::new(arm_rot_x, 0.0, 0.0),
+    );
+    add_box_geom(
+        vertices,
+        indices,
+        l_arm_matrix,
+        32.0,
+        48.0,
+        Vec3::new(-1.0, -2.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    // Legs
+    let r_leg_rot_x = (limb_swing * 0.6662).cos() * 1.4 * limb_amount;
+    let r_leg_matrix = get_part_matrix(
+        Vec3::new(-1.9, 12.0, 0.1),
+        Vec3::new(r_leg_rot_x, 0.0, 0.0),
+    );
+    add_box_geom(
+        vertices,
+        indices,
+        r_leg_matrix,
+        0.0,
+        16.0,
+        Vec3::new(-2.0, 0.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+
+    let l_leg_rot_x = (limb_swing * 0.6662 + PI).cos() * 1.4 * limb_amount;
+    let l_leg_matrix = get_part_matrix(
+        Vec3::new(1.9, 12.0, 0.1),
+        Vec3::new(l_leg_rot_x, 0.0, 0.0),
+    );
+    add_box_geom(
+        vertices,
+        indices,
+        l_leg_matrix,
+        16.0,
+        48.0,
+        Vec3::new(-2.0, 0.0, -2.0),
+        Vec3::new(4.0, 12.0, 4.0),
+        0.0,
+        false,
+        64.0,
+        64.0,
+        color,
+    );
+}
+
+/// Builds 3D projectile and item models (Arrows, Ender Pearls, Potions).
+pub fn build_object_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    object_type: u8,
+    partial_ticks: f32,
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let pitch = entity.interpolated_pitch(partial_ticks);
+
+    let root_pos = Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32);
+
+    if object_type == 60 {
+        // 3D Arrow projectile
+        let rot = Quat::from_rotation_y(-yaw.to_radians()) * Quat::from_rotation_x(-pitch.to_radians());
+        let transform = Mat4::from_rotation_translation(rot, root_pos);
+
+        // Arrow Shaft: thin 3D rod (0.05 x 0.05 x 0.8 blocks)
+        add_box(
+            vertices, indices, transform,
+            Vec3::new(-0.025, -0.025, -0.4), Vec3::new(0.025, 0.025, 0.4),
+            0.0, 0.0, 2.0, 2.0, 16.0,
+            [0.85, 0.75, 0.6, 1.0],
+        );
+
+        // Arrow Tip: arrowhead box
+        add_box(
+            vertices, indices, transform,
+            Vec3::new(-0.05, -0.05, 0.35), Vec3::new(0.05, 0.05, 0.45),
+            0.0, 0.0, 4.0, 4.0, 4.0,
+            [0.3, 0.3, 0.35, 1.0],
+        );
+
+        // Arrow Fins / Fletching
+        add_box(
+            vertices, indices, transform,
+            Vec3::new(-0.08, -0.08, -0.4), Vec3::new(0.08, 0.08, -0.3),
+            0.0, 0.0, 4.0, 4.0, 4.0,
+            [0.9, 0.9, 0.9, 1.0],
+        );
+    } else {
+        // Floating Item / Ender Pearl / Potion: small 3D glowing jewel / sphere
+        let color = if object_type == 65 {
+            [0.1, 0.5, 0.4, 1.0] // Ender Pearl cyan/green
+        } else if object_type == 73 {
+            [0.8, 0.2, 0.7, 1.0] // Potion purple
+        } else {
+            [0.9, 0.85, 0.3, 1.0] // Item gold/yellow
+        };
+
+        // Spinning 3D orb
+        let spin = Quat::from_rotation_y((pos.x + pos.z) as f32 * 2.0);
+        let transform = Mat4::from_rotation_translation(spin, root_pos);
+
+        add_box(
+            vertices, indices, transform,
+            Vec3::splat(-0.125), Vec3::splat(0.125),
+            0.0, 0.0, 8.0, 8.0, 8.0,
+            color,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::DVec3;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_add_box_geom_quad_count_and_uvs() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        // Head box: origin=(-4, -8, -4), size=(8, 8, 8), tex=(0, 0)
+        add_box_geom(
+            &mut vertices,
+            &mut indices,
+            Mat4::IDENTITY,
+            0.0,
+            0.0,
+            Vec3::new(-4.0, -8.0, -4.0),
+            Vec3::new(8.0, 8.0, 8.0),
+            0.0,
+            false,
+            64.0,
+            64.0,
+            [1.0, 1.0, 1.0, 1.0],
+        );
+
+        assert_eq!(vertices.len(), 24);
+        assert_eq!(indices.len(), 36);
+
+        // Quad 4 is front face (indices 16..20)
+        let front_quad = &vertices[16..20];
+        // Check U coordinates are within [8/64, 16/64]
+        for v in front_quad {
+            assert!(v.uv[0] >= 8.0 / 64.0 - 0.001 && v.uv[0] <= 16.0 / 64.0 + 0.001);
+            assert!(v.uv[1] >= 8.0 / 64.0 - 0.001 && v.uv[1] <= 16.0 / 64.0 + 0.001);
+        }
+    }
+
+    #[test]
+    fn test_build_player_model_produces_valid_geometry() {
+        let mut vertices = Vec::new();
+        let mut indices = Vec::new();
+
+        let entity = TrackedEntity::new(
+            1,
+            EntityKind::Player {
+                uuid: Uuid::nil(),
+                name: "Steve".to_string(),
+                held_item: 276,
+            },
+            DVec3::new(0.0, 64.0, 0.0),
+            0.0,
+            0.0,
+        );
+
+        build_player_model(&mut vertices, &mut indices, &entity, 0.5);
+
+        assert!(!vertices.is_empty());
+        assert!(!indices.is_empty());
+        for v in &vertices {
+            assert!(!v.position[0].is_nan());
+            assert!(!v.position[1].is_nan());
+            assert!(!v.position[2].is_nan());
+        }
+    }
+}
