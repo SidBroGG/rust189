@@ -1369,6 +1369,7 @@ impl BakedModelRegistry {
                 };
                 (format!("{}_log", w), axis.into())
             }
+            165 => ("slime".into(), "normal".into()),
             168 => match meta {
                 1 => ("prismarine_bricks".into(), "normal".into()),
                 2 => ("dark_prismarine".into(), "normal".into()),

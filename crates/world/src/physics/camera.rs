@@ -104,7 +104,9 @@ impl CameraController {
         let f = sensitivity * 0.6 + 0.2;
         let f1 = f * f * f * 8.0;
         let mut delta_x = dx * f1;
-        let mut delta_y = dy * f1;
+        // In winit, mouse motion up gives dy < 0, whereas Minecraft (LWJGL) gives positive deltaY.
+        // Inverting dy aligns it so moving mouse forward tilts pitch upward towards the sky.
+        let mut delta_y = -dy * f1;
 
         if invert_y {
             delta_y = -delta_y;
@@ -124,9 +126,15 @@ impl CameraController {
             self.filter_y.reset();
         }
 
-        // MCP `Entity.setAngles`: yaw += dx * 0.15, pitch -= dy * 0.15
+        // Port of MCP `Entity.setAngles` (lines 389-398):
+        // Advance both current and previous rotation angles by the mouse delta
+        // to eliminate 20-Hz partial_ticks frame-rate interpolation jitter!
+        let old_pitch = player.pitch;
+        let old_yaw = player.yaw;
         player.yaw += delta_x * 0.15;
         player.pitch = (player.pitch - delta_y * 0.15).clamp(-90.0, 90.0);
+        player.prev_pitch += player.pitch - old_pitch;
+        player.prev_yaw += player.yaw - old_yaw;
     }
 
     /// Computes the final camera position and orientation including view bobbing and third-person raycasts.
@@ -145,7 +153,7 @@ impl CameraController {
         let pitch = player.prev_pitch + (player.pitch - player.prev_pitch) * pt;
 
         // View bobbing calculation (MCP `EntityRenderer.setupViewBobbing`)
-        let mut bob_offset = Vec3::ZERO;
+        let mut bob_offset_world = Vec3::ZERO;
         let mut bob_roll = 0.0f32;
         let mut bob_pitch = 0.0f32;
 
@@ -156,19 +164,24 @@ impl CameraController {
             let f3 = player.prev_camera_pitch + (player.camera_pitch - player.prev_camera_pitch) * partial_ticks;
 
             let pi_f = std::f32::consts::PI;
-            bob_offset.x = (f1 * pi_f).sin() * f2 * 0.5;
-            bob_offset.y = -((f1 * pi_f).cos().abs()) * f2;
+            let bob_x = (f1 * pi_f).sin() * f2 * 0.5;
+            let bob_y = -((f1 * pi_f).cos().abs()) * f2;
             bob_roll = (f1 * pi_f).sin() * f2 * 3.0;
             bob_pitch = ((f1 * pi_f - 0.2).cos().abs()) * f2 * 5.0 + f3;
+
+            // Transform local camera bobbing offset (X: local right, Y: local up) into world space
+            let yaw_rad = (yaw as f32).to_radians();
+            let right = Vec3::new(yaw_rad.cos(), 0.0, yaw_rad.sin());
+            bob_offset_world = right * bob_x + Vec3::Y * bob_y;
         }
 
-        // Camera positioning based on perspective mode
+        // Camera positioning based on perspective mode (MCP `EntityRenderer.orientCamera`)
         match self.perspective {
             CameraPerspective::FirstPerson => CameraPose {
                 position: Vec3::new(
-                    (eye_pos.x as f32) + bob_offset.x,
-                    (eye_pos.y as f32) + bob_offset.y,
-                    (eye_pos.z as f32) + bob_offset.z,
+                    (eye_pos.x as f32) + bob_offset_world.x,
+                    (eye_pos.y as f32) + bob_offset_world.y,
+                    (eye_pos.z as f32) + bob_offset_world.z,
                 ),
                 yaw,
                 pitch: pitch + bob_pitch,
@@ -176,26 +189,17 @@ impl CameraController {
             },
             CameraPerspective::ThirdPersonRear | CameraPerspective::ThirdPersonFront => {
                 let is_front = self.perspective == CameraPerspective::ThirdPersonFront;
-                let mut target_pitch = pitch;
-                let mut _target_yaw = yaw;
-
-                if is_front {
-                    target_pitch += 180.0;
-                    _target_yaw += 180.0;
-                }
+                let target_pitch = if is_front { pitch + 180.0 } else { pitch };
 
                 let max_third_person_dist = 4.0f64;
                 let mut clamped_dist = max_third_person_dist;
 
                 let rad_yaw = (yaw as f64) * (PI / 180.0);
-                let rad_pitch = (pitch as f64) * (PI / 180.0);
+                let rad_pitch = (target_pitch as f64) * (PI / 180.0);
 
-                let dir_x = -rad_yaw.sin() * rad_pitch.cos();
-                let dir_y = -rad_pitch.sin();
-                let dir_z = rad_yaw.cos() * rad_pitch.cos();
-                let base_dir = DVec3::new(dir_x, dir_y, dir_z);
-
-                let sign = if is_front { 1.0 } else { -1.0 };
+                let d4 = -rad_yaw.sin() * rad_pitch.cos() * max_third_person_dist;
+                let d5 = rad_yaw.cos() * rad_pitch.cos() * max_third_person_dist;
+                let d6 = -rad_pitch.sin() * max_third_person_dist;
 
                 // 8-corner raycasting for obstacle clipping against world blocks (MCP `EntityRenderer.orientCamera`)
                 for i in 0..8 {
@@ -203,7 +207,7 @@ impl CameraController {
                     let oy = if (i & 2) != 0 { 0.1 } else { -0.1 };
                     let oz = if (i & 4) != 0 { 0.1 } else { -0.1 };
                     let corner_start = eye_pos + DVec3::new(ox, oy, oz);
-                    let corner_end = corner_start + base_dir * (sign * max_third_person_dist);
+                    let corner_end = corner_start - DVec3::new(d4, d6, d5);
 
                     if let Some(hit) = world.ray_trace_blocks(corner_start, corner_end) {
                         let hit_dist = (hit.hit_pos - corner_start).length();
@@ -213,15 +217,18 @@ impl CameraController {
                     }
                 }
 
-                // Minimum camera clearance
                 clamped_dist = clamped_dist.max(0.2);
 
-                let cam_pos = eye_pos + base_dir * (sign * clamped_dist);
+                let actual_d4 = -rad_yaw.sin() * rad_pitch.cos() * clamped_dist;
+                let actual_d5 = rad_yaw.cos() * rad_pitch.cos() * clamped_dist;
+                let actual_d6 = -rad_pitch.sin() * clamped_dist;
+
+                let cam_pos = eye_pos - DVec3::new(actual_d4, actual_d6, actual_d5);
 
                 CameraPose {
                     position: Vec3::new(cam_pos.x as f32, cam_pos.y as f32, cam_pos.z as f32),
                     yaw: if is_front { yaw + 180.0 } else { yaw },
-                    pitch: if is_front { -target_pitch } else { pitch },
+                    pitch: if is_front { -pitch } else { pitch },
                     roll: 0.0,
                 }
             }

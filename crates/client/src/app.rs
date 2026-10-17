@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
+use uuid::Uuid;
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
@@ -23,8 +24,8 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Icon, Window, WindowId};
 use world::{
-    BlockState, CameraController, EntityKind, FrameStage, PerformanceProfiler, PlayerInput,
-    PlayerMovement, World,
+    BlockState, CameraController, CameraPerspective, EntityKind, FrameStage, PerformanceProfiler,
+    PlayerInput, PlayerMovement, TrackedEntity, World,
 };
 
 pub struct App {
@@ -41,7 +42,6 @@ pub struct App {
     pub world: World,
     pub profiler: PerformanceProfiler,
     pub session: Option<PlaySessionHandle>,
-    pub last_movement_tick: Instant,
     pub last_physics_tick: Instant,
     pub player: PlayerMovement,
     pub camera_controller: CameraController,
@@ -81,7 +81,6 @@ impl App {
             world: World::new(),
             profiler: PerformanceProfiler::new(),
             session: None,
-            last_movement_tick: Instant::now(),
             last_physics_tick: Instant::now(),
             player: PlayerMovement::new(0.0, 64.0, 0.0),
             camera_controller,
@@ -726,9 +725,13 @@ impl App {
             }
         }
 
-        // 20 TPS Physics & Entity Tick
-        if self.last_physics_tick.elapsed() >= Duration::from_millis(50) {
-            self.last_physics_tick = Instant::now();
+        // 20 TPS Fixed Physics & Entity Tick
+        if self.last_physics_tick.elapsed() > Duration::from_millis(500) {
+            self.last_physics_tick = Instant::now() - Duration::from_millis(50);
+        }
+
+        while self.last_physics_tick.elapsed() >= Duration::from_millis(50) {
+            self.last_physics_tick += Duration::from_millis(50);
             self.world.entity_tracker.tick();
 
             if self.has_spawned {
@@ -789,21 +792,18 @@ impl App {
                         });
                     }
                 }
-            }
-        }
 
-        // 20 TPS Movement Tick: Send position updates only after terrain/spawn received
-        if self.has_spawned && self.last_movement_tick.elapsed() >= Duration::from_millis(50) {
-            self.last_movement_tick = Instant::now();
-            if let Some(s) = &self.session {
-                s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                    x: self.player_pos.0,
-                    y: self.player_pos.1,
-                    z: self.player_pos.2,
-                    yaw: self.player_look.0,
-                    pitch: self.player_look.1,
-                    on_ground: self.player_on_ground,
-                });
+                // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                        x: self.player_pos.0,
+                        y: self.player_pos.1,
+                        z: self.player_pos.2,
+                        yaw: self.player_look.0,
+                        pitch: self.player_look.1,
+                        on_ground: self.player_on_ground,
+                    });
+                }
             }
         }
 
@@ -1329,6 +1329,7 @@ impl ApplicationHandler for App {
                     self.camera.position = pose.position;
                     self.camera.yaw = pose.yaw;
                     self.camera.pitch = pose.pitch;
+                    self.camera.roll = pose.roll;
                 }
 
                 // Acquire next swapchain surface texture
@@ -1420,7 +1421,36 @@ impl ApplicationHandler for App {
                             let dt_ms = (self.last_physics_tick.elapsed().as_millis() as f32).clamp(0.0, 50.0);
                             let partial_ticks = (dt_ms / 50.0).clamp(0.0, 1.0);
                             er.update_uniforms(&gpu.queue, &self.camera, render_dist_blocks);
-                            er.render(&gpu.device, &gpu.queue, &mut rpass, &self.world.entity_tracker, partial_ticks);
+
+                            let local_player_entity = if self.camera_controller.perspective != CameraPerspective::FirstPerson {
+                                let uuid = self.screen_manager.as_ref()
+                                    .and_then(|sm| sm.in_game.as_ref())
+                                    .and_then(|ig| ig.tab_list.entries.keys().next().copied())
+                                    .unwrap_or_else(|| Uuid::nil());
+                                let mut lp = TrackedEntity::new(
+                                    self.player_entity_id,
+                                    EntityKind::Player {
+                                        uuid,
+                                        name: self.config.auth.nickname.clone(),
+                                        held_item: 0,
+                                    },
+                                    self.player.pos,
+                                    self.player.yaw,
+                                    self.player.pitch,
+                                );
+                                lp.prev_pos = self.player.prev_pos;
+                                lp.prev_yaw = self.player.prev_yaw;
+                                lp.prev_pitch = self.player.prev_pitch;
+                                lp.head_yaw = self.player.yaw;
+                                lp.prev_head_yaw = self.player.prev_yaw;
+                                lp.is_sneaking = self.player.is_sneaking;
+                                lp.is_sprinting = self.player.is_sprinting;
+                                Some(lp)
+                            } else {
+                                None
+                            };
+
+                            er.render(&gpu.device, &gpu.queue, &mut rpass, &self.world.entity_tracker, partial_ticks, local_player_entity.as_ref());
                         }
                     }
                 } else {

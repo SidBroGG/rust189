@@ -6,6 +6,7 @@ pub struct Camera {
     pub position: Vec3,
     pub yaw: f32,   // Degrees
     pub pitch: f32, // Degrees
+    pub roll: f32,  // Degrees (view bobbing)
     pub fov: f32,   // Degrees (vertical FOV)
     pub aspect: f32,
     pub near: f32,
@@ -18,6 +19,7 @@ impl Default for Camera {
             position: Vec3::new(0.0, 64.0, 0.0),
             yaw: 0.0,
             pitch: 0.0,
+            roll: 0.0,
             fov: 70.0,
             aspect: 16.0 / 9.0,
             near: 0.05,
@@ -32,6 +34,7 @@ impl Camera {
             position,
             yaw,
             pitch,
+            roll: 0.0,
             fov,
             aspect,
             near: 0.05,
@@ -53,12 +56,17 @@ impl Camera {
 
     /// Computes the right directional vector perpendicular to forward and world Up.
     pub fn right(&self) -> Vec3 {
-        self.forward().cross(Vec3::Y).normalize()
+        let yaw_rad = self.yaw.to_radians();
+        Vec3::new(yaw_rad.cos(), 0.0, yaw_rad.sin()).normalize()
     }
 
-    /// Computes the right-handed view matrix.
+    /// Computes the right-handed view matrix ported from Minecraft 1.8.9 OpenGL pipeline (`EntityRenderer.orientCamera`).
+    /// Uses pure Euler transformations to eliminate gimbal-lock singularities when pitch reaches -90/+90.
     pub fn view_matrix(&self) -> Mat4 {
-        Mat4::look_to_rh(self.position, self.forward(), Vec3::Y)
+        Mat4::from_rotation_z(self.roll.to_radians())
+            * Mat4::from_rotation_x(self.pitch.to_radians())
+            * Mat4::from_rotation_y((self.yaw + 180.0).to_radians())
+            * Mat4::from_translation(-self.position)
     }
 
     /// Computes the right-handed perspective projection matrix for WebGPU depth range [0, 1].

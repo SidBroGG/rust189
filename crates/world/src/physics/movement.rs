@@ -152,7 +152,6 @@ impl PlayerMovement {
         self.is_in_web = false;
         self.is_in_water = false;
         self.is_in_lava = false;
-        self.is_on_ladder = false;
 
         for bx in min_x..max_x {
             for bz in min_z..max_z {
@@ -167,12 +166,17 @@ impl PlayerMovement {
                     if is_lava_block(id) {
                         self.is_in_lava = true;
                     }
-                    if is_ladder_block(id) {
-                        self.is_on_ladder = true;
-                    }
                 }
             }
         }
+
+        // Exact MCP `EntityLivingBase.isOnLadder` (lines 1134-1141):
+        // Checked strictly at the entity's feet block position (floor(posX), floor(minY), floor(posZ))
+        let ladder_x = self.pos.x.floor() as i32;
+        let ladder_y = self.get_aabb().min_y.floor() as i32;
+        let ladder_z = self.pos.z.floor() as i32;
+        let ladder_id = world.block_at(ladder_x, ladder_y, ladder_z).id();
+        self.is_on_ladder = is_ladder_block(ladder_id);
     }
 
     /// Single 20 TPS physics tick port of MCP `EntityPlayerSP.onLivingUpdate` and `moveEntityWithHeading`.
@@ -222,7 +226,7 @@ impl PlayerMovement {
             if self.is_in_water || self.is_in_lava {
                 self.motion.y += 0.03999999910593033;
             } else if self.on_ground {
-                let mut jump_vel = 0.42;
+                let mut jump_vel = 0.41999998688697815;
                 if self.jump_boost > 0 {
                     jump_vel += (self.jump_boost as f64) * 0.1;
                 }
@@ -316,6 +320,20 @@ impl PlayerMovement {
             self.motion.y *= 0.9800000190734863;
             self.motion.x *= f4;
             self.motion.z *= f4;
+
+            // MCP `BlockSlime.onEntityCollidedWithBlock`:
+            // Walking on slime slows horizontal speed down to ~0.4x
+            if self.on_ground {
+                let block_x = self.pos.x.floor() as i32;
+                let block_y = (self.pos.y - 0.20000000298023224).floor() as i32;
+                let block_z = self.pos.z.floor() as i32;
+                let block_under = world.block_at(block_x, block_y, block_z).id();
+                if block_under == 165 && !self.is_sneaking && self.motion.y.abs() < 0.1 {
+                    let d0 = 0.4 + self.motion.y.abs() * 0.2;
+                    self.motion.x *= d0;
+                    self.motion.z *= d0;
+                }
+            }
         }
 
         // View bobbing calculation (MCP `EntityPlayer.onLivingUpdate`)

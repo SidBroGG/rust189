@@ -373,7 +373,7 @@ impl EntityRenderer {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
-    /// Renders all entities from the entity tracker.
+    /// Renders all entities from the entity tracker plus optional local player in third-person.
     pub fn render<'a>(
         &'a mut self,
         device: &wgpu::Device,
@@ -381,8 +381,9 @@ impl EntityRenderer {
         rpass: &mut wgpu::RenderPass<'a>,
         tracker: &EntityTracker,
         partial_ticks: f32,
+        local_player: Option<&TrackedEntity>,
     ) {
-        if tracker.count() == 0 {
+        if tracker.count() == 0 && local_player.is_none() {
             return;
         }
 
@@ -399,7 +400,8 @@ impl EntityRenderer {
 
         let mut batches: Vec<DrawBatch> = Vec::new();
 
-        for entity in tracker.entities.values() {
+        let all_entities = tracker.entities.values().chain(local_player);
+        for entity in all_entities {
             // Do not render invisible entities
             if entity.is_invisible {
                 continue;
