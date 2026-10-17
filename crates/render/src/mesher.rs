@@ -228,42 +228,9 @@ impl ChunkMesher {
                     let is_translucent = model.is_translucent;
                     let block_id = block.id();
                     let is_leaf = matches!(block_id, 18 | 161);
-                    let is_cutout = matches!(
-                        block_id,
-                        6
-                        | 18 | 161
-                        | 20
-                        | 27 | 28 | 66 | 157
-                        | 30
-                        | 31 | 32
-                        | 37 | 38
-                        | 39 | 40
-                        | 50 | 75 | 76
-                        | 51
-                        | 55
-                        | 59 | 141 | 142
-                        | 64 | 71 | 193 | 194 | 195 | 196 | 197
-                        | 65
-                        | 69
-                        | 77 | 143
-                        | 81
-                        | 83
-                        | 96 | 167
-                        | 101
-                        | 102
-                        | 104 | 105
-                        | 106
-                        | 107 | 183 | 184 | 185 | 186 | 187
-                        | 111
-                        | 115
-                        | 117
-                        | 118
-                        | 120
-                        | 122
-                        | 131 | 132
-                        | 140
-                        | 175
-                    );
+                    // Pass 2 contains models with cutout quads and overlays (e.g. grass side overlay, foliage, glass).
+                    // In Pass 2 quads are not greedily merged, and opaque textures have alpha = 1.0 everywhere.
+                    let is_cutout = true;
 
                     let (target_vertices, target_indices) = if is_translucent {
                         (
