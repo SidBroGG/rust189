@@ -991,4 +991,36 @@ mod tests {
             max_x_pane_to_glass
         );
     }
+
+    #[test]
+    fn test_vine_meshing_and_tint() {
+        let atlas = TextureAtlas::build(Path::new("assets/minecraft/textures/blocks"));
+
+        let mut section = ChunkSection::new(true);
+        // Vine with meta 1 (South face)
+        section.set_block(4, 4, 4, BlockState::new(106, 1));
+        let mut world = TestWorld {
+            blocks: hashbrown::HashMap::new(),
+        };
+        world.blocks.insert((4, 4, 4), BlockState::new(106, 1));
+
+        let mesh = ChunkMesher::mesh_section(&section, 0, 0, 0, &world, &atlas);
+        assert!(!mesh.opaque_vertices.is_empty(), "Vine should produce opaque vertices (cutout pass)");
+
+        // Vine model is not a solid 6-face unit cube (which has 24 vertices), but custom quads
+        assert_eq!(mesh.opaque_vertices.len(), 8, "Single south vine element should produce 2 quads (8 vertices)");
+
+        // Check vertex tint: foliage green
+        let unpacked = mesh.opaque_vertices[0].unpack();
+        let tint = unpacked.color;
+        assert!((tint[0] - 0.36).abs() < 1e-2, "Expected foliage tint R ~ 0.36, got {}", tint[0]);
+        assert!((tint[1] - 0.62).abs() < 1e-2, "Expected foliage tint G ~ 0.62, got {}", tint[1]);
+        assert!((tint[2] - 0.22).abs() < 1e-2, "Expected foliage tint B ~ 0.22, got {}", tint[2]);
+
+        // When block above is opaque, up=true variant is selected
+        world.blocks.insert((4, 5, 4), BlockState::new(1, 0)); // Stone above
+        let model_up = atlas.models.get_model(BlockState::new(106, 1), 4, 4, 4, &world);
+        assert!(model_up.is_some(), "Vine model with up=true should be resolved");
+    }
 }
+

@@ -609,6 +609,8 @@ pub struct BakedModelRegistry {
     pub wall_models: HashMap<u16, [BakedModel; 16]>,
     /// Pre-baked stairs models: `block_id` -> 40 precomputed variants (facing * 10 + half * 5 + shape)
     pub stairs_models: HashMap<u16, [Option<BakedModel>; 40]>,
+    /// Pre-baked vine connection models: 32 variants (meta 0..15 | (up << 4))
+    pub vine_models: [Option<BakedModel>; 32],
 }
 
 impl BakedModelRegistry {
@@ -806,12 +808,43 @@ impl BakedModelRegistry {
             stairs_models.insert(sid, variants_40);
         }
 
+        // 5. Pre-bake 32 connection variants for Vines (16 up=false, 16 up=true)
+        let mut vine_models: [Option<BakedModel>; 32] = std::array::from_fn(|_| None);
+        if let Some(bs) = blockstates.get("vine") {
+            if let Some(variants) = &bs.variants {
+                for up in [false, true] {
+                    for meta in 0u8..16 {
+                        let south = (meta & 1) != 0;
+                        let west = (meta & 2) != 0;
+                        let north = (meta & 4) != 0;
+                        let east = (meta & 8) != 0;
+                        let key_str = format!(
+                            "east={},north={},south={},up={},west={}",
+                            east, north, south, up, west
+                        );
+                        let idx = (meta as usize & 15) | (if up { 16 } else { 0 });
+                        if let Some(ve) = variants.get(&key_str) {
+                            if let Some(baked) = bakery.bake_variant(
+                                ve.first(),
+                                regions,
+                                fallback,
+                                false,
+                            ) {
+                                vine_models[idx] = Some(baked);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Self {
             static_models,
             fence_models,
             pane_models,
             wall_models,
             stairs_models,
+            vine_models,
         }
     }
 
@@ -948,7 +981,16 @@ impl BakedModelRegistry {
             }
         }
 
-        // 5. All static blocks (0..4095)
+        // 5. Vines (ID 106)
+        if id == 106 {
+            let up = world.block_at(wx, wy + 1, wz).is_opaque();
+            let idx = (block.meta() as usize & 15) | (if up { 16 } else { 0 });
+            if let Some(m) = self.vine_models[idx].as_ref() {
+                return Some(m);
+            }
+        }
+
+        // 6. All static blocks (0..4095)
         let raw = block.raw() as usize;
         if raw < self.static_models.len() {
             self.static_models[raw].as_ref()
@@ -1074,8 +1116,8 @@ impl BakedModelRegistry {
     pub fn get_block_tint(block: BlockState) -> [f32; 3] {
         match block.id() {
             2 | 31 | 111 | 175 => [0.49, 0.74, 0.33], // Grass / foliage tint
-            18 | 161 => [0.36, 0.62, 0.22],          // Leaves foliage tint
-            8 | 9 => [0.24, 0.46, 0.88],             // Water blue tint
+            18 | 106 | 161 => [0.36, 0.62, 0.22],     // Leaves & vines foliage tint
+            8 | 9 => [0.24, 0.46, 0.88],              // Water blue tint
             _ => [1.0, 1.0, 1.0],
         }
     }
@@ -1266,6 +1308,19 @@ impl BakedModelRegistry {
                 3 => ("chiseled_stonebrick".into(), "normal".into()),
                 _ => ("stonebrick".into(), "variant=stonebrick".into()),
             },
+            106 => {
+                let south = (meta & 1) != 0;
+                let west = (meta & 2) != 0;
+                let north = (meta & 4) != 0;
+                let east = (meta & 8) != 0;
+                (
+                    "vine".into(),
+                    format!(
+                        "east={},north={},south={},up=false,west={}",
+                        east, north, south, west
+                    ),
+                )
+            }
             110 => ("mycelium".into(), "snowy=false".into()),
             111 => ("waterlily".into(), "normal".into()),
             112 => ("nether_brick".into(), "normal".into()),
@@ -1382,6 +1437,7 @@ impl BakedModelRegistry {
             49 => "obsidian",
             56 => "diamond_ore",
             57 => "diamond_block",
+            106 => "vine",
             _ => "stone",
         }
         .to_string()
