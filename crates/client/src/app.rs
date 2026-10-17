@@ -962,6 +962,9 @@ impl ApplicationHandler for App {
                         } else {
                             window.set_fullscreen(None);
                         }
+                        if let Some(sm) = &mut self.screen_manager {
+                            sm.force_sync_fullscreen(self.config.video.fullscreen);
+                        }
                         let _ = self.config.save(&self.config_path);
                         info!(
                             fullscreen = self.config.video.fullscreen,
@@ -1108,6 +1111,12 @@ impl ApplicationHandler for App {
                         ig.benchmark = Some(self.profiler.calculate_snapshot());
                         ig.nametags = nametags;
                     }
+                    let is_fullscreen = self
+                        .window
+                        .as_ref()
+                        .map(|w| w.fullscreen().is_some())
+                        .unwrap_or(self.config.video.fullscreen);
+                    sm.sync_fullscreen(is_fullscreen);
                 }
 
                 // Begin egui frame & render
@@ -1176,6 +1185,9 @@ impl ApplicationHandler for App {
                                 window.set_fullscreen(Some(Fullscreen::Borderless(None)));
                             } else {
                                 window.set_fullscreen(None);
+                            }
+                            if let Some(sm) = &mut self.screen_manager {
+                                sm.force_sync_fullscreen(self.config.video.fullscreen);
                             }
                         }
 

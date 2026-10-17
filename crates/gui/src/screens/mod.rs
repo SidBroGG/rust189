@@ -69,6 +69,19 @@ impl ScreenManager {
         self.main_menu.modal_mode = main_menu::ModalMode::None;
     }
 
+    /// Syncs fullscreen state with window if the settings modal is not open.
+    pub fn sync_fullscreen(&mut self, fullscreen: bool) {
+        if self.main_menu.modal_mode != main_menu::ModalMode::Settings {
+            self.main_menu.settings_screen.video.fullscreen = fullscreen;
+        }
+    }
+
+    /// Forcibly updates the fullscreen state in settings screen (e.g. on F11 keybind).
+    pub fn force_sync_fullscreen(&mut self, fullscreen: bool) {
+        self.main_menu.settings_screen.video.fullscreen = fullscreen;
+    }
+
+
     pub fn is_cursor_needed(&self) -> bool {
         if self.main_menu.modal_mode != main_menu::ModalMode::None {
             return true;
