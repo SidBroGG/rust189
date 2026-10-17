@@ -29,10 +29,14 @@ impl Plane {
     }
 }
 
-/// Represents the camera view frustum formed by 6 clipping planes.
+/// Represents the camera view frustum formed by 6 clipping planes with SIMD acceleration.
 #[derive(Debug, Clone)]
 pub struct Frustum {
     pub planes: [Plane; 6],
+    pub xs: [glam::Vec4; 2],
+    pub ys: [glam::Vec4; 2],
+    pub zs: [glam::Vec4; 2],
+    pub ds: [glam::Vec4; 2],
 }
 
 impl Frustum {
@@ -89,25 +93,71 @@ impl Frustum {
             row3[3] - row2[3],
         );
 
+        let planes = [left, right, bottom, top, near, far];
+
+        // Group into 2 glam::Vec4 SIMD vectors
+        // Vector 0: planes 0..3 (left, right, bottom, top)
+        let xs0 = glam::Vec4::new(planes[0].normal.x, planes[1].normal.x, planes[2].normal.x, planes[3].normal.x);
+        let ys0 = glam::Vec4::new(planes[0].normal.y, planes[1].normal.y, planes[2].normal.y, planes[3].normal.y);
+        let zs0 = glam::Vec4::new(planes[0].normal.z, planes[1].normal.z, planes[2].normal.z, planes[3].normal.z);
+        let ds0 = glam::Vec4::new(planes[0].d, planes[1].d, planes[2].d, planes[3].d);
+
+        // Vector 1: planes 4..5 (near, far), lanes 2 & 3 padded to never reject (d = 1e6)
+        let xs1 = glam::Vec4::new(planes[4].normal.x, planes[5].normal.x, 0.0, 0.0);
+        let ys1 = glam::Vec4::new(planes[4].normal.y, planes[5].normal.y, 0.0, 0.0);
+        let zs1 = glam::Vec4::new(planes[4].normal.z, planes[5].normal.z, 0.0, 0.0);
+        let ds1 = glam::Vec4::new(planes[4].d, planes[5].d, 1e6, 1e6);
+
         Self {
-            planes: [left, right, bottom, top, near, far],
+            planes,
+            xs: [xs0, xs1],
+            ys: [ys0, ys1],
+            zs: [zs0, zs1],
+            ds: [ds0, ds1],
         }
     }
 
-    /// Checks whether an Axis-Aligned Bounding Box (AABB) is inside or intersects the frustum.
+    /// SIMD-accelerated AABB frustum intersection test testing 4 planes simultaneously.
+    #[inline]
     pub fn intersects_aabb(&self, min: Vec3, max: Vec3) -> bool {
-        for plane in &self.planes {
-            // Find p-vertex (furthest along normal)
-            let p = Vec3::new(
-                if plane.normal.x >= 0.0 { max.x } else { min.x },
-                if plane.normal.y >= 0.0 { max.y } else { min.y },
-                if plane.normal.z >= 0.0 { max.z } else { min.z },
-            );
+        let min_x = glam::Vec4::splat(min.x);
+        let max_x = glam::Vec4::splat(max.x);
+        let min_y = glam::Vec4::splat(min.y);
+        let max_y = glam::Vec4::splat(max.y);
+        let min_z = glam::Vec4::splat(min.z);
+        let max_z = glam::Vec4::splat(max.z);
 
-            if plane.distance_to_point(p) < 0.0 {
+        for i in 0..2 {
+            let px = glam::Vec4::select(self.xs[i].cmpge(glam::Vec4::ZERO), max_x, min_x);
+            let py = glam::Vec4::select(self.ys[i].cmpge(glam::Vec4::ZERO), max_y, min_y);
+            let pz = glam::Vec4::select(self.zs[i].cmpge(glam::Vec4::ZERO), max_z, min_z);
+
+            let dist = self.xs[i] * px + self.ys[i] * py + self.zs[i] * pz + self.ds[i];
+            if dist.cmplt(glam::Vec4::ZERO).any() {
                 return false;
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_simd_frustum_matches_scalar() {
+        let vp = Mat4::perspective_rh(1.2, 16.0 / 9.0, 0.1, 100.0);
+        let frustum = Frustum::from_view_proj(vp);
+
+        // AABB directly in front of camera
+        let inside_min = Vec3::new(-1.0, -1.0, -10.0);
+        let inside_max = Vec3::new(1.0, 1.0, -8.0);
+        assert!(frustum.intersects_aabb(inside_min, inside_max));
+
+        // AABB far behind camera
+        let behind_min = Vec3::new(-1.0, -1.0, 5.0);
+        let behind_max = Vec3::new(1.0, 1.0, 10.0);
+        assert!(!frustum.intersects_aabb(behind_min, behind_max));
     }
 }

@@ -118,6 +118,31 @@ pub struct BakedModel {
     pub is_translucent: bool,
 }
 
+impl BakedModel {
+    /// Returns true if this model represents a standard 1x1x1 solid cube with 6 cullable faces.
+    pub fn is_standard_cube(&self) -> bool {
+        if self.quads.len() != 6 || self.is_translucent {
+            return false;
+        }
+        for q in &self.quads {
+            if q.cull_face != Some(q.face) {
+                return false;
+            }
+            for p in &q.positions {
+                if p[0] < -0.01 || p[0] > 1.01 || p[1] < -0.01 || p[1] > 1.01 || p[2] < -0.01 || p[2] > 1.01 {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Finds the baked quad corresponding to a specific face direction.
+    pub fn get_face_quad(&self, face: BlockFace) -> Option<&BakedQuad> {
+        self.quads.iter().find(|q| q.face == face)
+    }
+}
+
 /// Manages loading of raw models, parent resolution, and quad baking.
 pub struct ModelBakery {
     raw_models: HashMap<String, RawModelJson>,

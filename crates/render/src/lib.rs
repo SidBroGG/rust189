@@ -20,7 +20,7 @@ pub use frustum::{Frustum, Plane};
 pub use mesher::{BlockWorldAccessor, ChunkMesher, SectionMeshData};
 pub use occlusion::{SectionVisibility, VisGraph};
 pub use terrain_renderer::{TerrainRenderer, TerrainUniforms};
-pub use vertex::{BlockFace, BlockVertex};
+pub use vertex::{BlockFace, BlockVertex, SectionInstance, UnpackedBlockVertex};
 
 #[cfg(test)]
 mod tests {
@@ -35,8 +35,8 @@ mod tests {
     #[test]
     fn test_block_vertex_layout() {
         let layout = BlockVertex::desc();
-        assert_eq!(layout.array_stride, 48);
-        assert_eq!(layout.attributes.len(), 6);
+        assert_eq!(layout.array_stride, 16);
+        assert_eq!(layout.attributes.len(), 1);
     }
 
     #[test]

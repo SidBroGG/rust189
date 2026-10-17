@@ -164,6 +164,7 @@ pub struct GpuSectionMesh {
     pub aabb_min: Vec3,
     pub aabb_max: Vec3,
     pub center: Vec3,
+    pub instance_buf: Option<wgpu::Buffer>,
     pub opaque_vbuf: Option<wgpu::Buffer>,
     pub opaque_ibuf: Option<wgpu::Buffer>,
     pub opaque_index_count: u32,
@@ -326,6 +327,13 @@ impl ChunkMeshManager {
                 None
             };
 
+            let instance = crate::vertex::SectionInstance::new(key.0, key.2, key.1);
+            let instance_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("section-instance-buf"),
+                contents: bytemuck::bytes_of(&instance),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+
             self.gpu_meshes.insert(
                 key,
                 GpuSectionMesh {
@@ -333,6 +341,7 @@ impl ChunkMeshManager {
                     aabb_min,
                     aabb_max,
                     center,
+                    instance_buf: Some(instance_buf),
                     opaque_vbuf,
                     opaque_ibuf,
                     opaque_index_count: raw.mesh.opaque_indices.len() as u32,
@@ -530,6 +539,7 @@ mod tests {
             aabb_min: Vec3::new(0.0, 64.0, 0.0),
             aabb_max: Vec3::new(16.0, 80.0, 16.0),
             center: Vec3::new(8.0, 72.0, 8.0),
+            instance_buf: None,
             opaque_vbuf: None,
             opaque_ibuf: None,
             opaque_index_count: 0,
@@ -546,6 +556,7 @@ mod tests {
             aabb_min: Vec3::new(0.0, 64.0, 16.0),
             aabb_max: Vec3::new(16.0, 80.0, 32.0),
             center: Vec3::new(8.0, 72.0, 24.0),
+            instance_buf: None,
             opaque_vbuf: None,
             opaque_ibuf: None,
             opaque_index_count: 36, // dummy count
@@ -562,6 +573,7 @@ mod tests {
             aabb_min: Vec3::new(0.0, 64.0, 32.0),
             aabb_max: Vec3::new(16.0, 80.0, 48.0),
             center: Vec3::new(8.0, 72.0, 40.0),
+            instance_buf: None,
             opaque_vbuf: None,
             opaque_ibuf: None,
             opaque_index_count: 36, // dummy count

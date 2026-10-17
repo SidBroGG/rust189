@@ -7,7 +7,7 @@ use glam::Vec3;
 use std::borrow::Cow;
 use wgpu::util::DeviceExt;
 
-/// Uniforms buffer uploaded to GPU for terrain rendering (128 bytes, 16-byte aligned).
+/// Uniforms buffer uploaded to GPU for terrain rendering (144 bytes, 16-byte aligned).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct TerrainUniforms {
@@ -16,6 +16,7 @@ pub struct TerrainUniforms {
     pub fog_color: [f32; 4],
     pub fog_params: [f32; 4],
     pub sun_direction: [f32; 4],
+    pub atlas_tile_size: [f32; 4],
 }
 
 /// Renders voxel terrain meshes with dual-pass (Opaque/Cutout + Translucent) architecture.
@@ -32,6 +33,7 @@ pub struct TerrainRenderer {
     pub opaque_pipeline: wgpu::RenderPipeline,
     pub translucent_pipeline: wgpu::RenderPipeline,
     pub animations: Vec<crate::atlas::AnimatedTexture>,
+    pub atlas_tile_size: [f32; 4],
 }
 
 impl TerrainRenderer {
@@ -45,6 +47,10 @@ impl TerrainRenderer {
         height: u32,
         atlas: &TextureAtlas,
     ) -> Self {
+        let tile_w = 16.0 / atlas.width.max(1) as f32;
+        let tile_h = 16.0 / atlas.height.max(1) as f32;
+        let atlas_tile_size = [tile_w, tile_h, 0.0, 0.0];
+
         // 1. Create Terrain Uniform Buffer & Bind Group Layout
         let uniforms = TerrainUniforms {
             view_proj: glam::Mat4::IDENTITY.to_cols_array_2d(),
@@ -52,6 +58,7 @@ impl TerrainRenderer {
             fog_color: [0.7, 0.8, 1.0, 1.0],
             fog_params: [120.0, 180.0, 0.0, 0.0],
             sun_direction: [0.3, 0.8, 0.5, 0.0],
+            atlas_tile_size,
         };
 
         let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -201,7 +208,7 @@ impl TerrainRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[BlockVertex::desc()],
+                buffers: &[BlockVertex::desc(), crate::vertex::SectionInstance::desc()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -242,7 +249,7 @@ impl TerrainRenderer {
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[BlockVertex::desc()],
+                buffers: &[BlockVertex::desc(), crate::vertex::SectionInstance::desc()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -289,6 +296,7 @@ impl TerrainRenderer {
             opaque_pipeline,
             translucent_pipeline,
             animations: atlas.animations.clone(),
+            atlas_tile_size,
         }
     }
 
@@ -345,6 +353,7 @@ impl TerrainRenderer {
                 0.0,
             ],
             sun_direction: [sun_dir.x, sun_dir.y, sun_dir.z, 0.0],
+            atlas_tile_size: self.atlas_tile_size,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
@@ -478,8 +487,9 @@ impl TerrainRenderer {
         if !visible_opaque.is_empty() {
             rpass.set_pipeline(&self.opaque_pipeline);
             for mesh in visible_opaque {
-                if let (Some(vbuf), Some(ibuf)) = (&mesh.opaque_vbuf, &mesh.opaque_ibuf) {
+                if let (Some(vbuf), Some(ibuf), Some(inst_buf)) = (&mesh.opaque_vbuf, &mesh.opaque_ibuf, &mesh.instance_buf) {
                     rpass.set_vertex_buffer(0, vbuf.slice(..));
+                    rpass.set_vertex_buffer(1, inst_buf.slice(..));
                     rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
                     rpass.draw_indexed(0..mesh.opaque_index_count, 0, 0..1);
                 }
@@ -490,8 +500,9 @@ impl TerrainRenderer {
         if !visible_translucent.is_empty() {
             rpass.set_pipeline(&self.translucent_pipeline);
             for mesh in visible_translucent {
-                if let (Some(vbuf), Some(ibuf)) = (&mesh.translucent_vbuf, &mesh.translucent_ibuf) {
+                if let (Some(vbuf), Some(ibuf), Some(inst_buf)) = (&mesh.translucent_vbuf, &mesh.translucent_ibuf, &mesh.instance_buf) {
                     rpass.set_vertex_buffer(0, vbuf.slice(..));
+                    rpass.set_vertex_buffer(1, inst_buf.slice(..));
                     rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
                     rpass.draw_indexed(0..mesh.translucent_index_count, 0, 0..1);
                 }
