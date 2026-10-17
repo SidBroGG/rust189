@@ -424,8 +424,87 @@ impl ChunkMesher {
             None => return,
         };
 
-        // Top-left UV coordinates in the atlas
-        let uv_min = quad.uvs[0];
+        // If unmerged 1x1 standard quad: use exact canonical UVs directly without shader tiling!
+        if w == 1 && h == 1 {
+            let (v0, v1, v2, v3) = match face {
+                BlockFace::Up => {
+                    let y = (d + 1) as f32;
+                    (
+                        [u as f32, y, (v + 1) as f32],
+                        [(u + 1) as f32, y, (v + 1) as f32],
+                        [(u + 1) as f32, y, v as f32],
+                        [u as f32, y, v as f32],
+                    )
+                }
+                BlockFace::Down => {
+                    let y = d as f32;
+                    (
+                        [u as f32, y, v as f32],
+                        [(u + 1) as f32, y, v as f32],
+                        [(u + 1) as f32, y, (v + 1) as f32],
+                        [u as f32, y, (v + 1) as f32],
+                    )
+                }
+                BlockFace::North => {
+                    let z = d as f32;
+                    (
+                        [(u + 1) as f32, v as f32, z],
+                        [u as f32, v as f32, z],
+                        [u as f32, (v + 1) as f32, z],
+                        [(u + 1) as f32, (v + 1) as f32, z],
+                    )
+                }
+                BlockFace::South => {
+                    let z = (d + 1) as f32;
+                    (
+                        [u as f32, v as f32, z],
+                        [(u + 1) as f32, v as f32, z],
+                        [(u + 1) as f32, (v + 1) as f32, z],
+                        [u as f32, (v + 1) as f32, z],
+                    )
+                }
+                BlockFace::West => {
+                    let x = d as f32;
+                    (
+                        [x, v as f32, u as f32],
+                        [x, v as f32, (u + 1) as f32],
+                        [x, (v + 1) as f32, (u + 1) as f32],
+                        [x, (v + 1) as f32, u as f32],
+                    )
+                }
+                BlockFace::East => {
+                    let x = (d + 1) as f32;
+                    (
+                        [(x), v as f32, (u + 1) as f32],
+                        [(x), v as f32, u as f32],
+                        [(x), (v + 1) as f32, u as f32],
+                        [(x), (v + 1) as f32, (u + 1) as f32],
+                    )
+                }
+            };
+            let normal_idx = face.index();
+            let base_idx = target_vertices.len() as u32;
+
+            target_vertices.push(BlockVertex::pack(v0, quad.uvs[0], light, ao, tint, normal_idx, (0, 0), false));
+            target_vertices.push(BlockVertex::pack(v1, quad.uvs[1], light, ao, tint, normal_idx, (0, 0), false));
+            target_vertices.push(BlockVertex::pack(v2, quad.uvs[2], light, ao, tint, normal_idx, (0, 0), false));
+            target_vertices.push(BlockVertex::pack(v3, quad.uvs[3], light, ao, tint, normal_idx, (0, 0), false));
+
+            target_indices.extend_from_slice(&[
+                base_idx,
+                base_idx + 1,
+                base_idx + 2,
+                base_idx,
+                base_idx + 2,
+                base_idx + 3,
+            ]);
+            return;
+        }
+
+        // True minimum UV coordinates in the atlas for merged quads
+        let u_min = quad.uvs.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+        let v_min = quad.uvs.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+        let uv_min = [u_min, v_min];
 
         // 4 canonical vertices in counter-clockwise order matching block_model.rs
         let (v0, v1, v2, v3, uv0, uv1, uv2, uv3) = match face {
@@ -462,10 +541,10 @@ impl ChunkMesher {
                     [u as f32, v as f32, z],
                     [u as f32, (v + h) as f32, z],
                     [(u + w) as f32, (v + h) as f32, z],
-                    (w as u8, 0),
-                    (0, 0),
-                    (0, h as u8),
                     (w as u8, h as u8),
+                    (0, h as u8),
+                    (0, 0),
+                    (w as u8, 0),
                 )
             }
             BlockFace::South => {
@@ -475,10 +554,10 @@ impl ChunkMesher {
                     [(u + w) as f32, v as f32, z],
                     [(u + w) as f32, (v + h) as f32, z],
                     [u as f32, (v + h) as f32, z],
-                    (0, 0),
-                    (w as u8, 0),
-                    (w as u8, h as u8),
                     (0, h as u8),
+                    (w as u8, h as u8),
+                    (w as u8, 0),
+                    (0, 0),
                 )
             }
             BlockFace::West => {
@@ -488,10 +567,10 @@ impl ChunkMesher {
                     [x, v as f32, (u + w) as f32],
                     [x, (v + h) as f32, (u + w) as f32],
                     [x, (v + h) as f32, u as f32],
-                    (0, 0),
-                    (w as u8, 0),
-                    (w as u8, h as u8),
                     (0, h as u8),
+                    (w as u8, h as u8),
+                    (w as u8, 0),
+                    (0, 0),
                 )
             }
             BlockFace::East => {
@@ -501,10 +580,10 @@ impl ChunkMesher {
                     [(x), v as f32, u as f32],
                     [(x), (v + h) as f32, u as f32],
                     [(x), (v + h) as f32, (u + w) as f32],
-                    (w as u8, 0),
-                    (0, 0),
-                    (0, h as u8),
                     (w as u8, h as u8),
+                    (0, h as u8),
+                    (0, 0),
+                    (w as u8, 0),
                 )
             }
         };
