@@ -1489,4 +1489,74 @@ impl ClientboundTeamsPacket {
     }
 }
 
+/// Clientbound Explosion packet (0x27).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundExplosionPacket {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub radius: f32,
+    pub records: Vec<(i8, i8, i8)>,
+    pub player_motion_x: f32,
+    pub player_motion_y: f32,
+    pub player_motion_z: f32,
+}
+
+impl ClientboundExplosionPacket {
+    pub const PACKET_ID: i32 = 0x27;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 16 + 4 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 20,
+                available: buf.remaining(),
+            });
+        }
+        let x = buf.get_f32();
+        let y = buf.get_f32();
+        let z = buf.get_f32();
+        let radius = buf.get_f32();
+        let record_count = buf.get_i32();
+        if record_count < 0 || buf.remaining() < (record_count as usize) * 3 + 12 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: (record_count.max(0) as usize) * 3 + 12,
+                available: buf.remaining(),
+            });
+        }
+        let mut records = Vec::with_capacity(record_count as usize);
+        for _ in 0..record_count {
+            records.push((buf.get_i8(), buf.get_i8(), buf.get_i8()));
+        }
+        let player_motion_x = buf.get_f32();
+        let player_motion_y = buf.get_f32();
+        let player_motion_z = buf.get_f32();
+
+        Ok(Self {
+            x,
+            y,
+            z,
+            radius,
+            records,
+            player_motion_x,
+            player_motion_y,
+            player_motion_z,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&self.x.to_be_bytes());
+        buf.extend_from_slice(&self.y.to_be_bytes());
+        buf.extend_from_slice(&self.z.to_be_bytes());
+        buf.extend_from_slice(&self.radius.to_be_bytes());
+        buf.extend_from_slice(&(self.records.len() as i32).to_be_bytes());
+        for rec in &self.records {
+            buf.extend_from_slice(&[rec.0 as u8, rec.1 as u8, rec.2 as u8]);
+        }
+        buf.extend_from_slice(&self.player_motion_x.to_be_bytes());
+        buf.extend_from_slice(&self.player_motion_y.to_be_bytes());
+        buf.extend_from_slice(&self.player_motion_z.to_be_bytes());
+        Ok(())
+    }
+}
+
 

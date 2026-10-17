@@ -22,7 +22,10 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Icon, Window, WindowId};
-use world::{BlockState, EntityKind, FrameStage, PerformanceProfiler, World};
+use world::{
+    BlockState, CameraController, EntityKind, FrameStage, PerformanceProfiler, PlayerInput,
+    PlayerMovement, World,
+};
 
 pub struct App {
     pub config: ClientConfig,
@@ -40,6 +43,9 @@ pub struct App {
     pub session: Option<PlaySessionHandle>,
     pub last_movement_tick: Instant,
     pub last_physics_tick: Instant,
+    pub player: PlayerMovement,
+    pub camera_controller: CameraController,
+    pub player_entity_id: i32,
     pub player_pos: (f64, f64, f64),
     pub player_look: (f32, f32),
     pub player_on_ground: bool,
@@ -60,6 +66,8 @@ pub struct App {
 
 impl App {
     pub fn new(config: ClientConfig, config_path: PathBuf) -> Self {
+        let mut camera_controller = CameraController::new();
+        camera_controller.cinematic_camera = config.mouse.smooth_camera;
         Self {
             config,
             config_path,
@@ -75,6 +83,9 @@ impl App {
             session: None,
             last_movement_tick: Instant::now(),
             last_physics_tick: Instant::now(),
+            player: PlayerMovement::new(0.0, 64.0, 0.0),
+            camera_controller,
+            player_entity_id: 0,
             player_pos: (0.0, 64.0, 0.0),
             player_look: (0.0, 0.0),
             player_on_ground: false,
@@ -207,6 +218,7 @@ impl App {
                         gamemode = jg.game_mode,
                         "Joined game world (JoinGame)"
                     );
+                    self.player_entity_id = jg.entity_id;
                     self.world.dimension = jg.dimension;
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
@@ -249,47 +261,56 @@ impl App {
                     self.world.age = tu.world_age;
                 }
                 ClientboundPlayPacket::PlayerPosLook(pos_look) => {
-                    // Update position
+                    // Update player position according to relative/absolute flags
                     if (pos_look.flags & 0x01) != 0 {
-                        self.player_pos.0 += pos_look.x;
+                        self.player.pos.x += pos_look.x;
                     } else {
-                        self.player_pos.0 = pos_look.x;
+                        self.player.pos.x = pos_look.x;
                     }
 
                     if (pos_look.flags & 0x02) != 0 {
-                        self.player_pos.1 += pos_look.y;
+                        self.player.pos.y += pos_look.y;
                     } else {
-                        self.player_pos.1 = pos_look.y;
+                        self.player.pos.y = pos_look.y;
                     }
 
                     if (pos_look.flags & 0x04) != 0 {
-                        self.player_pos.2 += pos_look.z;
+                        self.player.pos.z += pos_look.z;
                     } else {
-                        self.player_pos.2 = pos_look.z;
+                        self.player.pos.z = pos_look.z;
                     }
 
                     if (pos_look.flags & 0x08) != 0 {
-                        self.player_look.0 += pos_look.yaw;
+                        self.player.yaw += pos_look.yaw;
                     } else {
-                        self.player_look.0 = pos_look.yaw;
+                        self.player.yaw = pos_look.yaw;
                     }
 
                     if (pos_look.flags & 0x10) != 0 {
-                        self.player_look.1 += pos_look.pitch;
+                        self.player.pitch += pos_look.pitch;
                     } else {
-                        self.player_look.1 = pos_look.pitch;
+                        self.player.pitch = pos_look.pitch;
                     }
+
+                    self.player.prev_pos = self.player.pos;
+                    self.player.prev_yaw = self.player.yaw;
+                    self.player.prev_pitch = self.player.pitch;
+                    self.player.motion = glam::DVec3::ZERO;
+
+                    self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
+                    self.player_look = (self.player.yaw, self.player.pitch);
+                    self.player_on_ground = self.player.on_ground;
 
                     // Confirm position back to server and mark spawned
                     self.has_spawned = true;
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                            x: self.player_pos.0,
-                            y: self.player_pos.1,
-                            z: self.player_pos.2,
-                            yaw: self.player_look.0,
-                            pitch: self.player_look.1,
-                            on_ground: self.player_on_ground,
+                            x: self.player.pos.x,
+                            y: self.player.pos.y,
+                            z: self.player.pos.z,
+                            yaw: self.player.yaw,
+                            pitch: self.player.pitch,
+                            on_ground: self.player.on_ground,
                         });
                     }
 
@@ -300,13 +321,14 @@ impl App {
                         }
                     }
 
+                    let eye_h = self.player.get_eye_height() as f32;
                     self.camera.position = glam::Vec3::new(
-                        self.player_pos.0 as f32,
-                        (self.player_pos.1 + 1.62) as f32,
-                        self.player_pos.2 as f32,
+                        self.player.pos.x as f32,
+                        (self.player.pos.y as f32) + eye_h,
+                        self.player.pos.z as f32,
                     );
-                    self.camera.yaw = self.player_look.0;
-                    self.camera.pitch = self.player_look.1;
+                    self.camera.yaw = self.player.yaw;
+                    self.camera.pitch = self.player.pitch;
 
                     // Ensure mouse is captured on spawn
                     if !self.mouse_grabbed {
@@ -663,11 +685,25 @@ impl App {
                     self.world.entity_tracker.animation(anim.entity_id, anim.animation);
                 }
                 ClientboundPlayPacket::EntityVelocity(ev) => {
+                    if ev.entity_id == self.player_entity_id {
+                        self.player.apply_velocity(
+                            ev.velocity_x as f64 / 8000.0,
+                            ev.velocity_y as f64 / 8000.0,
+                            ev.velocity_z as f64 / 8000.0,
+                        );
+                    }
                     self.world.entity_tracker.velocity(
                         ev.entity_id,
                         ev.velocity_x,
                         ev.velocity_y,
                         ev.velocity_z,
+                    );
+                }
+                ClientboundPlayPacket::Explosion(exp) => {
+                    self.player.apply_explosion(
+                        exp.player_motion_x as f64,
+                        exp.player_motion_y as f64,
+                        exp.player_motion_z as f64,
                     );
                 }
                 ClientboundPlayPacket::EntityEquipment(eq) => {
@@ -694,6 +730,66 @@ impl App {
         if self.last_physics_tick.elapsed() >= Duration::from_millis(50) {
             self.last_physics_tick = Instant::now();
             self.world.entity_tracker.tick();
+
+            if self.has_spawned {
+                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
+                let mut input = PlayerInput::default();
+
+                if is_in_game && !cursor_needed {
+                    if self.pressed_keys.contains(&KeyCode::KeyW) { input.move_forward += 1.0; }
+                    if self.pressed_keys.contains(&KeyCode::KeyS) { input.move_forward -= 1.0; }
+                    if self.pressed_keys.contains(&KeyCode::KeyA) { input.move_strafe += 1.0; }
+                    if self.pressed_keys.contains(&KeyCode::KeyD) { input.move_strafe -= 1.0; }
+                    input.jump = self.pressed_keys.contains(&KeyCode::Space);
+                    input.sneak = self.pressed_keys.contains(&KeyCode::ShiftLeft) || self.pressed_keys.contains(&KeyCode::ShiftRight);
+                    input.sprint = self.pressed_keys.contains(&KeyCode::ControlLeft) || self.pressed_keys.contains(&KeyCode::ControlRight);
+                }
+
+                let prev_sprint = self.player.is_sprinting;
+                let prev_sneak = self.player.is_sneaking;
+
+                self.player.tick(&self.world, &input);
+
+                self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
+                self.player_look = (self.player.yaw, self.player.pitch);
+                self.player_on_ground = self.player.on_ground;
+
+                if let Some(sm) = &mut self.screen_manager {
+                    if let Some(ig) = &mut sm.in_game {
+                        ig.pos = self.player_pos;
+                        ig.look = self.player_look;
+                    }
+                }
+
+                // Send entity action packets if sprint or sneak state changed (anticheat compliance)
+                if self.player.is_sprinting != prev_sprint {
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::EntityAction {
+                            entity_id: self.player_entity_id,
+                            action: if self.player.is_sprinting {
+                                protocol::EntityAction::StartSprinting
+                            } else {
+                                protocol::EntityAction::StopSprinting
+                            },
+                            jump_boost: 0,
+                        });
+                    }
+                }
+                if self.player.is_sneaking != prev_sneak {
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::EntityAction {
+                            entity_id: self.player_entity_id,
+                            action: if self.player.is_sneaking {
+                                protocol::EntityAction::StartSneaking
+                            } else {
+                                protocol::EntityAction::StopSneaking
+                            },
+                            jump_boost: 0,
+                        });
+                    }
+                }
+            }
         }
 
         // 20 TPS Movement Tick: Send position updates only after terrain/spawn received
@@ -971,6 +1067,26 @@ impl ApplicationHandler for App {
                             "Toggled fullscreen mode via keybind"
                         );
                     }
+
+                    let matches_perspective = matches_winit_key(
+                        &self.config.keybinds.toggle_perspective,
+                        &key_event.logical_key,
+                        &key_event.physical_key,
+                    );
+                    if matches_perspective {
+                        self.camera_controller.perspective = self.camera_controller.perspective.cycle();
+                        info!(perspective = ?self.camera_controller.perspective, "Cycled camera perspective (F5)");
+                    }
+
+                    let matches_cinematic = matches_winit_key(
+                        &self.config.keybinds.toggle_cinematic,
+                        &key_event.logical_key,
+                        &key_event.physical_key,
+                    );
+                    if matches_cinematic {
+                        self.camera_controller.cinematic_camera = !self.camera_controller.cinematic_camera;
+                        info!(cinematic = self.camera_controller.cinematic_camera, "Toggled cinematic camera (F8)");
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {
@@ -1200,32 +1316,19 @@ impl ApplicationHandler for App {
                     GuiOutput::None => {}
                 }
 
-                // Camera and player movement update (WASD / Ctrl sprint / Shift sneak)
-                if self.mouse_grabbed {
-                    let speed = if self.pressed_keys.contains(&KeyCode::ControlLeft) {
-                        0.4f32
-                    } else if self.pressed_keys.contains(&KeyCode::ShiftLeft) {
-                        0.08f32
-                    } else {
-                        0.2f32
-                    };
-
-                    let mut forward = 0.0f32;
-                    let mut strafe = 0.0f32;
-
-                    if self.pressed_keys.contains(&KeyCode::KeyW) { forward += speed; }
-                    if self.pressed_keys.contains(&KeyCode::KeyS) { forward -= speed; }
-                    if self.pressed_keys.contains(&KeyCode::KeyD) { strafe += speed; }
-                    if self.pressed_keys.contains(&KeyCode::KeyA) { strafe -= speed; }
-
-                    if forward != 0.0 || strafe != 0.0 {
-                        self.camera.move_horizontal(forward, strafe);
-                        self.player_pos = (
-                            self.camera.position.x as f64,
-                            (self.camera.position.y - 1.62) as f64,
-                            self.camera.position.z as f64,
-                        );
-                    }
+                // Camera and player movement update (interpolated from 20 TPS physics ticks)
+                if self.has_spawned {
+                    let dt_secs = self.last_physics_tick.elapsed().as_secs_f32();
+                    let partial_ticks = (dt_secs / 0.05).clamp(0.0, 1.0);
+                    let pose = self.camera_controller.compute_camera_pose(
+                        &self.world,
+                        &self.player,
+                        partial_ticks,
+                        self.config.video.view_bobbing,
+                    );
+                    self.camera.position = pose.position;
+                    self.camera.yaw = pose.yaw;
+                    self.camera.pitch = pose.pitch;
                 }
 
                 // Acquire next swapchain surface texture
@@ -1387,9 +1490,21 @@ impl ApplicationHandler for App {
     ) {
         if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             if self.mouse_grabbed {
-                let sensitivity = 0.15f32;
-                self.camera.rotate(dx as f32 * sensitivity, dy as f32 * sensitivity);
-                self.player_look = (self.camera.yaw, self.camera.pitch);
+                let sensitivity = self.config.mouse.sensitivity;
+                let invert_y = self.config.mouse.invert_y;
+                self.camera_controller.handle_mouse_input(
+                    &mut self.player,
+                    dx as f32,
+                    dy as f32,
+                    sensitivity,
+                    invert_y,
+                );
+                self.player_look = (self.player.yaw, self.player.pitch);
+                if let Some(sm) = &mut self.screen_manager {
+                    if let Some(ig) = &mut sm.in_game {
+                        ig.look = self.player_look;
+                    }
+                }
             }
         }
     }

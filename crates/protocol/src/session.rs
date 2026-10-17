@@ -39,6 +39,11 @@ pub enum OutgoingPlayPacket {
         chat_colors: bool,
         skin_parts: u8,
     },
+    EntityAction {
+        entity_id: i32,
+        action: EntityAction,
+        jump_boost: i32,
+    },
 }
 
 impl OutgoingPlayPacket {
@@ -108,6 +113,15 @@ impl OutgoingPlayPacket {
                 );
                 pkt.encode(buf)?;
                 Ok(ServerboundClientSettingsPacket::PACKET_ID)
+            }
+            Self::EntityAction {
+                entity_id,
+                action,
+                jump_boost,
+            } => {
+                let pkt = ServerboundEntityActionPacket::new(*entity_id, *action, *jump_boost);
+                pkt.encode(buf)?;
+                Ok(ServerboundEntityActionPacket::PACKET_ID)
             }
         }
     }

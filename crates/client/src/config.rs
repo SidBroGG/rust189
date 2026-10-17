@@ -12,6 +12,8 @@ pub struct ClientConfig {
     pub video: VideoConfig,
     pub audio: AudioConfig,
     pub keybinds: KeybindsConfig,
+    #[serde(default)]
+    pub mouse: MouseConfig,
     pub network: NetworkConfig,
 }
 
@@ -23,6 +25,7 @@ impl Default for ClientConfig {
             video: VideoConfig::default(),
             audio: AudioConfig::default(),
             keybinds: KeybindsConfig::default(),
+            mouse: MouseConfig::default(),
             network: NetworkConfig::default(),
         }
     }
@@ -200,6 +203,8 @@ pub struct KeybindsConfig {
     pub fullscreen_toggle: String,
     #[serde(default = "default_toggle_fps")]
     pub toggle_fps: String,
+    #[serde(default = "default_toggle_cinematic")]
+    pub toggle_cinematic: String,
 }
 
 fn default_forward() -> String { "W".to_string() }
@@ -217,6 +222,7 @@ fn default_toggle_perspective() -> String { "F5".to_string() }
 fn default_zoom() -> String { "C".to_string() }
 fn default_fullscreen_toggle() -> String { "F11".to_string() }
 fn default_toggle_fps() -> String { "F3".to_string() }
+fn default_toggle_cinematic() -> String { "F8".to_string() }
 
 impl Default for KeybindsConfig {
     fn default() -> Self {
@@ -236,6 +242,7 @@ impl Default for KeybindsConfig {
             zoom: default_zoom(),
             fullscreen_toggle: default_fullscreen_toggle(),
             toggle_fps: default_toggle_fps(),
+            toggle_cinematic: default_toggle_cinematic(),
         }
     }
 }
@@ -257,6 +264,32 @@ impl KeybindsConfig {
         self.zoom = standardize_key(&self.zoom);
         self.fullscreen_toggle = standardize_key(&self.fullscreen_toggle);
         self.toggle_fps = standardize_key(&self.toggle_fps);
+        self.toggle_cinematic = standardize_key(&self.toggle_cinematic);
+    }
+}
+
+/// Mouse sensitivity and camera settings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MouseConfig {
+    #[serde(default = "default_mouse_sensitivity")]
+    pub sensitivity: f32,
+    #[serde(default)]
+    pub invert_y: bool,
+    #[serde(default)]
+    pub smooth_camera: bool,
+}
+
+fn default_mouse_sensitivity() -> f32 {
+    0.5
+}
+
+impl Default for MouseConfig {
+    fn default() -> Self {
+        Self {
+            sensitivity: default_mouse_sensitivity(),
+            invert_y: false,
+            smooth_camera: false,
+        }
     }
 }
 
@@ -374,6 +407,7 @@ impl From<&gui::KeybindsSettings> for KeybindsConfig {
             zoom: s.zoom.clone(),
             fullscreen_toggle: s.fullscreen_toggle.clone(),
             toggle_fps: s.toggle_fps.clone(),
+            toggle_cinematic: "F8".to_string(),
         }
     }
 }

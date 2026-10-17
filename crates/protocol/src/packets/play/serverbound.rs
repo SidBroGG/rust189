@@ -185,3 +185,42 @@ impl ServerboundClientSettingsPacket {
         Ok(())
     }
 }
+
+/// Actions for Serverbound EntityAction packet (0x0B).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntityAction {
+    StartSneaking = 0,
+    StopSneaking = 1,
+    LeaveBed = 2,
+    StartSprinting = 3,
+    StopSprinting = 4,
+    RidingJump = 5,
+    OpenInventory = 6,
+}
+
+/// Serverbound EntityAction packet (0x0B).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundEntityActionPacket {
+    pub entity_id: i32,
+    pub action: EntityAction,
+    pub jump_boost: i32,
+}
+
+impl ServerboundEntityActionPacket {
+    pub const PACKET_ID: i32 = 0x0B;
+
+    pub fn new(entity_id: i32, action: EntityAction, jump_boost: i32) -> Self {
+        Self {
+            entity_id,
+            action,
+            jump_boost,
+        }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.entity_id);
+        buf.write_varint(self.action as i32);
+        buf.write_varint(self.jump_boost);
+        Ok(())
+    }
+}
