@@ -1,4 +1,5 @@
 use crate::block::BlockState;
+use crate::palette::PalettedContainer;
 
 pub const SECTION_WIDTH: usize = 16;
 pub const SECTION_HEIGHT: usize = 16;
@@ -6,10 +7,10 @@ pub const SECTION_DEPTH: usize = 16;
 pub const SECTION_BLOCK_COUNT: usize = SECTION_WIDTH * SECTION_HEIGHT * SECTION_DEPTH; // 4096
 pub const NIBBLE_ARRAY_SIZE: usize = SECTION_BLOCK_COUNT / 2; // 2048
 
-/// Represents a 16x16x16 sub-chunk section.
+/// Represents a 16x16x16 sub-chunk section backed by an adaptive PalettedContainer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChunkSection {
-    pub blocks: Box<[u16; SECTION_BLOCK_COUNT]>,
+    pub blocks: PalettedContainer,
     pub block_light: Box<[u8; NIBBLE_ARRAY_SIZE]>,
     pub sky_light: Option<Box<[u8; NIBBLE_ARRAY_SIZE]>>,
     non_air_count: u16,
@@ -30,7 +31,7 @@ impl ChunkSection {
         };
 
         Self {
-            blocks: vec![0; SECTION_BLOCK_COUNT].into_boxed_slice().try_into().unwrap(),
+            blocks: PalettedContainer::new_empty(),
             block_light: vec![0; NIBBLE_ARRAY_SIZE].into_boxed_slice().try_into().unwrap(),
             sky_light: sky,
             non_air_count: 0,
@@ -47,7 +48,7 @@ impl ChunkSection {
         if x >= SECTION_WIDTH || y >= SECTION_HEIGHT || z >= SECTION_DEPTH {
             return BlockState::AIR;
         }
-        BlockState(self.blocks[Self::coord_index(x, y, z)])
+        self.blocks.get(x, y, z)
     }
 
     #[inline]
@@ -55,14 +56,16 @@ impl ChunkSection {
         if x >= SECTION_WIDTH || y >= SECTION_HEIGHT || z >= SECTION_DEPTH {
             return;
         }
-        let idx = Self::coord_index(x, y, z);
-        let old = self.blocks[idx];
-        if old == 0 && state.0 != 0 {
+        let old = self.blocks.get(x, y, z);
+        if old == state {
+            return;
+        }
+        if old.is_air() && !state.is_air() {
             self.non_air_count += 1;
-        } else if old != 0 && state.0 == 0 && self.non_air_count > 0 {
+        } else if !old.is_air() && state.is_air() && self.non_air_count > 0 {
             self.non_air_count -= 1;
         }
-        self.blocks[idx] = state.0;
+        self.blocks.set(x, y, z, state);
     }
 
     #[inline]
@@ -116,8 +119,39 @@ impl ChunkSection {
     }
 
     pub fn recalculate_non_air_count(&mut self) {
-        let count = self.blocks.iter().filter(|&&id| id != 0).count();
-        self.non_air_count = count as u16;
+        self.non_air_count = self.blocks.count_non_air() as u16;
+    }
+
+    /// Loads 4096 blocks from little-endian byte slice into adaptive paletted container.
+    pub fn load_blocks_from_raw_slice(&mut self, slice: &[u8]) {
+        self.blocks = PalettedContainer::from_raw_slice(slice);
+        self.non_air_count = self.blocks.count_non_air() as u16;
+    }
+
+    /// Writes blocks to raw little-endian byte buffer.
+    pub fn write_blocks_to_raw(&self, buf: &mut Vec<u8>) {
+        self.blocks.write_linear_bytes(buf);
+    }
+
+    /// Fills 64-word bitmask of opaque blocks for BFS occlusion culling.
+    #[inline]
+    pub fn fill_opaque_bits(&self, opaque_bits: &mut [u64; 64]) -> usize {
+        self.blocks.fill_opaque_bits(opaque_bits)
+    }
+
+    /// Compacts palette storage to free unused memory.
+    pub fn compact(&mut self) {
+        self.blocks.compact();
+    }
+
+    /// Total heap memory usage in bytes for this section.
+    pub fn heap_memory_usage(&self) -> usize {
+        let mut total = self.blocks.heap_memory_usage();
+        total += NIBBLE_ARRAY_SIZE; // block_light
+        if self.sky_light.is_some() {
+            total += NIBBLE_ARRAY_SIZE;
+        }
+        total
     }
 }
 

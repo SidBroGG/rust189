@@ -169,12 +169,7 @@ impl ChunkColumn {
                 }
 
                 let slice = &data[offset..offset + block_bytes];
-                for k in 0..SECTION_BLOCK_COUNT {
-                    let low = slice[k * 2] as u16;
-                    let high = slice[k * 2 + 1] as u16;
-                    sec.blocks[k] = (high << 8) | low;
-                }
-                sec.recalculate_non_air_count();
+                sec.load_blocks_from_raw_slice(slice);
                 offset += block_bytes;
             } else if ground_up {
                 self.sections[i] = None;
@@ -249,10 +244,7 @@ impl ChunkColumn {
         for i in 0..SECTIONS_PER_CHUNK {
             if (bit_mask & (1 << i)) != 0 {
                 if let Some(sec) = &self.sections[i] {
-                    for &b in sec.blocks.iter() {
-                        buf.push((b & 0xFF) as u8);
-                        buf.push((b >> 8) as u8);
-                    }
+                    sec.write_blocks_to_raw(&mut buf);
                 } else {
                     buf.resize(buf.len() + SECTION_BLOCK_COUNT * 2, 0);
                 }

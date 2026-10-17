@@ -1,5 +1,7 @@
 use crate::vertex::BlockFace;
-use world::{BlockState, ChunkSection};
+use world::ChunkSection;
+#[cfg(test)]
+use world::BlockState;
 
 /// 6x6 visibility bitmask (36 bits) indicating whether light/sight can pass
 /// between each pair of faces of a 16x16x16 chunk section.
@@ -80,14 +82,7 @@ impl VisGraph {
     /// Computes the 6x6 face visibility connectivity matrix for a chunk section.
     pub fn compute_visibility(section: &ChunkSection) -> SectionVisibility {
         let mut opaque_bits = [0u64; 64];
-        let mut opaque_count = 0usize;
-
-        for (idx, &raw) in section.blocks.iter().enumerate() {
-            if raw != 0 && BlockState(raw).is_opaque() {
-                opaque_bits[idx >> 6] |= 1 << (idx & 63);
-                opaque_count += 1;
-            }
-        }
+        let opaque_count = section.fill_opaque_bits(&mut opaque_bits);
 
         // Fast path 1: 0 opaque blocks (empty air or fully non-opaque foliage/glass)
         if opaque_count == 0 {
