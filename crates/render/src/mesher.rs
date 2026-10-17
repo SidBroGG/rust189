@@ -228,6 +228,42 @@ impl ChunkMesher {
                     let is_translucent = model.is_translucent;
                     let block_id = block.id();
                     let is_leaf = matches!(block_id, 18 | 161);
+                    let is_cutout = matches!(
+                        block_id,
+                        6
+                        | 18 | 161
+                        | 20
+                        | 27 | 28 | 66 | 157
+                        | 30
+                        | 31 | 32
+                        | 37 | 38
+                        | 39 | 40
+                        | 50 | 75 | 76
+                        | 51
+                        | 55
+                        | 59 | 141 | 142
+                        | 64 | 71 | 193 | 194 | 195 | 196 | 197
+                        | 65
+                        | 69
+                        | 77 | 143
+                        | 81
+                        | 83
+                        | 96 | 167
+                        | 101
+                        | 102
+                        | 104 | 105
+                        | 106
+                        | 107 | 183 | 184 | 185 | 186 | 187
+                        | 111
+                        | 115
+                        | 117
+                        | 118
+                        | 120
+                        | 122
+                        | 131 | 132
+                        | 140
+                        | 175
+                    );
 
                     let (target_vertices, target_indices) = if is_translucent {
                         (
@@ -297,6 +333,7 @@ impl ChunkMesher {
                                     normal_index,
                                     (0, 0),
                                     false,
+                                    is_cutout,
                                 ));
                             }
 
@@ -346,6 +383,7 @@ impl ChunkMesher {
                                     normal_index,
                                     (0, 0),
                                     false,
+                                    is_cutout,
                                 ));
                             }
 
@@ -485,10 +523,10 @@ impl ChunkMesher {
             let normal_idx = face.index();
             let base_idx = target_vertices.len() as u32;
 
-            target_vertices.push(BlockVertex::pack(v0, quad.uvs[0], light, ao, tint, normal_idx, (0, 0), false));
-            target_vertices.push(BlockVertex::pack(v1, quad.uvs[1], light, ao, tint, normal_idx, (0, 0), false));
-            target_vertices.push(BlockVertex::pack(v2, quad.uvs[2], light, ao, tint, normal_idx, (0, 0), false));
-            target_vertices.push(BlockVertex::pack(v3, quad.uvs[3], light, ao, tint, normal_idx, (0, 0), false));
+            target_vertices.push(BlockVertex::pack(v0, quad.uvs[0], light, ao, tint, normal_idx, (0, 0), false, false));
+            target_vertices.push(BlockVertex::pack(v1, quad.uvs[1], light, ao, tint, normal_idx, (0, 0), false, false));
+            target_vertices.push(BlockVertex::pack(v2, quad.uvs[2], light, ao, tint, normal_idx, (0, 0), false, false));
+            target_vertices.push(BlockVertex::pack(v3, quad.uvs[3], light, ao, tint, normal_idx, (0, 0), false, false));
 
             target_indices.extend_from_slice(&[
                 base_idx,
@@ -591,10 +629,10 @@ impl ChunkMesher {
         let normal_idx = face.index();
         let base_idx = target_vertices.len() as u32;
 
-        target_vertices.push(BlockVertex::pack(v0, uv_min, light, ao, tint, normal_idx, uv0, true));
-        target_vertices.push(BlockVertex::pack(v1, uv_min, light, ao, tint, normal_idx, uv1, true));
-        target_vertices.push(BlockVertex::pack(v2, uv_min, light, ao, tint, normal_idx, uv2, true));
-        target_vertices.push(BlockVertex::pack(v3, uv_min, light, ao, tint, normal_idx, uv3, true));
+        target_vertices.push(BlockVertex::pack(v0, uv_min, light, ao, tint, normal_idx, uv0, true, false));
+        target_vertices.push(BlockVertex::pack(v1, uv_min, light, ao, tint, normal_idx, uv1, true, false));
+        target_vertices.push(BlockVertex::pack(v2, uv_min, light, ao, tint, normal_idx, uv2, true, false));
+        target_vertices.push(BlockVertex::pack(v3, uv_min, light, ao, tint, normal_idx, uv3, true, false));
 
         target_indices.extend_from_slice(&[
             base_idx,

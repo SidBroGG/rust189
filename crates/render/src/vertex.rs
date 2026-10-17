@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 /// - `data0`: local_pos (X: 10 bits, Y: 10 bits, Z: 10 bits, scaled by 32, range 0..512), ao (2 bits).
 /// - `data1`: atlas UV coordinates (U: 16 bits, V: 16 bits, normalized 0..65535).
 /// - `data2`: color tint (R: 8 bits, G: 8 bits, B: 8 bits), light (block_light: 4 bits, sky_light: 4 bits).
-/// - `data3`: greedy meshing local UV (lu: 8 bits, lv: 8 bits), is_greedy flag (1 bit), normal_index (3 bits), reserved (12 bits).
+/// - `data3`: greedy meshing local UV (lu: 8 bits, lv: 8 bits), is_greedy flag (1 bit), normal_index (3 bits), is_cutout (1 bit), reserved (11 bits).
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Pod, Zeroable)]
 pub struct BlockVertex {
@@ -26,6 +26,7 @@ pub struct UnpackedBlockVertex {
     pub normal_index: u32,
     pub greedy_uv: (u8, u8),
     pub is_greedy: bool,
+    pub is_cutout: bool,
 }
 
 impl BlockVertex {
@@ -39,6 +40,7 @@ impl BlockVertex {
         normal_index: u32,
         greedy_uv: (u8, u8),
         is_greedy: bool,
+        is_cutout: bool,
     ) -> Self {
         let px = ((local_pos[0].clamp(0.0, 16.0) * 32.0).round() as u32) & 1023;
         let py = ((local_pos[1].clamp(0.0, 16.0) * 32.0).round() as u32) & 1023;
@@ -61,7 +63,8 @@ impl BlockVertex {
         let lv = (greedy_uv.1 as u32) & 255;
         let greedy_flag = if is_greedy { 1u32 } else { 0u32 };
         let norm = (normal_index & 7) as u32;
-        let data3 = lu | (lv << 8) | (greedy_flag << 16) | (norm << 17);
+        let cutout_flag = if is_cutout { 1u32 } else { 0u32 };
+        let data3 = lu | (lv << 8) | (greedy_flag << 16) | (norm << 17) | (cutout_flag << 20);
 
         Self {
             data0,
@@ -91,6 +94,7 @@ impl BlockVertex {
         let lv = ((self.data3 >> 8) & 255) as u8;
         let is_greedy = ((self.data3 >> 16) & 1) != 0;
         let normal_index = (self.data3 >> 17) & 7;
+        let is_cutout = ((self.data3 >> 20) & 1) != 0;
 
         UnpackedBlockVertex {
             local_pos: [px, py, pz],
@@ -101,6 +105,7 @@ impl BlockVertex {
             normal_index,
             greedy_uv: (lu, lv),
             is_greedy,
+            is_cutout,
         }
     }
 
@@ -265,6 +270,7 @@ mod tests {
         let normal_index = 3u32;
         let greedy_uv = (4u8, 2u8);
         let is_greedy = true;
+        let is_cutout = true;
 
         let packed = BlockVertex::pack(
             local_pos,
@@ -275,6 +281,7 @@ mod tests {
             normal_index,
             greedy_uv,
             is_greedy,
+            is_cutout,
         );
 
         let unpacked = packed.unpack();
@@ -295,5 +302,6 @@ mod tests {
         // Check greedy params match exactly
         assert_eq!(unpacked.greedy_uv, greedy_uv);
         assert_eq!(unpacked.is_greedy, is_greedy);
+        assert_eq!(unpacked.is_cutout, is_cutout);
     }
 }

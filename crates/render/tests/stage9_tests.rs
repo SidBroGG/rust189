@@ -159,6 +159,7 @@ fn test_block_vertex_bit_packing_roundtrip_and_memory_footprint() {
             normal_index: 0,
             greedy_uv: (0, 0),
             is_greedy: false,
+            is_cutout: false,
         },
         UnpackedBlockVertex {
             local_pos: [16.0, 16.0, 16.0],
@@ -169,6 +170,7 @@ fn test_block_vertex_bit_packing_roundtrip_and_memory_footprint() {
             normal_index: 5,
             greedy_uv: (16, 16),
             is_greedy: true,
+            is_cutout: true,
         },
         UnpackedBlockVertex {
             local_pos: [8.5, 4.25, 12.125],
@@ -179,6 +181,7 @@ fn test_block_vertex_bit_packing_roundtrip_and_memory_footprint() {
             normal_index: 1,
             greedy_uv: (4, 12),
             is_greedy: true,
+            is_cutout: false,
         },
     ];
 
@@ -192,6 +195,7 @@ fn test_block_vertex_bit_packing_roundtrip_and_memory_footprint() {
             expected.normal_index,
             expected.greedy_uv,
             expected.is_greedy,
+            expected.is_cutout,
         );
 
         let unpacked = packed.unpack();
@@ -217,6 +221,9 @@ fn test_block_vertex_bit_packing_roundtrip_and_memory_footprint() {
         // Greedy flag & UV
         assert_eq!(unpacked.is_greedy, expected.is_greedy);
         assert_eq!(unpacked.greedy_uv, expected.greedy_uv);
+
+        // Cutout flag
+        assert_eq!(unpacked.is_cutout, expected.is_cutout);
     }
 }
 

@@ -47,8 +47,8 @@ impl TerrainRenderer {
         height: u32,
         atlas: &TextureAtlas,
     ) -> Self {
-        let tile_w = 16.0 / atlas.width.max(1) as f32;
-        let tile_h = 16.0 / atlas.height.max(1) as f32;
+        let tile_w = (16.0 - 0.10) / atlas.width.max(1) as f32;
+        let tile_h = (16.0 - 0.10) / atlas.height.max(1) as f32;
         let atlas_tile_size = [tile_w, tile_h, 0.0, 0.0];
 
         // 1. Create Terrain Uniform Buffer & Bind Group Layout

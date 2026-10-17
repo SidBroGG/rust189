@@ -31,6 +31,7 @@ struct VertexOutput {
     @location(5) world_dist: f32,
     @location(6) local_uv: vec2<f32>,
     @location(7) is_greedy: u32,
+    @location(8) is_cutout: u32,
 };
 
 @vertex
@@ -84,12 +85,13 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     out.normal_index = normal_idx;
     out.world_dist = distance(world_pos, uniforms.camera_pos.xyz);
 
-    // Unpack greedy local uv & flag
+    // Unpack greedy local uv & flag & cutout flag
     out.local_uv = vec2<f32>(
         f32(d3 & 255u),
         f32((d3 >> 8u) & 255u)
     );
     out.is_greedy = (d3 >> 16u) & 1u;
+    out.is_cutout = (d3 >> 20u) & 1u;
 
     return out;
 }
@@ -99,7 +101,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var tex_color: vec4<f32>;
 
     if (in.is_greedy != 0u) {
-        let tile_uv = fract(in.local_uv);
+        let tile_uv = clamp(fract(in.local_uv), vec2<f32>(0.0), vec2<f32>(0.9999));
         let sample_uv = in.uv + tile_uv * uniforms.atlas_tile_size.xy;
         let ddx = dpdx(in.local_uv) * uniforms.atlas_tile_size.xy;
         let ddy = dpdy(in.local_uv) * uniforms.atlas_tile_size.xy;
@@ -108,8 +110,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         tex_color = textureSample(atlas_texture, atlas_sampler, in.uv);
     }
 
-    // Alpha test for cutout transparent blocks
-    if (tex_color.a < 0.1) {
+    // Alpha test only for cutout transparent blocks (leaves, tall grass, saplings, glass, etc.)
+    // Solid opaque blocks never discard, eliminating pixel-sized transparent seams at block borders.
+    if (in.is_cutout != 0u && tex_color.a < 0.1) {
         discard;
     }
 
