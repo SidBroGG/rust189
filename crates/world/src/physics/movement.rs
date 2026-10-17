@@ -1,10 +1,35 @@
 use crate::physics::aabb::AABB;
 use crate::physics::collision::{
-    get_block_slipperiness, is_ladder_block, is_lava_block, is_water_block, is_web_block,
+    get_block_slipperiness, is_any_liquid_in_aabb, is_ladder_block, is_lava_block, is_water_block,
+    is_web_block,
 };
 use crate::world::World;
 use glam::DVec3;
 use std::f64::consts::PI;
+
+/// Player capabilities ported from MCP `PlayerCapabilities`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlayerCapabilities {
+    pub is_flying: bool,
+    pub allow_flying: bool,
+    pub is_creative: bool,
+    pub is_invulnerable: bool,
+    pub fly_speed: f32,
+    pub walk_speed: f32,
+}
+
+impl Default for PlayerCapabilities {
+    fn default() -> Self {
+        Self {
+            is_flying: false,
+            allow_flying: false,
+            is_creative: false,
+            is_invulnerable: false,
+            fly_speed: 0.05,
+            walk_speed: 0.1,
+        }
+    }
+}
 
 /// User movement input state for one tick.
 #[derive(Debug, Clone, Copy, Default)]
@@ -42,6 +67,13 @@ pub struct PlayerMovement {
     pub fall_distance: f32,
     pub food_level: f32,
     pub is_using_item: bool,
+
+    // Flight and abilities (MCP `EntityPlayerSP`)
+    pub capabilities: PlayerCapabilities,
+    pub jump_ticks: u32,
+    pub fly_toggle_timer: u32,
+    pub was_jump_pressed: bool,
+    pub abilities_dirty: bool,
 
     // Camera and view bobbing state
     pub distance_walked_modified: f32,
@@ -85,6 +117,12 @@ impl PlayerMovement {
             fall_distance: 0.0,
             food_level: 20.0,
             is_using_item: false,
+
+            capabilities: PlayerCapabilities::default(),
+            jump_ticks: 0,
+            fly_toggle_timer: 0,
+            was_jump_pressed: false,
+            abilities_dirty: false,
 
             distance_walked_modified: 0.0,
             prev_distance_walked_modified: 0.0,
@@ -150,7 +188,6 @@ impl PlayerMovement {
         let max_z = (bb.max_z + 1.0).floor() as i32;
 
         self.is_in_web = false;
-        self.is_in_water = false;
         self.is_in_lava = false;
 
         for bx in min_x..max_x {
@@ -160,11 +197,33 @@ impl PlayerMovement {
                     if is_web_block(id) {
                         self.is_in_web = true;
                     }
-                    if is_water_block(id) {
-                        self.is_in_water = true;
-                    }
                     if is_lava_block(id) {
                         self.is_in_lava = true;
+                    }
+                }
+            }
+        }
+
+        // Water check matching MCP `handleWaterMovement` (expand Y by -0.4, contract by 0.001)
+        let water_bb = self
+            .get_aabb()
+            .expand(0.0, -0.4000000059604645, 0.0)
+            .contract(0.001, 0.001, 0.001);
+        let w_min_x = water_bb.min_x.floor() as i32;
+        let w_max_x = (water_bb.max_x + 1.0).floor() as i32;
+        let w_min_y = (water_bb.min_y.floor() as i32).max(0);
+        let w_max_y = ((water_bb.max_y + 1.0).floor() as i32).min(256);
+        let w_min_z = water_bb.min_z.floor() as i32;
+        let w_max_z = (water_bb.max_z + 1.0).floor() as i32;
+
+        self.is_in_water = false;
+        'water_loop: for bx in w_min_x..w_max_x {
+            for bz in w_min_z..w_max_z {
+                for by in w_min_y..w_max_y {
+                    let id = world.block_at(bx, by, bz).id();
+                    if is_water_block(id) {
+                        self.is_in_water = true;
+                        break 'water_loop;
                     }
                 }
             }
@@ -187,6 +246,33 @@ impl PlayerMovement {
         self.prev_distance_walked_modified = self.distance_walked_modified;
         self.prev_camera_yaw = self.camera_yaw;
         self.prev_camera_pitch = self.camera_pitch;
+
+        if self.jump_ticks > 0 {
+            self.jump_ticks -= 1;
+        }
+        if self.fly_toggle_timer > 0 {
+            self.fly_toggle_timer -= 1;
+        }
+
+        // Flight toggle on double-tap jump (MCP `EntityPlayerSP` lines 823-846)
+        let fresh_jump = input.jump && !self.was_jump_pressed;
+        self.was_jump_pressed = input.jump;
+
+        if self.capabilities.allow_flying && fresh_jump {
+            if self.fly_toggle_timer == 0 {
+                self.fly_toggle_timer = 7;
+            } else {
+                self.capabilities.is_flying = !self.capabilities.is_flying;
+                self.abilities_dirty = true;
+                self.fly_toggle_timer = 0;
+            }
+        }
+
+        // Landing disables flying (MCP `EntityPlayerSP` line 904)
+        if self.on_ground && self.capabilities.is_flying {
+            self.capabilities.is_flying = false;
+            self.abilities_dirty = true;
+        }
 
         self.check_environment(world);
 
@@ -221,11 +307,11 @@ impl PlayerMovement {
             self.is_sprinting = false;
         }
 
-        // Jump processing
+        // Jump processing (MCP `EntityLivingBase.onLivingUpdate` lines 2008-2027)
         if input.jump {
             if self.is_in_water || self.is_in_lava {
                 self.motion.y += 0.03999999910593033;
-            } else if self.on_ground {
+            } else if self.on_ground && self.jump_ticks == 0 {
                 let mut jump_vel = 0.41999998688697815;
                 if self.jump_boost > 0 {
                     jump_vel += (self.jump_boost as f64) * 0.1;
@@ -238,29 +324,73 @@ impl PlayerMovement {
                     self.motion.x -= rad.sin() * 0.2;
                     self.motion.z += rad.cos() * 0.2;
                 }
+                self.jump_ticks = 10;
+            }
+        } else {
+            self.jump_ticks = 0;
+        }
+
+        // Flight vertical motion (MCP `EntityPlayerSP` lines 848-859)
+        if self.capabilities.is_flying {
+            if input.sneak {
+                self.motion.y -= (self.capabilities.fly_speed * 3.0) as f64;
+            }
+            if input.jump {
+                self.motion.y += (self.capabilities.fly_speed * 3.0) as f64;
             }
         }
 
         // Move with heading
-        if self.is_in_water {
+        if self.capabilities.is_flying {
+            let jump_factor = self.capabilities.fly_speed * if self.is_sprinting { 2.0 } else { 1.0 };
+            self.move_flying(strafe, forward, jump_factor);
+            self.move_entity(world, self.motion.x, self.motion.y, self.motion.z);
+            self.motion.y *= 0.6;
+            self.motion.x *= 0.91;
+            self.motion.z *= 0.91;
+        } else if self.is_in_water {
             self.move_flying(strafe, forward, 0.02);
+            let prev_y = self.pos.y;
             self.move_entity(world, self.motion.x, self.motion.y, self.motion.z);
             self.motion.x *= 0.8;
             self.motion.y *= 0.8;
             self.motion.z *= 0.8;
             self.motion.y -= 0.02;
+
+            // MCP `EntityLivingBase.java` line 1730:
+            // Step out of water onto bank only when horizontal collision occurs AND target space is air (not liquid, no blocks)
             if self.collided_horizontally {
-                self.motion.y = 0.3;
+                let offset_bb = self.get_aabb().offset(
+                    self.motion.x,
+                    self.motion.y + 0.6000000238418579 - (self.pos.y - prev_y),
+                    self.motion.z,
+                );
+                if world.get_colliding_bounding_boxes(&offset_bb).is_empty()
+                    && !is_any_liquid_in_aabb(world, &offset_bb)
+                {
+                    self.motion.y = 0.30000001192092896;
+                }
             }
         } else if self.is_in_lava {
             self.move_flying(strafe, forward, 0.02);
+            let prev_y = self.pos.y;
             self.move_entity(world, self.motion.x, self.motion.y, self.motion.z);
             self.motion.x *= 0.5;
             self.motion.y *= 0.5;
             self.motion.z *= 0.5;
             self.motion.y -= 0.02;
+
             if self.collided_horizontally {
-                self.motion.y = 0.3;
+                let offset_bb = self.get_aabb().offset(
+                    self.motion.x,
+                    self.motion.y + 0.6000000238418579 - (self.pos.y - prev_y),
+                    self.motion.z,
+                );
+                if world.get_colliding_bounding_boxes(&offset_bb).is_empty()
+                    && !is_any_liquid_in_aabb(world, &offset_bb)
+                {
+                    self.motion.y = 0.30000001192092896;
+                }
             }
         } else {
             // Air or Ground physics
@@ -336,7 +466,7 @@ impl PlayerMovement {
             }
         }
 
-        // View bobbing calculation (MCP `EntityPlayer.onLivingUpdate`)
+        // Distance walked on ground for view bobbing (MCP `Entity.java` line 872)
         let dx = self.pos.x - self.prev_pos.x;
         let dz = self.pos.z - self.prev_pos.z;
         let d_horiz = (dx * dx + dz * dz).sqrt();
@@ -344,10 +474,9 @@ impl PlayerMovement {
             self.distance_walked_modified += (d_horiz * 0.6) as f32;
         }
 
-        let mut f_bob = d_horiz as f32;
-        if f_bob > 0.1 {
-            f_bob = 0.1;
-        }
+        // View bobbing calculation (MCP `EntityPlayer.onLivingUpdate` lines 635-654)
+        let f_motion = (self.motion.x * self.motion.x + self.motion.z * self.motion.z).sqrt() as f32;
+        let mut f_bob = if f_motion > 0.1 { 0.1 } else { f_motion };
         if !self.on_ground {
             f_bob = 0.0;
         }

@@ -41,6 +41,7 @@ pub enum ClientboundPlayPacket {
     EntityEquipment(ClientboundEntityEquipmentPacket),
     EntityMetadata(ClientboundEntityMetadataPacket),
     Explosion(ClientboundExplosionPacket),
+    PlayerAbilities(ClientboundPlayerAbilitiesPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -140,6 +141,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundExplosionPacket::PACKET_ID => {
                 Ok(Self::Explosion(ClientboundExplosionPacket::decode(payload)?))
+            }
+            ClientboundPlayerAbilitiesPacket::PACKET_ID => {
+                Ok(Self::PlayerAbilities(ClientboundPlayerAbilitiesPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,

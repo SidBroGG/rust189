@@ -324,3 +324,95 @@ fn test_ray_trace_blocks() {
     assert_eq!(hit.hit_normal, DVec3::NEG_X, "Ray enters from west (-X face)");
     assert!((hit.hit_pos.x - 5.0).abs() < 1e-6);
 }
+
+#[test]
+fn test_ladder_collision_and_climbing() {
+    let world = World::new();
+    let mask = AABB::new(-10.0, -10.0, -10.0, 20.0, 20.0, 20.0);
+    let mut boxes = Vec::new();
+
+    // Ladder facing North (meta 2): thickness 0.125 against z=1.0
+    let ladder_north = BlockState::new(65, 2);
+    get_block_collision_boxes(&world, 0, 1, 0, ladder_north, &mask, &mut boxes);
+    assert_eq!(boxes.len(), 1);
+    assert_eq!(boxes[0], AABB::new(0.0, 1.0, 0.875, 1.0, 2.0, 1.0));
+
+    // Ladder facing South (meta 3): thickness 0.125 against z=0.0
+    boxes.clear();
+    let ladder_south = BlockState::new(65, 3);
+    get_block_collision_boxes(&world, 0, 1, 0, ladder_south, &mask, &mut boxes);
+    assert_eq!(boxes.len(), 1);
+    assert_eq!(boxes[0], AABB::new(0.0, 1.0, 0.0, 1.0, 2.0, 0.125));
+}
+
+#[test]
+fn test_jump_delay_ticks() {
+    let world = World::new();
+    let mut player = PlayerMovement::new(0.0, 0.0, 0.0);
+    player.on_ground = true;
+
+    let input_jump = PlayerInput {
+        jump: true,
+        ..Default::default()
+    };
+
+    // First jump: jump_ticks is set to 10
+    player.tick(&world, &input_jump);
+    assert!(player.motion.y > 0.3, "First jump must produce upward motion");
+    assert_eq!(player.jump_ticks, 10, "jump_ticks should be initialized to 10");
+
+    // Next tick while still holding space: jump_ticks decrements to 9
+    player.on_ground = true;
+    player.motion.y = 0.0;
+    player.tick(&world, &input_jump);
+    assert_eq!(player.jump_ticks, 9);
+    assert!(player.motion.y <= 0.0, "Cannot jump again while jump_ticks > 0");
+
+    // Release jump: jump_ticks resets to 0
+    let input_release = PlayerInput {
+        jump: false,
+        ..Default::default()
+    };
+    player.tick(&world, &input_release);
+    assert_eq!(player.jump_ticks, 0, "Releasing space must reset jump_ticks to 0");
+}
+
+#[test]
+fn test_creative_flight_double_tap() {
+    let world = World::new();
+    let mut player = PlayerMovement::new(0.0, 10.0, 0.0);
+    player.capabilities.allow_flying = true;
+    assert!(!player.capabilities.is_flying);
+
+    // Tap 1: space pressed
+    let tap1 = PlayerInput {
+        jump: true,
+        ..Default::default()
+    };
+    player.tick(&world, &tap1);
+    assert_eq!(player.fly_toggle_timer, 7, "fly_toggle_timer set to 7 on first jump tap");
+    assert!(!player.capabilities.is_flying);
+
+    // Space released
+    let release = PlayerInput {
+        jump: false,
+        ..Default::default()
+    };
+    player.tick(&world, &release);
+    assert_eq!(player.fly_toggle_timer, 6);
+
+    // Tap 2 within 7 ticks: activates flying!
+    player.tick(&world, &tap1);
+    assert!(player.capabilities.is_flying, "Double-tap space must toggle flying on");
+    assert_eq!(player.fly_toggle_timer, 0);
+
+    // Ascend while flying
+    let fly_input = PlayerInput {
+        jump: true,
+        ..Default::default()
+    };
+    player.motion.y = 0.0;
+    player.tick(&world, &fly_input);
+    assert!(player.motion.y > 0.05, "Holding jump while flying must accelerate upward");
+}
+

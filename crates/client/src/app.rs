@@ -219,6 +219,10 @@ impl App {
                     );
                     self.player_entity_id = jg.entity_id;
                     self.world.dimension = jg.dimension;
+                    if jg.game_mode == 1 || jg.game_mode == 3 {
+                        self.player.capabilities.allow_flying = true;
+                        self.player.capabilities.is_creative = jg.game_mode == 1;
+                    }
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.dimension = jg.dimension;
@@ -705,6 +709,14 @@ impl App {
                         exp.player_motion_z as f64,
                     );
                 }
+                ClientboundPlayPacket::PlayerAbilities(pa) => {
+                    self.player.capabilities.is_invulnerable = pa.invulnerable;
+                    self.player.capabilities.is_flying = pa.is_flying;
+                    self.player.capabilities.allow_flying = pa.allow_flying;
+                    self.player.capabilities.is_creative = pa.creative_mode;
+                    self.player.capabilities.fly_speed = pa.fly_speed;
+                    self.player.capabilities.walk_speed = pa.walk_speed;
+                }
                 ClientboundPlayPacket::EntityEquipment(eq) => {
                     self.world.entity_tracker.equipment(eq.entity_id, eq.slot, eq.item);
                 }
@@ -789,6 +801,15 @@ impl App {
                                 protocol::EntityAction::StopSneaking
                             },
                             jump_boost: 0,
+                        });
+                    }
+                }
+
+                if self.player.abilities_dirty {
+                    self.player.abilities_dirty = false;
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerAbilities {
+                            is_flying: self.player.capabilities.is_flying,
                         });
                     }
                 }
@@ -1330,6 +1351,8 @@ impl ApplicationHandler for App {
                     self.camera.yaw = pose.yaw;
                     self.camera.pitch = pose.pitch;
                     self.camera.roll = pose.roll;
+                    self.camera.bob_x = pose.bob_x;
+                    self.camera.bob_y = pose.bob_y;
                 }
 
                 // Acquire next swapchain surface texture

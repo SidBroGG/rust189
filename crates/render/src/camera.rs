@@ -7,6 +7,8 @@ pub struct Camera {
     pub yaw: f32,   // Degrees
     pub pitch: f32, // Degrees
     pub roll: f32,  // Degrees (view bobbing)
+    pub bob_x: f32, // Camera-space view bobbing horizontal translation
+    pub bob_y: f32, // Camera-space view bobbing vertical translation
     pub fov: f32,   // Degrees (vertical FOV)
     pub aspect: f32,
     pub near: f32,
@@ -20,6 +22,8 @@ impl Default for Camera {
             yaw: 0.0,
             pitch: 0.0,
             roll: 0.0,
+            bob_x: 0.0,
+            bob_y: 0.0,
             fov: 70.0,
             aspect: 16.0 / 9.0,
             near: 0.05,
@@ -35,6 +39,8 @@ impl Camera {
             yaw,
             pitch,
             roll: 0.0,
+            bob_x: 0.0,
+            bob_y: 0.0,
             fov,
             aspect,
             near: 0.05,
@@ -60,10 +66,11 @@ impl Camera {
         Vec3::new(yaw_rad.cos(), 0.0, yaw_rad.sin()).normalize()
     }
 
-    /// Computes the right-handed view matrix ported from Minecraft 1.8.9 OpenGL pipeline (`EntityRenderer.orientCamera`).
+    /// Computes the right-handed view matrix ported from Minecraft 1.8.9 OpenGL pipeline (`setupViewBobbing` + `orientCamera`).
     /// Uses pure Euler transformations to eliminate gimbal-lock singularities when pitch reaches -90/+90.
     pub fn view_matrix(&self) -> Mat4 {
-        Mat4::from_rotation_z(self.roll.to_radians())
+        Mat4::from_translation(Vec3::new(self.bob_x, self.bob_y, 0.0))
+            * Mat4::from_rotation_z(self.roll.to_radians())
             * Mat4::from_rotation_x(self.pitch.to_radians())
             * Mat4::from_rotation_y((self.yaw + 180.0).to_radians())
             * Mat4::from_translation(-self.position)

@@ -1559,4 +1559,61 @@ impl ClientboundExplosionPacket {
     }
 }
 
+/// Clientbound Player Abilities packet (0x39).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundPlayerAbilitiesPacket {
+    pub invulnerable: bool,
+    pub is_flying: bool,
+    pub allow_flying: bool,
+    pub creative_mode: bool,
+    pub fly_speed: f32,
+    pub walk_speed: f32,
+}
+
+impl ClientboundPlayerAbilitiesPacket {
+    pub const PACKET_ID: i32 = 0x39;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 9 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 9,
+                available: buf.remaining(),
+            });
+        }
+        let flags = buf.get_u8();
+        let fly_speed = buf.get_f32();
+        let walk_speed = buf.get_f32();
+
+        Ok(Self {
+            invulnerable: (flags & 0x01) != 0,
+            is_flying: (flags & 0x02) != 0,
+            allow_flying: (flags & 0x04) != 0,
+            creative_mode: (flags & 0x08) != 0,
+            fly_speed,
+            walk_speed,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        let mut flags = 0u8;
+        if self.invulnerable {
+            flags |= 0x01;
+        }
+        if self.is_flying {
+            flags |= 0x02;
+        }
+        if self.allow_flying {
+            flags |= 0x04;
+        }
+        if self.creative_mode {
+            flags |= 0x08;
+        }
+        buf.extend_from_slice(&[flags]);
+        buf.extend_from_slice(&self.fly_speed.to_be_bytes());
+        buf.extend_from_slice(&self.walk_speed.to_be_bytes());
+        Ok(())
+    }
+}
+
+
 

@@ -41,6 +41,29 @@ pub fn is_lava_block(block_id: u16) -> bool {
     matches!(block_id, 10 | 11)
 }
 
+/// Returns true if any liquid (water or lava) intersects the given bounding box (MCP `World.isAnyLiquid`).
+pub fn is_any_liquid_in_aabb(world: &World, bb: &AABB) -> bool {
+    let min_x = bb.min_x.floor() as i32;
+    let max_x = (bb.max_x + 1.0).floor() as i32;
+    let min_y = (bb.min_y.floor() as i32).max(0);
+    let max_y = ((bb.max_y + 1.0).floor() as i32).min(256);
+    let min_z = bb.min_z.floor() as i32;
+    let max_z = (bb.max_z + 1.0).floor() as i32;
+
+    for bx in min_x..max_x {
+        for bz in min_z..max_z {
+            for by in min_y..max_y {
+                let id = world.block_at(bx, by, bz).id();
+                if is_fluid_block(id) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+
 /// Checks whether a block is a climbable ladder or vine.
 #[inline]
 pub fn is_ladder_block(block_id: u16) -> bool {
@@ -96,9 +119,25 @@ pub fn get_block_collision_boxes(
     // Pass-through blocks with no solid collision
     match id {
         0 | 6 | 8 | 9 | 10 | 11 | 27 | 28 | 30 | 31 | 32 | 37 | 38 | 39 | 40 | 50 | 51 | 55
-        | 59 | 65 | 66 | 68 | 69 | 75 | 76 | 77 | 83 | 90 | 104 | 105 | 106 | 115 | 119
+        | 59 | 66 | 68 | 69 | 75 | 76 | 77 | 83 | 90 | 104 | 105 | 106 | 115 | 119
         | 127 | 131 | 132 | 141 | 142 | 143 | 157 | 175 => return,
         _ => {}
+    }
+
+    // Ladders (65): 0.125 block thickness along facing wall (MCP `BlockLadder.setBlockBoundsBasedOnState`)
+    if id == 65 {
+        let f = 0.125;
+        let bb = match meta & 7 {
+            2 => AABB::new(fx, fy, fz + 1.0 - f, fx + 1.0, fy + 1.0, fz + 1.0), // NORTH
+            3 => AABB::new(fx, fy, fz, fx + 1.0, fy + 1.0, fz + f),             // SOUTH
+            4 => AABB::new(fx + 1.0 - f, fy, fz, fx + 1.0, fy + 1.0, fz + 1.0), // WEST
+            5 => AABB::new(fx, fy, fz, fx + f, fy + 1.0, fz + 1.0),             // EAST
+            _ => AABB::new(fx, fy, fz + 1.0 - f, fx + 1.0, fy + 1.0, fz + 1.0),
+        };
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
     }
 
     // Fence Gate (107, 183..187) - open has no collision

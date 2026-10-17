@@ -44,6 +44,9 @@ pub enum OutgoingPlayPacket {
         action: EntityAction,
         jump_boost: i32,
     },
+    PlayerAbilities {
+        is_flying: bool,
+    },
 }
 
 impl OutgoingPlayPacket {
@@ -122,6 +125,11 @@ impl OutgoingPlayPacket {
                 let pkt = ServerboundEntityActionPacket::new(*entity_id, *action, *jump_boost);
                 pkt.encode(buf)?;
                 Ok(ServerboundEntityActionPacket::PACKET_ID)
+            }
+            Self::PlayerAbilities { is_flying } => {
+                let pkt = ServerboundPlayerAbilitiesPacket::new(*is_flying);
+                pkt.encode(buf)?;
+                Ok(ServerboundPlayerAbilitiesPacket::PACKET_ID)
             }
         }
     }

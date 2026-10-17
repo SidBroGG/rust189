@@ -60,6 +60,8 @@ pub struct CameraPose {
     pub yaw: f32,
     pub pitch: f32,
     pub roll: f32,
+    pub bob_x: f32,
+    pub bob_y: f32,
 }
 
 /// Controller managing camera view bobbing, mouse look, cinematic smoothing,
@@ -153,7 +155,8 @@ impl CameraController {
         let pitch = player.prev_pitch + (player.pitch - player.prev_pitch) * pt;
 
         // View bobbing calculation (MCP `EntityRenderer.setupViewBobbing`)
-        let mut bob_offset_world = Vec3::ZERO;
+        let mut bob_x = 0.0f32;
+        let mut bob_y = 0.0f32;
         let mut bob_roll = 0.0f32;
         let mut bob_pitch = 0.0f32;
 
@@ -164,28 +167,25 @@ impl CameraController {
             let f3 = player.prev_camera_pitch + (player.camera_pitch - player.prev_camera_pitch) * partial_ticks;
 
             let pi_f = std::f32::consts::PI;
-            let bob_x = (f1 * pi_f).sin() * f2 * 0.5;
-            let bob_y = -((f1 * pi_f).cos().abs()) * f2;
+            bob_x = (f1 * pi_f).sin() * f2 * 0.5;
+            bob_y = -((f1 * pi_f).cos().abs()) * f2;
             bob_roll = (f1 * pi_f).sin() * f2 * 3.0;
             bob_pitch = ((f1 * pi_f - 0.2).cos().abs()) * f2 * 5.0 + f3;
-
-            // Transform local camera bobbing offset (X: local right, Y: local up) into world space
-            let yaw_rad = (yaw as f32).to_radians();
-            let right = Vec3::new(yaw_rad.cos(), 0.0, yaw_rad.sin());
-            bob_offset_world = right * bob_x + Vec3::Y * bob_y;
         }
 
         // Camera positioning based on perspective mode (MCP `EntityRenderer.orientCamera`)
         match self.perspective {
             CameraPerspective::FirstPerson => CameraPose {
                 position: Vec3::new(
-                    (eye_pos.x as f32) + bob_offset_world.x,
-                    (eye_pos.y as f32) + bob_offset_world.y,
-                    (eye_pos.z as f32) + bob_offset_world.z,
+                    eye_pos.x as f32,
+                    eye_pos.y as f32,
+                    eye_pos.z as f32,
                 ),
                 yaw,
                 pitch: pitch + bob_pitch,
                 roll: bob_roll,
+                bob_x,
+                bob_y,
             },
             CameraPerspective::ThirdPersonRear | CameraPerspective::ThirdPersonFront => {
                 let is_front = self.perspective == CameraPerspective::ThirdPersonFront;
@@ -230,6 +230,8 @@ impl CameraController {
                     yaw: if is_front { yaw + 180.0 } else { yaw },
                     pitch: if is_front { -pitch } else { pitch },
                     roll: 0.0,
+                    bob_x: 0.0,
+                    bob_y: 0.0,
                 }
             }
         }
