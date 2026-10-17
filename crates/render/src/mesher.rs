@@ -1,6 +1,7 @@
 use crate::atlas::TextureAtlas;
+use crate::block_model::BakedModelRegistry;
 use crate::occlusion::{SectionVisibility, VisGraph};
-use crate::vertex::{BlockFace, BlockVertex};
+use crate::vertex::BlockVertex;
 use world::{BlockState, ChunkSection, SECTION_DEPTH, SECTION_HEIGHT, SECTION_WIDTH};
 
 /// Raw vertex and index buffers for an individual chunk section.
@@ -32,7 +33,8 @@ pub trait BlockWorldAccessor {
     fn sky_light_at(&self, x: i32, y: i32, z: i32) -> u8;
 }
 
-/// High-performance Cull-Face chunk mesher with Smooth Lighting and Ambient Occlusion.
+/// High-performance chunk mesher with assets-based models, blockstates, textures,
+/// Smooth Lighting, and Ambient Occlusion.
 pub struct ChunkMesher;
 
 impl ChunkMesher {
@@ -63,191 +65,184 @@ impl ChunkMesher {
                     let wy = base_y + ly as i32;
                     let wz = base_z + lz as i32;
 
-                    let is_translucent = TextureAtlas::is_translucent(block);
-                    let _is_cutout = TextureAtlas::is_cutout(block);
+                    let model = match atlas.models.get_model(block, wx, wy, wz, world) {
+                        Some(m) => m,
+                        None => continue,
+                    };
 
-                    // Cross-model blocks (tall grass, flowers, saplings, crops, reeds)
-                    if TextureAtlas::is_cross(block) {
-                        let (region, tint) = atlas.get_block_uv(block, BlockFace::North);
-                        Self::generate_cross_quads(
-                            wx as f32,
-                            wy as f32,
-                            wz as f32,
-                            region.u_min,
-                            region.v_min,
-                            region.u_max,
-                            region.v_max,
-                            tint,
-                            wx,
-                            wy,
-                            wz,
-                            world,
-                            is_translucent,
-                            &mut mesh,
-                        );
-                        continue;
-                    }
-
+                    let is_translucent = model.is_translucent;
                     let block_id = block.id();
-                    let block_meta = block.meta();
+                    let is_leaf = matches!(block_id, 18 | 161);
 
-                    // Non-standard geometry blocks (slabs, stairs, trapdoors, carpets, snow layers, panes, fences)
-                    match block_id {
-                        // Slabs (half slabs; double slabs 43 & 125 are full cubes)
-                        44 | 126 => {
-                            let is_top = (block_meta & 8) != 0;
-                            let (y0, y1) = if is_top { (0.5, 1.0) } else { (0.0, 0.5) };
-                            Self::generate_custom_box(wx, wy, wz, [0.0, y0, 0.0], [1.0, y1, 1.0], block, atlas, world, is_translucent, &mut mesh);
-                            continue;
+                    let (target_vertices, target_indices) = if is_translucent {
+                        (
+                            &mut mesh.translucent_vertices,
+                            &mut mesh.translucent_indices,
+                        )
+                    } else {
+                        (&mut mesh.opaque_vertices, &mut mesh.opaque_indices)
+                    };
+
+                    let tint_color = BakedModelRegistry::get_block_tint(block);
+
+                    for quad in &model.quads {
+                        // Face culling check
+                        let cull_face =
+                            quad.cull_face
+                                .or_else(|| if is_leaf { Some(quad.face) } else { None });
+                        if let Some(cull_face) = cull_face {
+                            let (dx, dy, dz) = cull_face.offset();
+                            let nx = wx + dx;
+                            let ny = wy + dy;
+                            let nz = wz + dz;
+                            let neighbor = world.block_at(nx, ny, nz);
+
+                            // 1. Neighbor is opaque -> face is culled
+                            if neighbor.is_opaque() {
+                                continue;
+                            }
+
+                            // 2. Neighbor is same translucent liquid/glass -> cull internal face
+                            if is_translucent && neighbor.id() == block_id {
+                                continue;
+                            }
+
+                            // 3. Smart leaf culling between adjacent leaves
+                            if is_leaf && matches!(neighbor.id(), 18 | 161) {
+                                continue;
+                            }
                         }
-                        // Stairs
-                        53 | 67 | 108 | 109 | 114 | 128 | 134 | 135 | 136 | 156 | 163 | 164 => {
-                            let is_top = (block_meta & 4) != 0;
-                            let dir = block_meta & 3;
-                            let (base_y0, base_y1) = if is_top { (0.5, 1.0) } else { (0.0, 0.5) };
-                            Self::generate_custom_box(wx, wy, wz, [0.0, base_y0, 0.0], [1.0, base_y1, 1.0], block, atlas, world, is_translucent, &mut mesh);
 
-                            let (step_y0, step_y1) = if is_top { (0.0, 0.5) } else { (0.5, 1.0) };
-                            let (step_min, step_max) = match dir {
-                                0 => ([0.5, step_y0, 0.0], [1.0, step_y1, 1.0]), // East
-                                1 => ([0.0, step_y0, 0.0], [0.5, step_y1, 1.0]), // West
-                                2 => ([0.0, step_y0, 0.5], [1.0, step_y1, 1.0]), // South
-                                _ => ([0.0, step_y0, 0.0], [1.0, step_y1, 0.5]), // North
+                        let quad_tint = if quad.tint_index >= 0 {
+                            tint_color
+                        } else {
+                            [1.0, 1.0, 1.0]
+                        };
+
+                        let base_idx = target_vertices.len() as u32;
+
+                        if !quad.shade || !model.ambient_occlusion {
+                            // Flat / unshaded lighting (torches, flowers, crops, redstone)
+                            let bl = (world.block_light_at(wx, wy, wz) as f32) / 15.0;
+                            let sl = (world.sky_light_at(wx, wy, wz) as f32) / 15.0;
+                            let light = [bl, sl];
+                            let ao = 1.0f32;
+                            let normal_index = quad.face.index();
+
+                            for i in 0..4 {
+                                target_vertices.push(BlockVertex {
+                                    position: [
+                                        wx as f32 + quad.positions[i][0],
+                                        wy as f32 + quad.positions[i][1],
+                                        wz as f32 + quad.positions[i][2],
+                                    ],
+                                    uv: quad.uvs[i],
+                                    light,
+                                    ao,
+                                    color: quad_tint,
+                                    normal_index,
+                                });
+                            }
+
+                            target_indices.extend_from_slice(&[
+                                base_idx,
+                                base_idx + 1,
+                                base_idx + 2,
+                                base_idx,
+                                base_idx + 2,
+                                base_idx + 3,
+                            ]);
+                        } else {
+                            // Smooth natural lighting & Ambient Occlusion
+                            let (dx, dy, dz) = quad.face.offset();
+                            let nx = wx + dx;
+                            let ny = wy + dy;
+                            let nz = wz + dz;
+                            let (s_left, s_right, s_down, s_up) = quad.face.tangents();
+
+                            let (ao0, light0) =
+                                Self::compute_corner_ao_light(nx, ny, nz, s_left, s_down, world);
+                            let (ao1, light1) =
+                                Self::compute_corner_ao_light(nx, ny, nz, s_right, s_down, world);
+                            let (ao2, light2) =
+                                Self::compute_corner_ao_light(nx, ny, nz, s_right, s_up, world);
+                            let (ao3, light3) =
+                                Self::compute_corner_ao_light(nx, ny, nz, s_left, s_up, world);
+
+                            let normal_index = quad.face.index();
+
+                            let v0 = BlockVertex {
+                                position: [
+                                    wx as f32 + quad.positions[0][0],
+                                    wy as f32 + quad.positions[0][1],
+                                    wz as f32 + quad.positions[0][2],
+                                ],
+                                uv: quad.uvs[0],
+                                light: light0,
+                                ao: ao0,
+                                color: quad_tint,
+                                normal_index,
                             };
-                            Self::generate_custom_box(wx, wy, wz, step_min, step_max, block, atlas, world, is_translucent, &mut mesh);
-                            continue;
-                        }
-                        // Trapdoors
-                        96 | 167 => {
-                            let is_open = (block_meta & 4) != 0;
-                            let is_top = (block_meta & 8) != 0;
-                            let dir = block_meta & 3;
-                            if !is_open {
-                                let (y0, y1) = if is_top { (0.8125, 1.0) } else { (0.0, 0.1875) };
-                                Self::generate_custom_box(wx, wy, wz, [0.0, y0, 0.0], [1.0, y1, 1.0], block, atlas, world, is_translucent, &mut mesh);
+                            let v1 = BlockVertex {
+                                position: [
+                                    wx as f32 + quad.positions[1][0],
+                                    wy as f32 + quad.positions[1][1],
+                                    wz as f32 + quad.positions[1][2],
+                                ],
+                                uv: quad.uvs[1],
+                                light: light1,
+                                ao: ao1,
+                                color: quad_tint,
+                                normal_index,
+                            };
+                            let v2 = BlockVertex {
+                                position: [
+                                    wx as f32 + quad.positions[2][0],
+                                    wy as f32 + quad.positions[2][1],
+                                    wz as f32 + quad.positions[2][2],
+                                ],
+                                uv: quad.uvs[2],
+                                light: light2,
+                                ao: ao2,
+                                color: quad_tint,
+                                normal_index,
+                            };
+                            let v3 = BlockVertex {
+                                position: [
+                                    wx as f32 + quad.positions[3][0],
+                                    wy as f32 + quad.positions[3][1],
+                                    wz as f32 + quad.positions[3][2],
+                                ],
+                                uv: quad.uvs[3],
+                                light: light3,
+                                ao: ao3,
+                                color: quad_tint,
+                                normal_index,
+                            };
+
+                            target_vertices.extend_from_slice(&[v0, v1, v2, v3]);
+
+                            // Diagonal flip for anisotropic AO artifact elimination
+                            if ao0 + ao2 > ao1 + ao3 {
+                                target_indices.extend_from_slice(&[
+                                    base_idx,
+                                    base_idx + 1,
+                                    base_idx + 2,
+                                    base_idx,
+                                    base_idx + 2,
+                                    base_idx + 3,
+                                ]);
                             } else {
-                                let (box_min, box_max) = match dir {
-                                    0 => ([0.0, 0.0, 0.8125], [1.0, 1.0, 1.0]), // North (against South wall)
-                                    1 => ([0.0, 0.0, 0.0], [1.0, 1.0, 0.1875]), // South (against North wall)
-                                    2 => ([0.8125, 0.0, 0.0], [1.0, 1.0, 1.0]), // West (against East wall)
-                                    _ => ([0.0, 0.0, 0.0], [0.1875, 1.0, 1.0]), // East (against West wall)
-                                };
-                                Self::generate_custom_box(wx, wy, wz, box_min, box_max, block, atlas, world, is_translucent, &mut mesh);
+                                target_indices.extend_from_slice(&[
+                                    base_idx + 1,
+                                    base_idx + 2,
+                                    base_idx + 3,
+                                    base_idx + 1,
+                                    base_idx + 3,
+                                    base_idx,
+                                ]);
                             }
-                            continue;
                         }
-                        // Carpet
-                        171 => {
-                            Self::generate_custom_box(wx, wy, wz, [0.0, 0.0, 0.0], [1.0, 0.0625, 1.0], block, atlas, world, is_translucent, &mut mesh);
-                            continue;
-                        }
-                        // Snow Layer
-                        78 => {
-                            let h = (((block_meta & 7) + 1) as f32 * 0.125).min(1.0);
-                            Self::generate_custom_box(wx, wy, wz, [0.0, 0.0, 0.0], [1.0, h, 1.0], block, atlas, world, is_translucent, &mut mesh);
-                            continue;
-                        }
-                        // Panes & Iron Bars
-                        101 | 102 | 160 => {
-                            Self::generate_custom_box(wx, wy, wz, [0.4375, 0.0, 0.4375], [0.5625, 1.0, 0.5625], block, atlas, world, is_translucent, &mut mesh);
-                            let can_connect = |nx: i32, ny: i32, nz: i32| -> bool {
-                                let b = world.block_at(nx, ny, nz);
-                                b.is_opaque() || matches!(b.id(), 101 | 102 | 160)
-                            };
-                            let conn_n = can_connect(wx, wy, wz - 1);
-                            let conn_s = can_connect(wx, wy, wz + 1);
-                            let conn_w = can_connect(wx - 1, wy, wz);
-                            let conn_e = can_connect(wx + 1, wy, wz);
-
-                            if conn_n {
-                                Self::generate_custom_box(wx, wy, wz, [0.4375, 0.0, 0.0], [0.5625, 1.0, 0.4375], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            if conn_s {
-                                Self::generate_custom_box(wx, wy, wz, [0.4375, 0.0, 0.5625], [0.5625, 1.0, 1.0], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            if conn_w {
-                                Self::generate_custom_box(wx, wy, wz, [0.0, 0.0, 0.4375], [0.4375, 1.0, 0.5625], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            if conn_e {
-                                Self::generate_custom_box(wx, wy, wz, [0.5625, 0.0, 0.4375], [1.0, 1.0, 0.5625], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            if !conn_n && !conn_s && !conn_w && !conn_e {
-                                Self::generate_custom_box(wx, wy, wz, [0.4375, 0.0, 0.0], [0.5625, 1.0, 1.0], block, atlas, world, is_translucent, &mut mesh);
-                                Self::generate_custom_box(wx, wy, wz, [0.0, 0.0, 0.4375], [1.0, 1.0, 0.5625], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            continue;
-                        }
-                        // Fences
-                        85 | 113 | 188..=192 => {
-                            Self::generate_custom_box(wx, wy, wz, [0.375, 0.0, 0.375], [0.625, 1.0, 0.625], block, atlas, world, is_translucent, &mut mesh);
-                            let can_connect_f = |nx: i32, ny: i32, nz: i32| -> bool {
-                                let b = world.block_at(nx, ny, nz);
-                                b.is_opaque() || matches!(b.id(), 85 | 107 | 113 | 183..=192)
-                            };
-                            if can_connect_f(wx, wy, wz - 1) {
-                                Self::generate_custom_box(wx, wy, wz, [0.4375, 0.375, 0.0], [0.5625, 0.9375, 0.375], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            if can_connect_f(wx, wy, wz + 1) {
-                                Self::generate_custom_box(wx, wy, wz, [0.4375, 0.375, 0.625], [0.5625, 0.9375, 1.0], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            if can_connect_f(wx - 1, wy, wz) {
-                                Self::generate_custom_box(wx, wy, wz, [0.0, 0.375, 0.4375], [0.375, 0.9375, 0.5625], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            if can_connect_f(wx + 1, wy, wz) {
-                                Self::generate_custom_box(wx, wy, wz, [0.625, 0.375, 0.4375], [1.0, 0.9375, 0.5625], block, atlas, world, is_translucent, &mut mesh);
-                            }
-                            continue;
-                        }
-                        _ => {}
-                    }
-
-                    let is_leaves = TextureAtlas::is_leaves(block);
-
-                    // Check all 6 faces
-                    for face in BlockFace::ALL {
-                        let (dx, dy, dz) = face.offset();
-                        let nx = wx + dx;
-                        let ny = wy + dy;
-                        let nz = wz + dz;
-
-                        let neighbor = world.block_at(nx, ny, nz);
-
-                        // Face culling conditions:
-                        // 1. Neighbor is opaque -> face is completely hidden!
-                        if neighbor.is_opaque() {
-                            continue;
-                        }
-
-                        // 2. Neighbor is same translucent liquid/glass -> cull internal face!
-                        if is_translucent && neighbor.id() == block.id() {
-                            continue;
-                        }
-
-                        // 3. Smart leaf culling: cull internal faces between adjacent leaves!
-                        if is_leaves && TextureAtlas::is_leaves(neighbor) {
-                            continue;
-                        }
-
-                        // Face is visible! Generate quad
-                        let (region, tint) = atlas.get_block_uv(block, face);
-
-                        Self::generate_face(
-                            wx as f32,
-                            wy as f32,
-                            wz as f32,
-                            face,
-                            region.u_min,
-                            region.v_min,
-                            region.u_max,
-                            region.v_max,
-                            tint,
-                            nx,
-                            ny,
-                            nz,
-                            world,
-                            is_translucent,
-                            &mut mesh,
-                        );
                     }
                 }
             }
@@ -255,438 +250,6 @@ impl ChunkMesher {
 
         mesh.visibility = VisGraph::compute_visibility(section);
         mesh
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn generate_face<W: BlockWorldAccessor>(
-        x: f32,
-        y: f32,
-        z: f32,
-        face: BlockFace,
-        u_min: f32,
-        v_min: f32,
-        u_max: f32,
-        v_max: f32,
-        tint: [f32; 3],
-        nx: i32,
-        ny: i32,
-        nz: i32,
-        world: &W,
-        is_translucent: bool,
-        mesh: &mut SectionMeshData,
-    ) {
-        Self::generate_sub_face(
-            x,
-            y,
-            z,
-            [0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0],
-            face,
-            u_min,
-            v_min,
-            u_max,
-            v_max,
-            tint,
-            nx,
-            ny,
-            nz,
-            world,
-            is_translucent,
-            mesh,
-        );
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn generate_custom_box<W: BlockWorldAccessor>(
-        wx: i32,
-        wy: i32,
-        wz: i32,
-        min: [f32; 3],
-        max: [f32; 3],
-        block: BlockState,
-        atlas: &TextureAtlas,
-        world: &W,
-        is_translucent: bool,
-        mesh: &mut SectionMeshData,
-    ) {
-        let x = wx as f32;
-        let y = wy as f32;
-        let z = wz as f32;
-
-        for face in BlockFace::ALL {
-            let (dx, dy, dz) = face.offset();
-            let nx = wx + dx;
-            let ny = wy + dy;
-            let nz = wz + dz;
-
-            let touches_boundary = match face {
-                BlockFace::Up => max[1] >= 1.0,
-                BlockFace::Down => min[1] <= 0.0,
-                BlockFace::North => min[2] <= 0.0,
-                BlockFace::South => max[2] >= 1.0,
-                BlockFace::West => min[0] <= 0.0,
-                BlockFace::East => max[0] >= 1.0,
-            };
-
-            if touches_boundary && world.block_at(nx, ny, nz).is_opaque() {
-                continue;
-            }
-
-            let (sample_x, sample_y, sample_z) = if touches_boundary {
-                (nx, ny, nz)
-            } else {
-                (wx, wy, wz)
-            };
-
-            let (region, tint) = atlas.get_block_uv(block, face);
-            Self::generate_sub_face(
-                x,
-                y,
-                z,
-                min,
-                max,
-                face,
-                region.u_min,
-                region.v_min,
-                region.u_max,
-                region.v_max,
-                tint,
-                sample_x,
-                sample_y,
-                sample_z,
-                world,
-                is_translucent,
-                mesh,
-            );
-        }
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn generate_sub_face<W: BlockWorldAccessor>(
-        x: f32,
-        y: f32,
-        z: f32,
-        min: [f32; 3],
-        max: [f32; 3],
-        face: BlockFace,
-        u_min: f32,
-        v_min: f32,
-        u_max: f32,
-        v_max: f32,
-        tint: [f32; 3],
-        nx: i32,
-        ny: i32,
-        nz: i32,
-        world: &W,
-        is_translucent: bool,
-        mesh: &mut SectionMeshData,
-    ) {
-        let x0 = min[0];
-        let y0 = min[1];
-        let z0 = min[2];
-        let x1 = max[0];
-        let y1 = max[1];
-        let z1 = max[2];
-        let du = u_max - u_min;
-        let dv = v_max - v_min;
-
-        // Quad 4 local vertex positions & UVs
-        let (positions, uvs, tangents) = match face {
-            BlockFace::Up => (
-                [
-                    [x + x0, y + y1, z + z1],
-                    [x + x1, y + y1, z + z1],
-                    [x + x1, y + y1, z + z0],
-                    [x + x0, y + y1, z + z0],
-                ],
-                [
-                    [u_min + x0 * du, v_min + z1 * dv],
-                    [u_min + x1 * du, v_min + z1 * dv],
-                    [u_min + x1 * du, v_min + z0 * dv],
-                    [u_min + x0 * du, v_min + z0 * dv],
-                ],
-                (
-                    (-1, 0, 0), // left
-                    (1, 0, 0),  // right
-                    (0, 0, -1), // back
-                    (0, 0, 1),  // front
-                ),
-            ),
-            BlockFace::Down => (
-                [
-                    [x + x0, y + y0, z + z0],
-                    [x + x1, y + y0, z + z0],
-                    [x + x1, y + y0, z + z1],
-                    [x + x0, y + y0, z + z1],
-                ],
-                [
-                    [u_min + x0 * du, v_min + z0 * dv],
-                    [u_min + x1 * du, v_min + z0 * dv],
-                    [u_min + x1 * du, v_min + z1 * dv],
-                    [u_min + x0 * du, v_min + z1 * dv],
-                ],
-                (
-                    (-1, 0, 0),
-                    (1, 0, 0),
-                    (0, 0, 1),
-                    (0, 0, -1),
-                ),
-            ),
-            BlockFace::North => (
-                [
-                    [x + x1, y + y0, z + z0],
-                    [x + x0, y + y0, z + z0],
-                    [x + x0, y + y1, z + z0],
-                    [x + x1, y + y1, z + z0],
-                ],
-                [
-                    [u_min + (1.0 - x1) * du, v_min + (1.0 - y0) * dv],
-                    [u_min + (1.0 - x0) * du, v_min + (1.0 - y0) * dv],
-                    [u_min + (1.0 - x0) * du, v_min + (1.0 - y1) * dv],
-                    [u_min + (1.0 - x1) * du, v_min + (1.0 - y1) * dv],
-                ],
-                (
-                    (1, 0, 0),
-                    (-1, 0, 0),
-                    (0, -1, 0),
-                    (0, 1, 0),
-                ),
-            ),
-            BlockFace::South => (
-                [
-                    [x + x0, y + y0, z + z1],
-                    [x + x1, y + y0, z + z1],
-                    [x + x1, y + y1, z + z1],
-                    [x + x0, y + y1, z + z1],
-                ],
-                [
-                    [u_min + x0 * du, v_min + (1.0 - y0) * dv],
-                    [u_min + x1 * du, v_min + (1.0 - y0) * dv],
-                    [u_min + x1 * du, v_min + (1.0 - y1) * dv],
-                    [u_min + x0 * du, v_min + (1.0 - y1) * dv],
-                ],
-                (
-                    (-1, 0, 0),
-                    (1, 0, 0),
-                    (0, -1, 0),
-                    (0, 1, 0),
-                ),
-            ),
-            BlockFace::West => (
-                [
-                    [x + x0, y + y0, z + z0],
-                    [x + x0, y + y0, z + z1],
-                    [x + x0, y + y1, z + z1],
-                    [x + x0, y + y1, z + z0],
-                ],
-                [
-                    [u_min + z0 * du, v_min + (1.0 - y0) * dv],
-                    [u_min + z1 * du, v_min + (1.0 - y0) * dv],
-                    [u_min + z1 * du, v_min + (1.0 - y1) * dv],
-                    [u_min + z0 * du, v_min + (1.0 - y1) * dv],
-                ],
-                (
-                    (0, 0, -1),
-                    (0, 0, 1),
-                    (0, -1, 0),
-                    (0, 1, 0),
-                ),
-            ),
-            BlockFace::East => (
-                [
-                    [x + x1, y + y0, z + z1],
-                    [x + x1, y + y0, z + z0],
-                    [x + x1, y + y1, z + z0],
-                    [x + x1, y + y1, z + z1],
-                ],
-                [
-                    [u_min + (1.0 - z1) * du, v_min + (1.0 - y0) * dv],
-                    [u_min + (1.0 - z0) * du, v_min + (1.0 - y0) * dv],
-                    [u_min + (1.0 - z0) * du, v_min + (1.0 - y1) * dv],
-                    [u_min + (1.0 - z1) * du, v_min + (1.0 - y1) * dv],
-                ],
-                (
-                    (0, 0, 1),
-                    (0, 0, -1),
-                    (0, -1, 0),
-                    (0, 1, 0),
-                ),
-            ),
-        };
-
-        // Ambient Occlusion and Smooth Light calculation for 4 vertices
-        let (s_left, s_right, s_down, s_up) = tangents;
-
-        // v0 corner: (s_left, s_down)
-        let (ao0, light0) = Self::compute_corner_ao_light(nx, ny, nz, s_left, s_down, world);
-        // v1 corner: (s_right, s_down)
-        let (ao1, light1) = Self::compute_corner_ao_light(nx, ny, nz, s_right, s_down, world);
-        // v2 corner: (s_right, s_up)
-        let (ao2, light2) = Self::compute_corner_ao_light(nx, ny, nz, s_right, s_up, world);
-        // v3 corner: (s_left, s_up)
-        let (ao3, light3) = Self::compute_corner_ao_light(nx, ny, nz, s_left, s_up, world);
-
-        let v0 = BlockVertex {
-            position: positions[0],
-            uv: uvs[0],
-            light: light0,
-            ao: ao0,
-            color: tint,
-            normal_index: face.index(),
-        };
-        let v1 = BlockVertex {
-            position: positions[1],
-            uv: uvs[1],
-            light: light1,
-            ao: ao1,
-            color: tint,
-            normal_index: face.index(),
-        };
-        let v2 = BlockVertex {
-            position: positions[2],
-            uv: uvs[2],
-            light: light2,
-            ao: ao2,
-            color: tint,
-            normal_index: face.index(),
-        };
-        let v3 = BlockVertex {
-            position: positions[3],
-            uv: uvs[3],
-            light: light3,
-            ao: ao3,
-            color: tint,
-            normal_index: face.index(),
-        };
-
-        let (target_vertices, target_indices) = if is_translucent {
-            (&mut mesh.translucent_vertices, &mut mesh.translucent_indices)
-        } else {
-            (&mut mesh.opaque_vertices, &mut mesh.opaque_indices)
-        };
-
-        let base_idx = target_vertices.len() as u32;
-        target_vertices.extend_from_slice(&[v0, v1, v2, v3]);
-
-        // Diagonal Flip for anisotropic AO artifact elimination
-        if ao0 + ao2 > ao1 + ao3 {
-            target_indices.extend_from_slice(&[
-                base_idx,
-                base_idx + 1,
-                base_idx + 2,
-                base_idx,
-                base_idx + 2,
-                base_idx + 3,
-            ]);
-        } else {
-            target_indices.extend_from_slice(&[
-                base_idx + 1,
-                base_idx + 2,
-                base_idx + 3,
-                base_idx + 1,
-                base_idx + 3,
-                base_idx,
-            ]);
-        }
-    }
-
-    #[inline]
-    #[allow(clippy::too_many_arguments)]
-    fn generate_cross_quads<W: BlockWorldAccessor>(
-        x: f32,
-        y: f32,
-        z: f32,
-        u_min: f32,
-        v_min: f32,
-        u_max: f32,
-        v_max: f32,
-        tint: [f32; 3],
-        wx: i32,
-        wy: i32,
-        wz: i32,
-        world: &W,
-        is_translucent: bool,
-        mesh: &mut SectionMeshData,
-    ) {
-        let bl = world.block_light_at(wx, wy, wz);
-        let sl = world.sky_light_at(wx, wy, wz);
-        let light = [(bl as f32) / 15.0, (sl as f32) / 15.0];
-        let ao = 1.0f32;
-        let normal_index = 0u32;
-
-        let (target_vertices, target_indices) = if is_translucent {
-            (&mut mesh.translucent_vertices, &mut mesh.translucent_indices)
-        } else {
-            (&mut mesh.opaque_vertices, &mut mesh.opaque_indices)
-        };
-
-        // Diagonal 1: (x + 0.1, z + 0.1) to (x + 0.9, z + 0.9)
-        let d1_p0 = [x + 0.1, y, z + 0.1];
-        let d1_p1 = [x + 0.9, y, z + 0.9];
-        let d1_p2 = [x + 0.9, y + 1.0, z + 0.9];
-        let d1_p3 = [x + 0.1, y + 1.0, z + 0.1];
-
-        // Diagonal 2: (x + 0.9, z + 0.1) to (x + 0.1, z + 0.9)
-        let d2_p0 = [x + 0.9, y, z + 0.1];
-        let d2_p1 = [x + 0.1, y, z + 0.9];
-        let d2_p2 = [x + 0.1, y + 1.0, z + 0.9];
-        let d2_p3 = [x + 0.9, y + 1.0, z + 0.1];
-
-        let uvs = [
-            [u_min, v_max],
-            [u_max, v_max],
-            [u_max, v_min],
-            [u_min, v_min],
-        ];
-
-        // Diagonal 1 vertices (both front & back facing triangles)
-        let base1 = target_vertices.len() as u32;
-        for i in 0..4 {
-            let pos = match i {
-                0 => d1_p0,
-                1 => d1_p1,
-                2 => d1_p2,
-                _ => d1_p3,
-            };
-            target_vertices.push(BlockVertex {
-                position: pos,
-                uv: uvs[i],
-                light,
-                ao,
-                color: tint,
-                normal_index,
-            });
-        }
-        target_indices.extend_from_slice(&[
-            base1, base1 + 1, base1 + 2, base1, base1 + 2, base1 + 3,
-            base1, base1 + 2, base1 + 1, base1, base1 + 3, base1 + 2,
-        ]);
-
-        // Diagonal 2 vertices (both front & back facing triangles)
-        let base2 = target_vertices.len() as u32;
-        for i in 0..4 {
-            let pos = match i {
-                0 => d2_p0,
-                1 => d2_p1,
-                2 => d2_p2,
-                _ => d2_p3,
-            };
-            target_vertices.push(BlockVertex {
-                position: pos,
-                uv: uvs[i],
-                light,
-                ao,
-                color: tint,
-                normal_index,
-            });
-        }
-        target_indices.extend_from_slice(&[
-            base2, base2 + 1, base2 + 2, base2, base2 + 2, base2 + 3,
-            base2, base2 + 2, base2 + 1, base2, base2 + 3, base2 + 2,
-        ]);
     }
 
     #[inline]
@@ -698,8 +261,12 @@ impl ChunkMesher {
         side2: (i32, i32, i32),
         world: &W,
     ) -> (f32, [f32; 2]) {
-        let b1 = world.block_at(nx + side1.0, ny + side1.1, nz + side1.2).is_opaque();
-        let b2 = world.block_at(nx + side2.0, ny + side2.1, nz + side2.2).is_opaque();
+        let b1 = world
+            .block_at(nx + side1.0, ny + side1.1, nz + side1.2)
+            .is_opaque();
+        let b2 = world
+            .block_at(nx + side2.0, ny + side2.1, nz + side2.2)
+            .is_opaque();
         let corner = world
             .block_at(
                 nx + side1.0 + side2.0,
@@ -778,7 +345,10 @@ mod tests {
 
     impl BlockWorldAccessor for TestWorld {
         fn block_at(&self, x: i32, y: i32, z: i32) -> BlockState {
-            self.blocks.get(&(x, y, z)).copied().unwrap_or(BlockState::AIR)
+            self.blocks
+                .get(&(x, y, z))
+                .copied()
+                .unwrap_or(BlockState::AIR)
         }
 
         fn block_light_at(&self, _x: i32, _y: i32, _z: i32) -> u8 {
@@ -803,7 +373,7 @@ mod tests {
 
         let mesh = ChunkMesher::mesh_section(&section, 0, 0, 0, &world, &atlas);
         assert_eq!(mesh.opaque_vertices.len(), 24); // 6 faces * 4 vertices
-        assert_eq!(mesh.opaque_indices.len(), 36);  // 6 faces * 6 indices
+        assert_eq!(mesh.opaque_indices.len(), 36); // 6 faces * 6 indices
         assert_eq!(mesh.total_quads(), 6);
     }
 
@@ -870,9 +440,13 @@ mod tests {
             last_mesh.total_quads()
         );
 
-        // Verification: meshing a full realistic section should easily take < 5000 microseconds (5 ms) in debug mode,
+        // Verification: meshing a full realistic section should easily take < 20000 microseconds in debug mode,
         // and < 200 microseconds in release mode!
-        assert!(us_per_section < 20000, "Mesher took too long: {} us", us_per_section);
+        assert!(
+            us_per_section < 20000,
+            "Mesher took too long: {} us",
+            us_per_section
+        );
         assert!(last_mesh.total_quads() > 0);
     }
 
@@ -887,9 +461,9 @@ mod tests {
         };
 
         let mesh = ChunkMesher::mesh_section(&section, 0, 0, 0, &world, &atlas);
-        // 2 diagonal planes, double-sided = 4 quads, 8 vertices, 24 indices
+        // Cross model (tall grass) has 4 quads, 16 vertices, 24 indices
         assert_eq!(mesh.total_quads(), 4);
-        assert_eq!(mesh.opaque_vertices.len(), 8);
+        assert_eq!(mesh.opaque_vertices.len(), 16);
         assert_eq!(mesh.opaque_indices.len(), 24);
     }
 
@@ -925,7 +499,11 @@ mod tests {
         let mesh_slab = ChunkMesher::mesh_section(&section_slab, 0, 0, 0, &world, &atlas);
         assert_eq!(mesh_slab.total_quads(), 6);
         // Verify slab height in vertex positions: max Y must be 2.5
-        let max_y = mesh_slab.opaque_vertices.iter().map(|v| v.position[1]).fold(f32::NEG_INFINITY, f32::max);
+        let max_y = mesh_slab
+            .opaque_vertices
+            .iter()
+            .map(|v| v.position[1])
+            .fold(f32::NEG_INFINITY, f32::max);
         assert!((max_y - 2.5).abs() < 1e-4);
 
         // 2. Carpet
@@ -933,7 +511,11 @@ mod tests {
         section_carpet.set_block(3, 3, 3, BlockState::new(171, 14)); // Red carpet
         let mesh_carpet = ChunkMesher::mesh_section(&section_carpet, 0, 0, 0, &world, &atlas);
         assert_eq!(mesh_carpet.total_quads(), 6);
-        let max_y_carpet = mesh_carpet.opaque_vertices.iter().map(|v| v.position[1]).fold(f32::NEG_INFINITY, f32::max);
+        let max_y_carpet = mesh_carpet
+            .opaque_vertices
+            .iter()
+            .map(|v| v.position[1])
+            .fold(f32::NEG_INFINITY, f32::max);
         assert!((max_y_carpet - 3.0625).abs() < 1e-4);
 
         // 3. Stairs
@@ -942,5 +524,97 @@ mod tests {
         let mesh_stairs = ChunkMesher::mesh_section(&section_stairs, 0, 0, 0, &world, &atlas);
         // Base slab (6) + step (6) = 12 faces
         assert_eq!(mesh_stairs.total_quads(), 12);
+    }
+
+    #[test]
+    fn test_glass_pane_and_iron_bars_connection() {
+        let atlas = TextureAtlas::build(Path::new("assets/minecraft/textures/blocks"));
+
+        // 1. Two adjacent glass panes along X: (5, 5, 5) and (6, 5, 5)
+        let mut section = ChunkSection::new(true);
+        section.set_block(5, 5, 5, BlockState::new(102, 0)); // Glass pane
+        section.set_block(6, 5, 5, BlockState::new(102, 0)); // Glass pane
+        let mut world = TestWorld {
+            blocks: hashbrown::HashMap::new(),
+        };
+        world.blocks.insert((5, 5, 5), BlockState::new(102, 0));
+        world.blocks.insert((6, 5, 5), BlockState::new(102, 0));
+
+        let mesh = ChunkMesher::mesh_section(&section, 0, 0, 0, &world, &atlas);
+        assert!(mesh.translucent_vertices.len() > 0);
+
+        // In block 5, vertex extends all the way to 6.0 (East)
+        let overall_max_x = mesh
+            .translucent_vertices
+            .iter()
+            .map(|v| v.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let overall_min_x = mesh
+            .translucent_vertices
+            .iter()
+            .map(|v| v.position[0])
+            .fold(f32::INFINITY, f32::min);
+
+        // The two panes span from 5.4375 to 6.5625 without disconnection
+        assert!(overall_min_x <= 5.5);
+        assert!(overall_max_x >= 6.5);
+
+        // 2. Glass pane (8, 8, 8) connected to Iron bar (9, 8, 8)
+        let mut section_mix = ChunkSection::new(true);
+        section_mix.set_block(8, 8, 8, BlockState::new(102, 0)); // Glass pane
+        section_mix.set_block(9, 8, 8, BlockState::new(101, 0)); // Iron bars
+        let mut world_mix = TestWorld {
+            blocks: hashbrown::HashMap::new(),
+        };
+        world_mix.blocks.insert((8, 8, 8), BlockState::new(102, 0));
+        world_mix.blocks.insert((9, 8, 8), BlockState::new(101, 0));
+
+        let mesh_mix = ChunkMesher::mesh_section(&section_mix, 0, 0, 0, &world_mix, &atlas);
+        // Glass pane is in translucent vertices, reaching 9.0
+        let max_x_pane = mesh_mix
+            .translucent_vertices
+            .iter()
+            .map(|v| v.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            (max_x_pane - 9.0).abs() < 1e-3,
+            "Pane max X should meet iron bar at 9.0, got {}",
+            max_x_pane
+        );
+
+        // Iron bar is in opaque vertices, reaching 9.0 on the west side
+        let min_x_bars = mesh_mix
+            .opaque_vertices
+            .iter()
+            .map(|v| v.position[0])
+            .fold(f32::INFINITY, f32::min);
+        assert!(
+            (min_x_bars - 9.0).abs() < 1e-3,
+            "Iron bar min X should meet glass pane at 9.0, got {}",
+            min_x_bars
+        );
+
+        // 3. Glass pane (1, 1, 1) connected to solid Glass block (2, 1, 1)
+        let mut section_glass = ChunkSection::new(true);
+        section_glass.set_block(1, 1, 1, BlockState::new(102, 0)); // Glass pane
+        let mut world_glass = TestWorld {
+            blocks: hashbrown::HashMap::new(),
+        };
+        world_glass
+            .blocks
+            .insert((1, 1, 1), BlockState::new(102, 0));
+        world_glass.blocks.insert((2, 1, 1), BlockState::new(20, 0)); // Glass block (ID 20)
+
+        let mesh_glass = ChunkMesher::mesh_section(&section_glass, 0, 0, 0, &world_glass, &atlas);
+        let max_x_pane_to_glass = mesh_glass
+            .translucent_vertices
+            .iter()
+            .map(|v| v.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            (max_x_pane_to_glass - 2.0).abs() < 1e-3,
+            "Pane max X should reach glass block at 2.0, got {}",
+            max_x_pane_to_glass
+        );
     }
 }

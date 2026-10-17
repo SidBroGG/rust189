@@ -129,4 +129,28 @@ impl BlockFace {
             Self::East => Self::West,
         }
     }
+
+    #[inline]
+    pub const fn tangents(self) -> ((i32, i32, i32), (i32, i32, i32), (i32, i32, i32), (i32, i32, i32)) {
+        match self {
+            Self::Up => ((-1, 0, 0), (1, 0, 0), (0, 0, -1), (0, 0, 1)),
+            Self::Down => ((-1, 0, 0), (1, 0, 0), (0, 0, 1), (0, 0, -1)),
+            Self::North => ((1, 0, 0), (-1, 0, 0), (0, -1, 0), (0, 1, 0)),
+            Self::South => ((-1, 0, 0), (1, 0, 0), (0, -1, 0), (0, 1, 0)),
+            Self::West => ((0, 0, -1), (0, 0, 1), (0, -1, 0), (0, 1, 0)),
+            Self::East => ((0, 0, 1), (0, 0, -1), (0, -1, 0), (0, 1, 0)),
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "down" | "bottom" | "-y" => Some(Self::Down),
+            "up" | "top" | "+y" => Some(Self::Up),
+            "north" | "-z" => Some(Self::North),
+            "south" | "+z" => Some(Self::South),
+            "west" | "-x" => Some(Self::West),
+            "east" | "+x" => Some(Self::East),
+            _ => None,
+        }
+    }
 }

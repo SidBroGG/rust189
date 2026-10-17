@@ -22,7 +22,7 @@ pub struct ChunkColumn {
     pub x: i32,
     pub z: i32,
     pub sections: [Option<Box<ChunkSection>>; SECTIONS_PER_CHUNK],
-    pub biomes: Box<[u8; BIOME_ARRAY_SIZE]>,
+    pub biomes: [u8; BIOME_ARRAY_SIZE],
     pub has_sky_light: bool,
 }
 
@@ -32,7 +32,7 @@ impl ChunkColumn {
             x,
             z,
             sections: Default::default(),
-            biomes: vec![0; BIOME_ARRAY_SIZE].into_boxed_slice().try_into().unwrap(),
+            biomes: [0; BIOME_ARRAY_SIZE],
             has_sky_light,
         }
     }
@@ -289,7 +289,7 @@ impl ChunkColumn {
 
         // 4. Biomes
         if ground_up {
-            buf.extend_from_slice(&*self.biomes);
+            buf.extend_from_slice(&self.biomes);
         }
 
         buf

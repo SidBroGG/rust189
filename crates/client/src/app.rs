@@ -684,9 +684,8 @@ impl App {
                         sm.exit_in_game();
                     }
                 }
-                ClientboundPlayPacket::Unknown { id, payload_len } => {
+                ClientboundPlayPacket::Unknown { payload_len, .. } => {
                     self.profiler.on_bytes_received(payload_len);
-                    tracing::trace!(id = format!("0x{:02X}", id), len = payload_len, "Unhandled Play packet");
                 }
             }
         }

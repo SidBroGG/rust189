@@ -1,4 +1,5 @@
 pub mod atlas;
+pub mod block_model;
 pub mod camera;
 pub mod chunk_manager;
 pub mod context;
@@ -10,6 +11,7 @@ pub mod terrain_renderer;
 pub mod vertex;
 
 pub use atlas::{AnimatedTexture, TextureAtlas, TextureRegion};
+pub use block_model::{BakedModel, BakedModelRegistry, BakedQuad, ModelBakery};
 pub use camera::Camera;
 pub use chunk_manager::{ChunkMeshManager, GpuSectionMesh, NeighborhoodSnapshot, RawSectionMesh, SectionKey};
 pub use context::GpuContext;

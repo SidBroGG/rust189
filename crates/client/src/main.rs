@@ -24,7 +24,6 @@ fn main() -> anyhow::Result<()> {
         timeBeginPeriod(1);
     }
 
-    // 1.1.2 Initialize structured logging
     logging::init_logging()?;
 
     info!("===============================================================");
@@ -38,7 +37,6 @@ fn main() -> anyhow::Result<()> {
         .build()?;
     let _rt_guard = rt.enter();
 
-    // 1.1.3 Load or initialize configuration
     let config_path = PathBuf::from("config.toml");
     let config = ClientConfig::load_or_create(&config_path)?;
     info!(
@@ -51,7 +49,6 @@ fn main() -> anyhow::Result<()> {
         config_path
     );
 
-    // 1.1.4 Initialize offline player profile and generate deterministic UUID
     let profile = match OfflineProfile::new(&config.auth.nickname) {
         Ok(p) => p,
         Err(e) => {
@@ -65,7 +62,6 @@ fn main() -> anyhow::Result<()> {
         "Offline authentication profile active"
     );
 
-    // 1.2 Asset Manager and fast integrity verification
     let assets_dir = Path::new("assets");
     let asset_manager = AssetManager::new(assets_dir);
 
@@ -160,7 +156,6 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Stage 3: Launch Graphical Window & egui UI
     info!("Starting Winit event loop...");
     let event_loop = EventLoop::new()?;
     let mut app = App::new(config, config_path);

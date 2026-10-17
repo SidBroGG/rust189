@@ -19,7 +19,7 @@ pub fn init_logging() -> anyhow::Result<()> {
     let log_file = File::create(logs_dir.join("latest.log"))?;
 
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new("info,client=debug,assets=info,protocol=debug,gui=debug,render=debug,world=debug")
+        EnvFilter::new("info")
     });
 
     let console_layer = fmt::layer()
