@@ -1,35 +1,29 @@
-use crate::codec::varint::{read_varint, varint_size, write_varint};
+use crate::codec::varint::{decode_varint_slice, read_varint, varint_size, write_varint};
 use crate::crypto::Aes128Cfb8Cipher;
 use crate::error::ProtocolError;
 use crate::transport::compression::{compress_zlib, decompress_zlib};
 use crate::transport::packet::RawPacket;
-use bytes::{Buf, Bytes, BytesMut};
+use crate::transport::ring_buffer::ZeroCopyRingBuffer;
+use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-/// Attempts to parse a VarInt from a byte slice without consuming or advancing.
+/// Attempts to parse a VarInt from a byte slice using the hardware/fallback VarInt decoder.
 /// Returns `Ok(Some((value, bytes_consumed)))` if a complete VarInt is present,
 /// `Ok(None)` if more bytes are needed, or `Err(VarIntTooBig)`.
 pub fn try_read_varint(slice: &[u8]) -> Result<Option<(i32, usize)>, ProtocolError> {
-    let mut value: i32 = 0;
-    let mut shift: u32 = 0;
-    for (idx, &byte) in slice.iter().enumerate() {
-        value |= ((byte & 0x7F) as i32) << shift;
-        if (byte & 0x80) == 0 {
-            return Ok(Some((value, idx + 1)));
-        }
-        shift += 7;
-        if shift >= 35 {
-            return Err(ProtocolError::VarIntTooBig);
-        }
+    match decode_varint_slice(slice) {
+        Ok((val, len)) => Ok(Some((val, len))),
+        Err(ProtocolError::UnexpectedEof) => Ok(None),
+        Err(e) => Err(e),
     }
-    Ok(None)
 }
 
 /// Asynchronous framed Minecraft 1.8.9 packet stream supporting
-/// framing, streaming compression (Zlib), and symmetric encryption (AES-128/CFB8).
+/// zero-copy ring buffering, streaming compression (Zlib), and symmetric encryption (AES-128/CFB8).
 pub struct AsyncPacketStream<IO> {
     io: IO,
-    read_buffer: BytesMut,
+    ring_buffer: ZeroCopyRingBuffer,
+    write_buffer: BytesMut,
     compression_threshold: Option<i32>,
     cipher: Option<Aes128Cfb8Cipher>,
 }
@@ -39,7 +33,8 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncPacketStream<IO> {
     pub fn new(io: IO) -> Self {
         Self {
             io,
-            read_buffer: BytesMut::with_capacity(8192),
+            ring_buffer: ZeroCopyRingBuffer::new(),
+            write_buffer: BytesMut::with_capacity(8192),
             compression_threshold: None,
             cipher: None,
         }
@@ -63,8 +58,9 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncPacketStream<IO> {
     /// Reads the next complete packet from the stream.
     pub async fn read_packet(&mut self) -> Result<RawPacket, ProtocolError> {
         loop {
-            // Check if we can parse the packet length VarInt
-            if let Some((packet_len, len_bytes)) = try_read_varint(&self.read_buffer)? {
+            // Check if we can parse the packet length VarInt from the contiguous readable slice
+            let readable = self.ring_buffer.readable_slice();
+            if let Some((packet_len, len_bytes)) = try_read_varint(readable)? {
                 if packet_len < 0 {
                     return Err(ProtocolError::PacketTooLarge {
                         max: 2097152,
@@ -80,22 +76,22 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncPacketStream<IO> {
                 }
 
                 let total_required = len_bytes + packet_len;
-                if self.read_buffer.len() >= total_required {
-                    self.read_buffer.advance(len_bytes);
-                    let mut packet_body = self.read_buffer.split_to(packet_len);
-
-                    match self.compression_threshold {
+                if readable.len() >= total_required {
+                    let packet_data = &readable[len_bytes..total_required];
+                    let raw_packet = match self.compression_threshold {
                         None => {
-                            let id = read_varint(&mut packet_body)?;
-                            let payload = packet_body.freeze();
-                            return Ok(RawPacket::new(id, payload));
+                            let mut slice = packet_data;
+                            let id = read_varint(&mut slice)?;
+                            let payload = Bytes::copy_from_slice(slice);
+                            RawPacket::new(id, payload)
                         }
                         Some(_) => {
-                            let data_len = read_varint(&mut packet_body)?;
+                            let mut slice = packet_data;
+                            let data_len = read_varint(&mut slice)?;
                             if data_len == 0 {
-                                let id = read_varint(&mut packet_body)?;
-                                let payload = packet_body.freeze();
-                                return Ok(RawPacket::new(id, payload));
+                                let id = read_varint(&mut slice)?;
+                                let payload = Bytes::copy_from_slice(slice);
+                                RawPacket::new(id, payload)
                             } else {
                                 if data_len < 0 || (data_len as usize) > 2097152 {
                                     return Err(ProtocolError::PacketTooLarge {
@@ -103,69 +99,80 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncPacketStream<IO> {
                                         actual: data_len as usize,
                                     });
                                 }
-                                let decompressed =
-                                    decompress_zlib(&packet_body, data_len as usize)?;
+                                let decompressed = decompress_zlib(slice, data_len as usize)?;
                                 let mut decompressed_slice = &decompressed[..];
                                 let id = read_varint(&mut decompressed_slice)?;
                                 let payload = Bytes::copy_from_slice(decompressed_slice);
-                                return Ok(RawPacket::new(id, payload));
+                                RawPacket::new(id, payload)
                             }
                         }
-                    }
+                    };
+
+                    self.ring_buffer.advance_read(total_required);
+                    return Ok(raw_packet);
                 }
             }
 
-            // Need more data from the network
-            let mut temp = [0u8; 8192];
-            let n = self.io.read(&mut temp).await?;
+            // Direct zero-copy read from OS network socket into pre-allocated ring buffer
+            let write_slice = self.ring_buffer.prepare_write_slice(8192);
+            let n = self.io.read(write_slice).await?;
             if n == 0 {
-                if self.read_buffer.is_empty() {
+                if self.ring_buffer.is_empty() {
                     return Err(ProtocolError::ConnectionClosed);
                 } else {
                     return Err(ProtocolError::UnexpectedEof);
                 }
             }
 
-            let chunk = &mut temp[..n];
+            // In-place decryption directly within the ring buffer slice without allocations
             if let Some(ref mut cipher) = self.cipher {
-                cipher.decrypt(chunk);
+                cipher.decrypt(&mut write_slice[..n]);
             }
-            self.read_buffer.extend_from_slice(chunk);
+            self.ring_buffer.commit_write(n);
         }
     }
 
     /// Writes a framed packet with ID and payload into the stream and flushes.
     pub async fn write_packet(&mut self, id: i32, payload: &[u8]) -> Result<(), ProtocolError> {
-        let mut body = BytesMut::with_capacity(varint_size(id) + payload.len());
-        write_varint(id, &mut body);
-        body.extend_from_slice(payload);
+        self.write_buffer.clear();
+        let id_size = varint_size(id);
+        let uncompressed_len = id_size + payload.len();
 
-        let mut frame = BytesMut::new();
         match self.compression_threshold {
             None => {
-                write_varint(body.len() as i32, &mut frame);
-                frame.extend_from_slice(&body);
+                write_varint(uncompressed_len as i32, &mut self.write_buffer);
+                write_varint(id, &mut self.write_buffer);
+                self.write_buffer.extend_from_slice(payload);
             }
             Some(threshold) => {
-                if body.len() < threshold as usize {
-                    write_varint((varint_size(0) + body.len()) as i32, &mut frame);
-                    write_varint(0, &mut frame);
-                    frame.extend_from_slice(&body);
+                if uncompressed_len < threshold as usize {
+                    let data_len_size = varint_size(0);
+                    let packet_len = data_len_size + uncompressed_len;
+                    write_varint(packet_len as i32, &mut self.write_buffer);
+                    write_varint(0, &mut self.write_buffer);
+                    write_varint(id, &mut self.write_buffer);
+                    self.write_buffer.extend_from_slice(payload);
                 } else {
+                    let mut body = Vec::with_capacity(uncompressed_len);
+                    write_varint(id, &mut body);
+                    body.extend_from_slice(payload);
                     let compressed = compress_zlib(&body)?;
-                    let data_len = body.len() as i32;
-                    write_varint((varint_size(data_len) + compressed.len()) as i32, &mut frame);
-                    write_varint(data_len, &mut frame);
-                    frame.extend_from_slice(&compressed);
+
+                    let data_len = uncompressed_len as i32;
+                    let data_len_size = varint_size(data_len);
+                    let packet_len = data_len_size + compressed.len();
+                    write_varint(packet_len as i32, &mut self.write_buffer);
+                    write_varint(data_len, &mut self.write_buffer);
+                    self.write_buffer.extend_from_slice(&compressed);
                 }
             }
         }
 
         if let Some(ref mut cipher) = self.cipher {
-            cipher.encrypt(&mut frame);
+            cipher.encrypt(&mut self.write_buffer);
         }
 
-        self.io.write_all(&frame).await?;
+        self.io.write_all(&self.write_buffer).await?;
         self.io.flush().await?;
         Ok(())
     }

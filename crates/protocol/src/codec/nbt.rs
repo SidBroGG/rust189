@@ -1,8 +1,5 @@
 use crate::error::ProtocolError;
 use bytes::{Buf, BufMut, BytesMut};
-use flate2::read::{GzDecoder, ZlibDecoder};
-use flate2::write::{GzEncoder, ZlibEncoder};
-use flate2::Compression;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 
@@ -367,41 +364,39 @@ fn write_compound_payload(map: &HashMap<String, NbtTag>, buf: &mut impl BufMut) 
     Ok(())
 }
 
-/// Reads Zlib-compressed NBT data from a reader.
+/// Reads Zlib-compressed NBT data from a reader using libdeflate.
 pub fn read_zlib(mut reader: impl Read) -> Result<(String, NbtTag), ProtocolError> {
-    let mut decoder = ZlibDecoder::new(&mut reader);
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed)?;
+    let mut compressed = Vec::new();
+    reader.read_to_end(&mut compressed)?;
+    let decompressed = crate::transport::compression::decompress_zlib_dynamic(&compressed)?;
     let mut slice = &decompressed[..];
     read_named_compound(&mut slice)
 }
 
-/// Writes Zlib-compressed NBT data to a writer.
+/// Writes Zlib-compressed NBT data to a writer using libdeflate.
 pub fn write_zlib(mut writer: impl Write, name: &str, tag: &NbtTag) -> Result<(), ProtocolError> {
     let mut buf = BytesMut::new();
     write_named_compound(name, tag, &mut buf)?;
-    let mut encoder = ZlibEncoder::new(&mut writer, Compression::default());
-    encoder.write_all(&buf)?;
-    encoder.finish()?;
+    let compressed = crate::transport::compression::compress_zlib(&buf)?;
+    writer.write_all(&compressed)?;
     Ok(())
 }
 
-/// Reads Gzip-compressed NBT data from a reader.
+/// Reads Gzip-compressed NBT data from a reader using libdeflate.
 pub fn read_gzip(mut reader: impl Read) -> Result<(String, NbtTag), ProtocolError> {
-    let mut decoder = GzDecoder::new(&mut reader);
-    let mut decompressed = Vec::new();
-    decoder.read_to_end(&mut decompressed)?;
+    let mut compressed = Vec::new();
+    reader.read_to_end(&mut compressed)?;
+    let decompressed = crate::transport::compression::decompress_gzip_dynamic(&compressed)?;
     let mut slice = &decompressed[..];
     read_named_compound(&mut slice)
 }
 
-/// Writes Gzip-compressed NBT data to a writer.
+/// Writes Gzip-compressed NBT data to a writer using libdeflate.
 pub fn write_gzip(mut writer: impl Write, name: &str, tag: &NbtTag) -> Result<(), ProtocolError> {
     let mut buf = BytesMut::new();
     write_named_compound(name, tag, &mut buf)?;
-    let mut encoder = GzEncoder::new(&mut writer, Compression::default());
-    encoder.write_all(&buf)?;
-    encoder.finish()?;
+    let compressed = crate::transport::compression::compress_gzip(&buf)?;
+    writer.write_all(&compressed)?;
     Ok(())
 }
 

@@ -5,6 +5,7 @@ pub mod integrity;
 pub mod lang;
 pub mod manager;
 pub mod manifest;
+pub mod platform_io;
 pub mod skin;
 
 pub use downloader::{calculate_file_sha1, calculate_sha1, download_file, verify_file_sha1};
@@ -14,6 +15,7 @@ pub use integrity::{check_fast_integrity, verify_full_integrity, IntegrityStatus
 pub use lang::LanguageMap;
 pub use manager::{AssetManager, AssetProgress};
 pub use manifest::{AssetIndex, AssetObject, DownloadFile, VersionDetails, VersionManifest, VersionSummary};
+pub use platform_io::{is_iocp_active, is_io_uring_available, PlatformDiskEngine};
 pub use skin::{normalize_skin_texture, SkinManager};
 
 
