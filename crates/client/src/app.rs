@@ -102,6 +102,12 @@ pub struct App {
     pub armor_items: [Option<HudItemInfo>; 4],
     pub active_potions: Vec<HudPotionInfo>,
     pub active_boss_bars: Vec<HudBossBarInfo>,
+
+    // Hurt camera effect & death tilt (MCP EntityRenderer.hurtCameraEffect)
+    pub hurt_time: u32,
+    pub max_hurt_time: u32,
+    pub attacked_at_yaw: f32,
+    pub death_time: u32,
 }
 
 impl App {
@@ -186,6 +192,11 @@ impl App {
             ],
             active_potions: Vec::new(),
             active_boss_bars: Vec::new(),
+
+            hurt_time: 0,
+            max_hurt_time: 10,
+            attacked_at_yaw: 0.0,
+            death_time: 0,
         }
     }
 
@@ -380,6 +391,32 @@ impl App {
         }
     }
 
+    pub fn is_cursor_needed(&self) -> bool {
+        if self.player_health <= 0.0 {
+            return true;
+        }
+        self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed())
+    }
+
+    /// Computes camera roll angle from damage hurt shake and death tilt (MCP 1.8.9 EntityRenderer.hurtCameraEffect)
+    pub fn get_hurt_camera_roll(&self, partial_ticks: f32) -> f32 {
+        let mut roll = 0.0f32;
+
+        if self.player_health <= 0.0 {
+            let f1 = self.death_time as f32 + partial_ticks;
+            roll += 40.0 - 8000.0 / (f1 + 200.0);
+        }
+
+        let f = self.hurt_time as f32 - partial_ticks;
+        if f >= 0.0 && self.max_hurt_time > 0 {
+            let mut norm_f = f / self.max_hurt_time as f32;
+            norm_f = (norm_f * norm_f * norm_f * norm_f * std::f32::consts::PI).sin();
+            roll += -norm_f * 14.0;
+        }
+
+        roll
+    }
+
     pub fn recalculate_current_target(&mut self) {
         let pt = (self.last_physics_tick.elapsed().as_secs_f32() / 0.05).clamp(0.0, 1.0);
         let pose = self.camera_controller.compute_camera_pose(
@@ -388,10 +425,11 @@ impl App {
             pt,
             self.config.video.view_bobbing,
         );
+        let hurt_roll = self.get_hurt_camera_roll(pt);
         self.camera.position = pose.position;
         self.camera.yaw = pose.yaw;
         self.camera.pitch = pose.pitch;
-        self.camera.roll = pose.roll;
+        self.camera.roll = pose.roll + hurt_roll;
         self.camera.bob_x = pose.bob_x;
         self.camera.bob_y = pose.bob_y;
 
@@ -957,6 +995,8 @@ impl App {
                     self.world.dimension = rp.dimension as i8;
                     self.player_health = 20.0;
                     self.player_air = 300;
+                    self.hurt_time = 0;
+                    self.death_time = 0;
                     if let Some(cm) = &mut self.chunk_manager {
                         cm.clear();
                     }
@@ -967,6 +1007,12 @@ impl App {
                             ig.hud_data.health = 20.0;
                             ig.death_ticks = 0;
                         }
+                    }
+                    if let Some(w) = &self.window {
+                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                        w.set_cursor_visible(false);
+                        self.mouse_grabbed = true;
                     }
                 }
                 ClientboundPlayPacket::TimeUpdate(tu) => {
@@ -1065,8 +1111,8 @@ impl App {
                     self.camera.yaw = self.player.yaw;
                     self.camera.pitch = self.player.pitch;
 
-                    // Ensure mouse is captured on spawn
-                    if !self.mouse_grabbed {
+                    // Ensure mouse is captured on spawn only if alive and cursor is not needed
+                    if !self.mouse_grabbed && !self.is_cursor_needed() {
                         if let Some(w) = &self.window {
                             let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
                                 .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
@@ -1583,9 +1629,60 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::UpdateHealth(uh) => {
+                    let prev_health = self.player_health;
                     self.player_health = uh.health;
                     self.player_food = uh.food.clamp(0, 20) as u8;
                     self.player_saturation = uh.food_saturation;
+
+                    if uh.health < prev_health {
+                        self.hurt_time = 10;
+                        self.max_hurt_time = 10;
+                        self.attacked_at_yaw = 0.0;
+                    }
+
+                    if self.player_health <= 0.0 {
+                        self.death_time = 0;
+                        if let Some(w) = &self.window {
+                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                            w.set_cursor_visible(true);
+                            self.mouse_grabbed = false;
+                        }
+                        if let Some(sm) = &mut self.screen_manager {
+                            if let Some(ig) = &mut sm.in_game {
+                                ig.hud_data.health = 0.0;
+                                ig.escape_menu_opened = false;
+                                ig.chat_opened = false;
+                                ig.hud_editor_opened = false;
+                            }
+                        }
+                    }
+                }
+                ClientboundPlayPacket::EntityStatus(es) => {
+                    if es.entity_id == self.player_entity_id {
+                        if es.status == 2 {
+                            self.hurt_time = 10;
+                            self.max_hurt_time = 10;
+                            self.attacked_at_yaw = 0.0;
+                        } else if es.status == 3 {
+                            self.hurt_time = 10;
+                            self.max_hurt_time = 10;
+                            self.player_health = 0.0;
+                            self.death_time = 0;
+                            if let Some(w) = &self.window {
+                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                w.set_cursor_visible(true);
+                                self.mouse_grabbed = false;
+                            }
+                            if let Some(sm) = &mut self.screen_manager {
+                                if let Some(ig) = &mut sm.in_game {
+                                    ig.hud_data.health = 0.0;
+                                    ig.escape_menu_opened = false;
+                                    ig.chat_opened = false;
+                                    ig.hud_editor_opened = false;
+                                }
+                            }
+                        }
+                    }
                 }
                 ClientboundPlayPacket::SetExperience(exp) => {
                     self.player_exp_progress = exp.experience_bar;
@@ -1687,6 +1784,18 @@ impl App {
             self.world.entity_tracker.tick();
             self.spatial_hash.rebuild(&self.world.entity_tracker);
 
+            // Hurt & death timer ticking (MCP EntityLivingBase.onLivingUpdate)
+            if self.hurt_time > 0 {
+                self.hurt_time -= 1;
+            }
+            if self.player_health <= 0.0 {
+                if self.death_time < 20 {
+                    self.death_time += 1;
+                }
+            } else {
+                self.death_time = 0;
+            }
+
             if self.right_click_delay_timer > 0 {
                 self.right_click_delay_timer -= 1;
             }
@@ -1719,7 +1828,7 @@ impl App {
             let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
             let can_update_player = self.has_spawned || (self.session.is_none() && is_in_game);
             if can_update_player {
-                let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
+                let cursor_needed = self.is_cursor_needed();
                 let mut input = PlayerInput::default();
 
                 if is_in_game && !cursor_needed {
@@ -2115,7 +2224,7 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::Focused(focused) => {
                 let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-                let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
+                let cursor_needed = self.is_cursor_needed();
                 if is_in_game {
                     if focused && !cursor_needed && !self.mouse_grabbed {
                         if let Some(w) = &self.window {
@@ -2162,7 +2271,7 @@ impl ApplicationHandler for App {
                 ..
             } if !consumed => {
                 let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-                let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
+                let cursor_needed = self.is_cursor_needed();
 
                 match button {
                     winit::event::MouseButton::Left => {
@@ -2212,7 +2321,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-                let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
+                let cursor_needed = self.is_cursor_needed();
                 if is_in_game && !cursor_needed && self.mouse_grabbed {
                     let scroll_dir = match delta {
                         winit::event::MouseScrollDelta::LineDelta(_x, y) => y,
@@ -2383,23 +2492,21 @@ impl ApplicationHandler for App {
                 self.profiler.maybe_dump_telemetry("logs/profile_benchmark.json");
 
                 self.camera.fov = self.config.video.fov;
-                if let Some(sm) = &self.screen_manager {
-                    let is_in_game = sm.in_game.is_some();
-                    let cursor_needed = sm.is_cursor_needed();
-                    if is_in_game {
-                        if cursor_needed && self.mouse_grabbed {
-                            if let Some(w) = &self.window {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
-                                w.set_cursor_visible(true);
-                                self.mouse_grabbed = false;
-                            }
-                        } else if !cursor_needed && !self.mouse_grabbed {
-                            if let Some(w) = &self.window {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
-                                w.set_cursor_visible(false);
-                                self.mouse_grabbed = true;
-                            }
+                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                let cursor_needed = self.is_cursor_needed();
+                if is_in_game {
+                    if cursor_needed && self.mouse_grabbed {
+                        if let Some(w) = &self.window {
+                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                            w.set_cursor_visible(true);
+                            self.mouse_grabbed = false;
+                        }
+                    } else if !cursor_needed && !self.mouse_grabbed {
+                        if let Some(w) = &self.window {
+                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            w.set_cursor_visible(false);
+                            self.mouse_grabbed = true;
                         }
                     }
                 }
@@ -2606,11 +2713,19 @@ impl ApplicationHandler for App {
                         }
                         self.player_health = 20.0;
                         self.player_air = 300;
+                        self.hurt_time = 0;
+                        self.death_time = 0;
                         if let Some(sm) = &mut self.screen_manager {
                             if let Some(ig) = &mut sm.in_game {
                                 ig.hud_data.health = 20.0;
                                 ig.death_ticks = 0;
                             }
+                        }
+                        if let Some(w) = &self.window {
+                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            w.set_cursor_visible(false);
+                            self.mouse_grabbed = true;
                         }
                     }
                     GuiOutput::NicknameUpdated(new_nick) => {
@@ -2671,10 +2786,11 @@ impl ApplicationHandler for App {
                         partial_ticks,
                         self.config.video.view_bobbing,
                     );
+                    let hurt_roll = self.get_hurt_camera_roll(partial_ticks);
                     self.camera.position = pose.position;
                     self.camera.yaw = pose.yaw;
                     self.camera.pitch = pose.pitch;
-                    self.camera.roll = pose.roll;
+                    self.camera.roll = pose.roll + hurt_roll;
                     self.camera.bob_x = pose.bob_x;
                     self.camera.bob_y = pose.bob_y;
                 }
@@ -2926,7 +3042,7 @@ impl ApplicationHandler for App {
         event: winit::event::DeviceEvent,
     ) {
         if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
-            if self.mouse_grabbed {
+            if self.mouse_grabbed && !self.is_cursor_needed() {
                 let sensitivity = self.config.mouse.sensitivity;
                 let invert_y = self.config.mouse.invert_y;
                 self.camera_controller.handle_mouse_input(

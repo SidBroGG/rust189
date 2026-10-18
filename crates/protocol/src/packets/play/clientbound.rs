@@ -1259,6 +1259,35 @@ impl ClientboundEntityHeadLookPacket {
     }
 }
 
+/// Clientbound Entity Status packet (0x1A).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundEntityStatusPacket {
+    pub entity_id: i32,
+    pub status: i8,
+}
+
+impl ClientboundEntityStatusPacket {
+    pub const PACKET_ID: i32 = 0x1A;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 5 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 5,
+                available: buf.remaining(),
+            });
+        }
+        let entity_id = buf.get_i32();
+        let status = buf.get_i8();
+        Ok(Self { entity_id, status })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&self.entity_id.to_be_bytes());
+        buf.extend_from_slice(&[self.status as u8]);
+        Ok(())
+    }
+}
+
 /// Clientbound Animation packet (0x0B).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientboundAnimationPacket {

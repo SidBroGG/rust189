@@ -143,8 +143,8 @@ impl InGameScreen {
             self.chat_opened = false;
             self.hud_editor_opened = false;
 
-            // Fullscreen classic red vignette wash
-            let death_painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("death_overlay")));
+            // Fullscreen classic red vignette wash (rendered in Background behind the modal window)
+            let death_painter = ctx.layer_painter(LayerId::new(Order::Background, Id::new("death_overlay")));
             death_painter.rect_filled(
                 screen_rect,
                 CornerRadius::ZERO,

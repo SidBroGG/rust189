@@ -36,6 +36,7 @@ pub enum ClientboundPlayPacket {
     EntityLookMove(ClientboundEntityLookMovePacket),
     EntityTeleport(ClientboundEntityTeleportPacket),
     EntityHeadLook(ClientboundEntityHeadLookPacket),
+    EntityStatus(ClientboundEntityStatusPacket),
     Animation(ClientboundAnimationPacket),
     EntityVelocity(ClientboundEntityVelocityPacket),
     EntityEquipment(ClientboundEntityEquipmentPacket),
@@ -136,6 +137,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundEntityHeadLookPacket::PACKET_ID => {
                 Ok(Self::EntityHeadLook(ClientboundEntityHeadLookPacket::decode(payload)?))
+            }
+            ClientboundEntityStatusPacket::PACKET_ID => {
+                Ok(Self::EntityStatus(ClientboundEntityStatusPacket::decode(payload)?))
             }
             ClientboundAnimationPacket::PACKET_ID => {
                 Ok(Self::Animation(ClientboundAnimationPacket::decode(payload)?))
