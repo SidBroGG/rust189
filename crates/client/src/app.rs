@@ -391,15 +391,15 @@ impl App {
                     self.profiler.on_bytes_received(cd.data.len());
                     if cd.ground_up && cd.bit_mask == 0 {
                         self.world.unload_chunk(cd.chunk_x, cd.chunk_z);
-                        if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
+                        if let Some(cm) = &mut self.chunk_manager {
                             cm.remove_chunk(cd.chunk_x, cd.chunk_z);
                             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                                 let nx = cd.chunk_x + dx;
                                 let nz = cd.chunk_z + dz;
-                                if self.world.chunks.contains_key(&(nx, nz)) {
+                                if self.world.chunks.contains_key(&(nx, nz)) && cm.has_chunk_mesh(nx, nz) {
                                     for sec_idx in 0..16 {
-                                        if cm.has_mesh_or_pending(nx, nz, sec_idx) {
-                                            cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
+                                        if cm.has_mesh(nx, nz, sec_idx) {
+                                            cm.mark_section_dirty(nx, sec_idx, nz);
                                         }
                                     }
                                 }
@@ -415,20 +415,16 @@ impl App {
                         ) {
                             warn!(x = cd.chunk_x, z = cd.chunk_z, error = %e, "Failed to load chunk data");
                         }
-                        if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
-                            for sec_idx in 0..16 {
-                                if (cd.bit_mask & (1 << sec_idx)) != 0 {
-                                    cm.enqueue_section(&self.world, atlas.clone(), cd.chunk_x, sec_idx, cd.chunk_z);
-                                }
-                            }
-                            // Re-enqueue adjacent chunk sections on borders only if they already have meshes
+                        if let Some(cm) = &mut self.chunk_manager {
+                            cm.mark_chunk_dirty(cd.chunk_x, cd.chunk_z, cd.bit_mask);
+                            // Mark adjacent chunk sections on borders only if they already have meshes
                             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                                 let nx = cd.chunk_x + dx;
                                 let nz = cd.chunk_z + dz;
-                                if self.world.chunks.contains_key(&(nx, nz)) {
+                                if self.world.chunks.contains_key(&(nx, nz)) && cm.has_chunk_mesh(nx, nz) {
                                     for sec_idx in 0..16 {
-                                        if (cd.bit_mask & (1 << sec_idx)) != 0 && cm.has_mesh_or_pending(nx, nz, sec_idx) {
-                                            cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
+                                        if (cd.bit_mask & (1 << sec_idx)) != 0 && cm.has_mesh(nx, nz, sec_idx) {
+                                            cm.mark_section_dirty(nx, sec_idx, nz);
                                         }
                                     }
                                 }
@@ -471,23 +467,20 @@ impl App {
                         }
                     }
 
-                    if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
+                    if let Some(cm) = &mut self.chunk_manager {
                         for &(chunk_x, chunk_z, bit_mask) in &loaded_meta {
-                            for sec_idx in 0..16 {
-                                if (bit_mask & (1 << sec_idx)) != 0 {
-                                    cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z);
-                                }
-                            }
-                            // Re-enqueue adjacent outer chunk sections not in this bulk that already have meshes
+                            cm.mark_chunk_dirty(chunk_x, chunk_z, bit_mask);
+                            // Mark adjacent outer chunk sections not in this bulk that already have meshes
                             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                                 let nx = chunk_x + dx;
                                 let nz = chunk_z + dz;
                                 if !loaded_meta.iter().any(|&(x, z, _)| x == nx && z == nz)
                                     && self.world.chunks.contains_key(&(nx, nz))
+                                    && cm.has_chunk_mesh(nx, nz)
                                 {
                                     for sec_idx in 0..16 {
-                                        if (bit_mask & (1 << sec_idx)) != 0 && cm.has_mesh_or_pending(nx, nz, sec_idx) {
-                                            cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
+                                        if (bit_mask & (1 << sec_idx)) != 0 && cm.has_mesh(nx, nz, sec_idx) {
+                                            cm.mark_section_dirty(nx, sec_idx, nz);
                                         }
                                     }
                                 }
@@ -506,26 +499,26 @@ impl App {
                     let sec_idx = ((bc.position.y >> 4) as usize).min(15);
                     let chunk_x = bc.position.x >> 4;
                     let chunk_z = bc.position.z >> 4;
-                    if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
-                        cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z);
+                    if let Some(cm) = &mut self.chunk_manager {
+                        cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
 
                         let rel_x = bc.position.x & 15;
                         let rel_y = bc.position.y & 15;
                         let rel_z = bc.position.z & 15;
-                        if rel_x == 0 && cm.has_mesh_or_pending(chunk_x - 1, chunk_z, sec_idx) {
-                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x - 1, sec_idx, chunk_z);
-                        } else if rel_x == 15 && cm.has_mesh_or_pending(chunk_x + 1, chunk_z, sec_idx) {
-                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x + 1, sec_idx, chunk_z);
+                        if rel_x == 0 && cm.has_mesh(chunk_x - 1, chunk_z, sec_idx) {
+                            cm.mark_section_dirty(chunk_x - 1, sec_idx, chunk_z);
+                        } else if rel_x == 15 && cm.has_mesh(chunk_x + 1, chunk_z, sec_idx) {
+                            cm.mark_section_dirty(chunk_x + 1, sec_idx, chunk_z);
                         }
-                        if rel_z == 0 && cm.has_mesh_or_pending(chunk_x, chunk_z - 1, sec_idx) {
-                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z - 1);
-                        } else if rel_z == 15 && cm.has_mesh_or_pending(chunk_x, chunk_z + 1, sec_idx) {
-                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z + 1);
+                        if rel_z == 0 && cm.has_mesh(chunk_x, chunk_z - 1, sec_idx) {
+                            cm.mark_section_dirty(chunk_x, sec_idx, chunk_z - 1);
+                        } else if rel_z == 15 && cm.has_mesh(chunk_x, chunk_z + 1, sec_idx) {
+                            cm.mark_section_dirty(chunk_x, sec_idx, chunk_z + 1);
                         }
-                        if rel_y == 0 && sec_idx > 0 && cm.has_mesh_or_pending(chunk_x, chunk_z, sec_idx - 1) {
-                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx - 1, chunk_z);
-                        } else if rel_y == 15 && sec_idx < 15 && cm.has_mesh_or_pending(chunk_x, chunk_z, sec_idx + 1) {
-                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx + 1, chunk_z);
+                        if rel_y == 0 && sec_idx > 0 && cm.has_mesh(chunk_x, chunk_z, sec_idx - 1) {
+                            cm.mark_section_dirty(chunk_x, sec_idx - 1, chunk_z);
+                        } else if rel_y == 15 && sec_idx < 15 && cm.has_mesh(chunk_x, chunk_z, sec_idx + 1) {
+                            cm.mark_section_dirty(chunk_x, sec_idx + 1, chunk_z);
                         }
                     }
                 }
@@ -564,13 +557,13 @@ impl App {
                             neighbor_sections.insert((mbc.chunk_x, sec_y + 1, mbc.chunk_z));
                         }
                     }
-                    if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
+                    if let Some(cm) = &mut self.chunk_manager {
                         for sec_y in affected_sections {
-                            cm.enqueue_section(&self.world, atlas.clone(), mbc.chunk_x, sec_y, mbc.chunk_z);
+                            cm.mark_section_dirty(mbc.chunk_x, sec_y, mbc.chunk_z);
                         }
                         for (nx, ny, nz) in neighbor_sections {
-                            if self.world.chunks.contains_key(&(nx, nz)) && cm.has_mesh_or_pending(nx, nz, ny) {
-                                cm.enqueue_section(&self.world, atlas.clone(), nx, ny, nz);
+                            if self.world.chunks.contains_key(&(nx, nz)) && cm.has_mesh(nx, nz, ny) {
+                                cm.mark_section_dirty(nx, ny, nz);
                             }
                         }
                     }
@@ -1557,7 +1550,17 @@ impl ApplicationHandler for App {
                             tr.resize(&gpu.device, out_w, out_h);
                         }
 
-                        cm.upload_pending(&gpu.device, 8);
+                        if let Some(atlas) = &self.atlas {
+                            cm.dispatch_dirty_sections(
+                                &self.world,
+                                atlas.clone(),
+                                self.camera.position,
+                                self.config.video.render_distance,
+                                6,
+                            );
+                        }
+
+                        cm.upload_pending(&gpu.device, 6);
                         let dt_ms = (self.last_frame_time.elapsed().as_millis() as u64).clamp(1, 100);
                         tr.update_animations(&gpu.queue, dt_ms);
 

@@ -54,6 +54,10 @@ impl Default for PalettedContainer {
     }
 }
 
+thread_local! {
+    static PALETTE_LUT: std::cell::RefCell<[u8; 65536]> = const { std::cell::RefCell::new([0xFF; 65536]) };
+}
+
 impl PalettedContainer {
     /// Creates a new empty section with SingleValue(AIR), allocating 0 heap bytes.
     pub fn new_empty() -> Self {
@@ -253,59 +257,81 @@ impl PalettedContainer {
         let m = LINEAR_TO_MORTON[linear & 4095] as usize;
         self.set_morton(m, state);
     }
-
-    /// Loads block data from a raw 8192-byte Protocol 47 payload slice (linear order).
-    pub fn from_raw_slice(slice: &[u8]) -> Self {
+    /// Loads block data from a raw 8192-byte Protocol 47 payload slice and computes non-air count in one pass.
+    pub fn from_raw_slice_counted(slice: &[u8]) -> (Self, usize) {
         assert!(slice.len() >= SECTION_VOXELS * 2);
 
         let mut unique_states = Vec::with_capacity(16);
         let first = read_u16_le(slice, 0);
         unique_states.push(BlockState(first));
         let mut is_uniform = true;
+        let mut non_air = if !BlockState(first).is_air() { 1 } else { 0 };
 
         for i in 1..SECTION_VOXELS {
             let raw = read_u16_le(slice, i);
+            if !BlockState(raw).is_air() {
+                non_air += 1;
+            }
             if raw != first {
                 is_uniform = false;
-                if !unique_states.iter().any(|s| s.0 == raw) {
+                if unique_states.len() <= 256 && !unique_states.iter().any(|s| s.0 == raw) {
                     unique_states.push(BlockState(raw));
-                    if unique_states.len() > 256 {
-                        break;
-                    }
                 }
             }
         }
 
         if is_uniform {
-            return Self::SingleValue(BlockState(first));
+            return (Self::SingleValue(BlockState(first)), non_air);
         }
 
         if unique_states.len() <= 16 {
             let palette = unique_states;
             let mut data = Box::new([0u64; WORDS_B4]);
-            for linear in 0..SECTION_VOXELS {
-                let raw = read_u16_le(slice, linear);
-                let m = LINEAR_TO_MORTON[linear] as usize;
-                let p_idx = palette.iter().position(|s| s.0 == raw).unwrap();
-                let word = m >> 4;
-                let shift = (m & 15) * 4;
-                data[word] |= (p_idx as u64) << shift;
-            }
-            return Self::B4 { palette, data };
+
+            PALETTE_LUT.with(|lut_cell| {
+                let mut lut = lut_cell.borrow_mut();
+                for (idx, s) in palette.iter().enumerate() {
+                    lut[s.0 as usize] = idx as u8;
+                }
+                for linear in 0..SECTION_VOXELS {
+                    let raw = read_u16_le(slice, linear);
+                    let m = LINEAR_TO_MORTON[linear] as usize;
+                    let p_idx = lut[raw as usize] as usize;
+                    let word = m >> 4;
+                    let shift = (m & 15) * 4;
+                    data[word] |= (p_idx as u64) << shift;
+                }
+                for s in &palette {
+                    lut[s.0 as usize] = 0xFF;
+                }
+            });
+
+            return (Self::B4 { palette, data }, non_air);
         }
 
         if unique_states.len() <= 256 {
             let palette = unique_states;
             let mut data = Box::new([0u64; WORDS_B8]);
-            for linear in 0..SECTION_VOXELS {
-                let raw = read_u16_le(slice, linear);
-                let m = LINEAR_TO_MORTON[linear] as usize;
-                let p_idx = palette.iter().position(|s| s.0 == raw).unwrap();
-                let word = m >> 3;
-                let shift = (m & 7) * 8;
-                data[word] |= (p_idx as u64) << shift;
-            }
-            return Self::B8 { palette, data };
+
+            PALETTE_LUT.with(|lut_cell| {
+                let mut lut = lut_cell.borrow_mut();
+                for (idx, s) in palette.iter().enumerate() {
+                    lut[s.0 as usize] = idx as u8;
+                }
+                for linear in 0..SECTION_VOXELS {
+                    let raw = read_u16_le(slice, linear);
+                    let m = LINEAR_TO_MORTON[linear] as usize;
+                    let p_idx = lut[raw as usize] as usize;
+                    let word = m >> 3;
+                    let shift = (m & 7) * 8;
+                    data[word] |= (p_idx as u64) << shift;
+                }
+                for s in &palette {
+                    lut[s.0 as usize] = 0xFF;
+                }
+            });
+
+            return (Self::B8 { palette, data }, non_air);
         }
 
         let mut data = Box::new([0u16; SECTION_VOXELS]);
@@ -314,7 +340,13 @@ impl PalettedContainer {
             let m = LINEAR_TO_MORTON[linear] as usize;
             data[m] = raw;
         }
-        Self::Direct { data }
+        (Self::Direct { data }, non_air)
+    }
+
+    /// Loads block data from a raw 8192-byte Protocol 47 payload slice (linear order).
+    #[inline]
+    pub fn from_raw_slice(slice: &[u8]) -> Self {
+        Self::from_raw_slice_counted(slice).0
     }
 
     /// Converts voxels back to a flat linear array matching Protocol 47 ordering.

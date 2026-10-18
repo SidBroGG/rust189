@@ -216,8 +216,11 @@ pub struct ChunkMeshManager {
     tx: Sender<RawSectionMesh>,
     rx: Receiver<RawSectionMesh>,
     pub gpu_meshes: HashMap<SectionKey, GpuSectionMesh>,
+    pub dirty_sections: HashSet<SectionKey>,
+    ready_meshes: Vec<RawSectionMesh>,
     task_generations: HashMap<SectionKey, u64>,
     uploaded_generations: HashMap<SectionKey, u64>,
+    in_flight_count: usize,
     next_task_id: u64,
     pub epoch: u64,
 }
@@ -233,8 +236,8 @@ impl ChunkMeshManager {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(
                 std::thread::available_parallelism()
-                    .map(|n| n.get().saturating_sub(1).max(2))
-                    .unwrap_or(4),
+                    .map(|n| n.get().saturating_sub(2).clamp(1, 6))
+                    .unwrap_or(3),
             )
             .thread_name(|i| format!("mesher-worker-{}", i))
             .build()
@@ -247,91 +250,208 @@ impl ChunkMeshManager {
             tx,
             rx,
             gpu_meshes: HashMap::new(),
+            dirty_sections: HashSet::new(),
+            ready_meshes: Vec::new(),
             task_generations: HashMap::new(),
             uploaded_generations: HashMap::new(),
+            in_flight_count: 0,
             next_task_id: 1,
             epoch: 0,
         }
     }
 
+    /// Marks a chunk section as dirty (needs meshing).
     #[inline]
-    pub fn has_mesh_or_pending(&self, chunk_x: i32, chunk_z: i32, section_y: usize) -> bool {
-        let key = (chunk_x, chunk_z, section_y);
-        self.gpu_meshes.contains_key(&key) || self.task_generations.contains_key(&key)
+    pub fn mark_section_dirty(&mut self, chunk_x: i32, section_y: usize, chunk_z: i32) {
+        if section_y < 16 {
+            self.dirty_sections.insert((chunk_x, chunk_z, section_y));
+        }
     }
 
-    /// Enqueues a chunk section for background meshing.
-    pub fn enqueue_section(
+    /// Marks all non-empty sections indicated by bit_mask as dirty.
+    pub fn mark_chunk_dirty(&mut self, chunk_x: i32, chunk_z: i32, bit_mask: u16) {
+        for sec_idx in 0..16 {
+            if (bit_mask & (1 << sec_idx)) != 0 {
+                self.dirty_sections.insert((chunk_x, chunk_z, sec_idx));
+            }
+        }
+    }
+
+    /// Checks if a section has an active mesh, is marked dirty, or has a task in-flight.
+    #[inline]
+    pub fn has_mesh(&self, chunk_x: i32, chunk_z: i32, section_y: usize) -> bool {
+        let key = (chunk_x, chunk_z, section_y);
+        self.gpu_meshes.contains_key(&key)
+            || self.dirty_sections.contains(&key)
+            || self.task_generations.contains_key(&key)
+    }
+
+    /// Checks if any section in this chunk column has an active mesh or pending task.
+    pub fn has_chunk_mesh(&self, chunk_x: i32, chunk_z: i32) -> bool {
+        for sec_y in 0..16 {
+            if self.has_mesh(chunk_x, chunk_z, sec_y) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[inline]
+    pub fn has_mesh_or_pending(&self, chunk_x: i32, chunk_z: i32, section_y: usize) -> bool {
+        self.has_mesh(chunk_x, chunk_z, section_y)
+    }
+
+    /// Dispatches up to `max_dispatches` closest dirty sections to the background mesher thread pool.
+    pub fn dispatch_dirty_sections(
         &mut self,
         world: &World,
         atlas: Arc<TextureAtlas>,
-        chunk_x: i32,
-        section_y: usize,
-        chunk_z: i32,
+        camera_pos: Vec3,
+        render_distance: u32,
+        max_dispatches: usize,
     ) {
-        let key = (chunk_x, chunk_z, section_y);
-        let section = match world.chunks.get(&(chunk_x, chunk_z)) {
-            Some(col) => match &col.sections[section_y] {
-                Some(sec) => {
-                    if sec.is_empty() {
+        // 1. Drain finished tasks from workers into ready queue
+        while let Ok(raw) = self.rx.try_recv() {
+            self.in_flight_count = self.in_flight_count.saturating_sub(1);
+            if raw.epoch == self.epoch && self.task_generations.contains_key(&raw.key) {
+                self.ready_meshes.push(raw);
+            }
+        }
+
+        if self.dirty_sections.is_empty() {
+            return;
+        }
+
+        // Limit concurrent in-flight tasks to avoid CPU saturation and thread starvation
+        let max_in_flight = 8;
+        if self.in_flight_count >= max_in_flight {
+            return;
+        }
+
+        let slots = (max_in_flight - self.in_flight_count).min(max_dispatches);
+        if slots == 0 {
+            return;
+        }
+
+        // 2. Select closest dirty sections to camera
+        let max_dist = (render_distance as f32 * 16.0 + 32.0).max(64.0);
+        let max_dist_sq = max_dist * max_dist;
+
+        let mut candidates: Vec<(SectionKey, f32)> = Vec::with_capacity(self.dirty_sections.len().min(128));
+        for &key in &self.dirty_sections {
+            let cx = (key.0 * 16 + 8) as f32;
+            let cy = (key.2 * 16 + 8) as f32;
+            let cz = (key.1 * 16 + 8) as f32;
+            let dx = cx - camera_pos.x;
+            let dy = cy - camera_pos.y;
+            let dz = cz - camera_pos.z;
+            let dist_sq = dx * dx + dy * dy + dz * dz;
+            if dist_sq <= max_dist_sq {
+                candidates.push((key, dist_sq));
+            }
+        }
+
+        if candidates.is_empty() {
+            for &key in self.dirty_sections.iter().take(slots) {
+                candidates.push((key, 0.0));
+            }
+        } else {
+            candidates.sort_unstable_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        }
+
+        let to_dispatch: Vec<SectionKey> = candidates.iter().take(slots).map(|(k, _)| *k).collect();
+
+        // 3. Dispatch chosen sections
+        for key in to_dispatch {
+            self.dirty_sections.remove(&key);
+
+            let section = match world.chunks.get(&(key.0, key.1)) {
+                Some(col) => match &col.sections[key.2] {
+                    Some(sec) => {
+                        if sec.is_empty() {
+                            self.gpu_meshes.remove(&key);
+                            self.task_generations.remove(&key);
+                            self.uploaded_generations.remove(&key);
+                            continue;
+                        }
+                        sec.clone()
+                    }
+                    None => {
                         self.gpu_meshes.remove(&key);
                         self.task_generations.remove(&key);
                         self.uploaded_generations.remove(&key);
-                        return;
+                        continue;
                     }
-                    sec.clone()
-                }
+                },
                 None => {
                     self.gpu_meshes.remove(&key);
                     self.task_generations.remove(&key);
                     self.uploaded_generations.remove(&key);
-                    return;
+                    continue;
                 }
-            },
-            None => {
-                self.gpu_meshes.remove(&key);
-                self.task_generations.remove(&key);
-                self.uploaded_generations.remove(&key);
-                return;
-            }
-        };
+            };
 
-        // Capture fast 18x18x18 snapshot
-        let snapshot = NeighborhoodSnapshot::capture(world, chunk_x, section_y, chunk_z);
-        let task_id = self.next_task_id;
-        self.next_task_id = self.next_task_id.wrapping_add(1);
-        self.task_generations.insert(key, task_id);
+            let snapshot = NeighborhoodSnapshot::capture(world, key.0, key.2, key.1);
+            let task_id = self.next_task_id;
+            self.next_task_id = self.next_task_id.wrapping_add(1);
+            self.task_generations.insert(key, task_id);
+            self.in_flight_count += 1;
 
-        let tx = self.tx.clone();
-        let epoch = self.epoch;
-        self.thread_pool.spawn(move || {
-            let mesh = ChunkMesher::mesh_section(
-                &section,
-                chunk_x,
-                section_y,
-                chunk_z,
-                &snapshot,
-                &atlas,
-            );
-            let _ = tx.send(RawSectionMesh { key, mesh, epoch, task_id });
-        });
+            let tx = self.tx.clone();
+            let epoch = self.epoch;
+            let atlas = atlas.clone();
+            self.thread_pool.spawn(move || {
+                let mesh = ChunkMesher::mesh_section(
+                    &section,
+                    key.0,
+                    key.2,
+                    key.1,
+                    &snapshot,
+                    &atlas,
+                );
+                let _ = tx.send(RawSectionMesh { key, mesh, epoch, task_id });
+            });
+        }
+    }
+
+    /// Enqueues a chunk section for meshing (compatibility helper).
+    pub fn enqueue_section(
+        &mut self,
+        _world: &World,
+        _atlas: Arc<TextureAtlas>,
+        chunk_x: i32,
+        section_y: usize,
+        chunk_z: i32,
+    ) {
+        self.mark_section_dirty(chunk_x, section_y, chunk_z);
     }
 
     /// Uploads up to `max_uploads` ready meshes to GPU buffers per frame with a frame time budget.
     pub fn upload_pending(&mut self, device: &wgpu::Device, max_uploads: usize) -> usize {
         use wgpu::util::DeviceExt;
 
+        // Drain any newly arrived meshes from workers
+        while let Ok(raw) = self.rx.try_recv() {
+            self.in_flight_count = self.in_flight_count.saturating_sub(1);
+            if raw.epoch == self.epoch && self.task_generations.contains_key(&raw.key) {
+                self.ready_meshes.push(raw);
+            }
+        }
+
+        if self.ready_meshes.is_empty() {
+            return 0;
+        }
+
         let start = std::time::Instant::now();
-        let max_budget = std::time::Duration::from_millis(2);
+        let max_budget = std::time::Duration::from_micros(1500);
         let mut uploaded = 0;
-        while uploaded < max_uploads {
+
+        while uploaded < max_uploads && !self.ready_meshes.is_empty() {
             if uploaded > 0 && start.elapsed() >= max_budget {
                 break;
             }
-            let raw = match self.rx.try_recv() {
-                Ok(m) => m,
-                Err(_) => break,
-            };
+
+            let raw = self.ready_meshes.pop().unwrap();
 
             // Discard meshing results that were started in an older world or dimension
             if raw.epoch != self.epoch {
@@ -439,6 +559,8 @@ impl ChunkMeshManager {
     /// Unloads all section meshes belonging to a chunk column.
     pub fn remove_chunk(&mut self, chunk_x: i32, chunk_z: i32) {
         self.gpu_meshes.retain(|&(cx, cz, _), _| cx != chunk_x || cz != chunk_z);
+        self.dirty_sections.retain(|&(cx, cz, _)| cx != chunk_x || cz != chunk_z);
+        self.ready_meshes.retain(|raw| raw.key.0 != chunk_x || raw.key.1 != chunk_z);
         self.task_generations.retain(|&(cx, cz, _), _| cx != chunk_x || cz != chunk_z);
         self.uploaded_generations.retain(|&(cx, cz, _), _| cx != chunk_x || cz != chunk_z);
     }
@@ -447,8 +569,11 @@ impl ChunkMeshManager {
     pub fn clear(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         self.gpu_meshes.clear();
+        self.dirty_sections.clear();
+        self.ready_meshes.clear();
         self.task_generations.clear();
         self.uploaded_generations.clear();
+        self.in_flight_count = 0;
         while self.rx.try_recv().is_ok() {}
     }
 

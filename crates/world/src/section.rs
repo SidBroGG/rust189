@@ -124,8 +124,9 @@ impl ChunkSection {
 
     /// Loads 4096 blocks from little-endian byte slice into adaptive paletted container.
     pub fn load_blocks_from_raw_slice(&mut self, slice: &[u8]) {
-        self.blocks = PalettedContainer::from_raw_slice(slice);
-        self.non_air_count = self.blocks.count_non_air() as u16;
+        let (blocks, non_air) = PalettedContainer::from_raw_slice_counted(slice);
+        self.blocks = blocks;
+        self.non_air_count = non_air as u16;
     }
 
     /// Writes blocks to raw little-endian byte buffer.
