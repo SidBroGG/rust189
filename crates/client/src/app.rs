@@ -294,42 +294,48 @@ impl App {
                     );
 
                     // Update player position according to relative/absolute flags
+                    let mut new_x = self.player.pos.x;
+                    let mut new_y = self.player.pos.y;
+                    let mut new_z = self.player.pos.z;
+                    let mut new_yaw = self.player.yaw;
+                    let mut new_pitch = self.player.pitch;
+
                     if (pos_look.flags & 0x01) != 0 {
-                        self.player.pos.x += pos_look.x;
+                        new_x += pos_look.x;
                     } else {
-                        self.player.pos.x = pos_look.x;
+                        new_x = pos_look.x;
                         self.player.motion.x = 0.0;
                     }
 
                     if (pos_look.flags & 0x02) != 0 {
-                        self.player.pos.y += pos_look.y;
+                        new_y += pos_look.y;
                     } else {
-                        self.player.pos.y = pos_look.y;
+                        new_y = pos_look.y;
                         self.player.motion.y = 0.0;
                     }
 
                     if (pos_look.flags & 0x04) != 0 {
-                        self.player.pos.z += pos_look.z;
+                        new_z += pos_look.z;
                     } else {
-                        self.player.pos.z = pos_look.z;
+                        new_z = pos_look.z;
                         self.player.motion.z = 0.0;
                     }
 
                     if (pos_look.flags & 0x08) != 0 {
-                        self.player.yaw += pos_look.yaw;
+                        new_yaw += pos_look.yaw;
                     } else {
-                        self.player.yaw = pos_look.yaw;
+                        new_yaw = pos_look.yaw;
                     }
 
                     if (pos_look.flags & 0x10) != 0 {
-                        self.player.pitch += pos_look.pitch;
+                        new_pitch += pos_look.pitch;
                     } else {
-                        self.player.pitch = pos_look.pitch;
+                        new_pitch = pos_look.pitch;
                     }
 
-                    self.player.prev_pos = self.player.pos;
-                    self.player.prev_yaw = self.player.yaw;
-                    self.player.prev_pitch = self.player.pitch;
+                    self.player.set_position_and_rotation(new_x, new_y, new_z, new_yaw, new_pitch);
+                    self.player.distance_walked_modified = 0.0;
+                    self.player.prev_distance_walked_modified = 0.0;
 
                     self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                     self.player_look = (self.player.yaw, self.player.pitch);
@@ -344,7 +350,7 @@ impl App {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerPositionAndLook {
                             x: self.player.pos.x,
-                            y: self.player.pos.y,
+                            y: self.player.bounding_box.min_y,
                             z: self.player.pos.z,
                             yaw: self.player.yaw,
                             pitch: self.player.pitch,
@@ -848,6 +854,19 @@ impl App {
                     self.profiler.loaded_chunks = 0;
                     if let Some(sm) = &mut self.screen_manager {
                         sm.exit_in_game();
+                    }
+                }
+                ClientboundPlayPacket::ConfirmTransaction(ct) => {
+                    // Handled automatically in session.rs Tokio network loop for lowest latency.
+                    // Fallback response here in case it needs application-level acknowledgement.
+                    if !ct.accepted {
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::ConfirmTransaction {
+                                window_id: ct.window_id,
+                                action_number: ct.action_number,
+                                accepted: true,
+                            });
+                        }
                     }
                 }
                 ClientboundPlayPacket::Unknown { payload_len, .. } => {

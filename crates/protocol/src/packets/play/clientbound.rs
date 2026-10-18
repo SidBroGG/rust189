@@ -1615,5 +1615,49 @@ impl ClientboundPlayerAbilitiesPacket {
     }
 }
 
+/// Clientbound ConfirmTransaction packet (0x32).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundConfirmTransactionPacket {
+    pub window_id: u8,
+    pub action_number: i16,
+    pub accepted: bool,
+}
+
+impl ClientboundConfirmTransactionPacket {
+    pub const PACKET_ID: i32 = 0x32;
+
+    pub fn new(window_id: u8, action_number: i16, accepted: bool) -> Self {
+        Self {
+            window_id,
+            action_number,
+            accepted,
+        }
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 4 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 4,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_u8();
+        let action_number = buf.get_i16();
+        let accepted = buf.get_u8() != 0;
+        Ok(Self {
+            window_id,
+            action_number,
+            accepted,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id]);
+        buf.extend_from_slice(&self.action_number.to_be_bytes());
+        buf.extend_from_slice(&[if self.accepted { 1 } else { 0 }]);
+        Ok(())
+    }
+}
+
 
 

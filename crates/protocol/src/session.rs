@@ -47,6 +47,11 @@ pub enum OutgoingPlayPacket {
     PlayerAbilities {
         is_flying: bool,
     },
+    ConfirmTransaction {
+        window_id: u8,
+        action_number: i16,
+        accepted: bool,
+    },
 }
 
 impl OutgoingPlayPacket {
@@ -131,6 +136,15 @@ impl OutgoingPlayPacket {
                 pkt.encode(buf)?;
                 Ok(ServerboundPlayerAbilitiesPacket::PACKET_ID)
             }
+            Self::ConfirmTransaction {
+                window_id,
+                action_number,
+                accepted,
+            } => {
+                let pkt = ServerboundConfirmTransactionPacket::new(*window_id, *action_number, *accepted);
+                pkt.encode(buf)?;
+                Ok(ServerboundConfirmTransactionPacket::PACKET_ID)
+            }
         }
     }
 }
@@ -200,6 +214,18 @@ impl PlaySessionHandle {
                                         }
 
                                         let _ = incoming_tx.send(ClientboundPlayPacket::KeepAlive(ka));
+                                    }
+                                    Ok(ClientboundPlayPacket::ConfirmTransaction(ct)) => {
+                                        // Auto respond to unaccepted transaction packets (anticheat waitingTransactionQueue ping sync)
+                                        if !ct.accepted {
+                                            let mut resp_buf = BytesMut::new();
+                                            let resp = ServerboundConfirmTransactionPacket::new(ct.window_id, ct.action_number, true);
+                                            if resp.encode(&mut resp_buf).is_ok() {
+                                                let _ = stream.write_packet(ServerboundConfirmTransactionPacket::PACKET_ID, &resp_buf).await;
+                                            }
+                                        }
+
+                                        let _ = incoming_tx.send(ClientboundPlayPacket::ConfirmTransaction(ct));
                                     }
                                     Ok(ClientboundPlayPacket::Disconnect(dc)) => {
                                         tracing::warn!(reason = %dc.reason, "Server sent disconnect in Play state");

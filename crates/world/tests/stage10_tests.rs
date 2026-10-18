@@ -416,3 +416,49 @@ fn test_creative_flight_double_tap() {
     assert!(player.motion.y > 0.05, "Holding jump while flying must accelerate upward");
 }
 
+#[test]
+fn test_continuous_wall_collision_no_penetration_or_bounce() {
+    let mut world = World::new();
+    // Solid floor at y = 0
+    for x in -5..=5 {
+        for z in -5..=5 {
+            world.set_block(x, 0, z, BlockState::new(1, 0));
+        }
+    }
+    // Solid 2-high wall at x = 2, y = 1..2
+    for z in -5..=5 {
+        world.set_block(2, 1, z, BlockState::new(1, 0));
+        world.set_block(2, 2, z, BlockState::new(1, 0));
+    }
+
+    // Player starts at x = 1.0, y = 1.0, z = 0.5, moving east towards x = 2.0
+    let mut player = PlayerMovement::new(1.0, 1.0, 0.5);
+    player.on_ground = true;
+    player.yaw = -90.0; // Facing east (+X)
+
+    let forward_input = PlayerInput {
+        move_forward: 1.0,
+        jump: false,
+        ..Default::default()
+    };
+
+    // Run 50 ticks of running directly into the wall
+    for _ in 0..50 {
+        player.tick(&world, &forward_input);
+        // Player's max_x must NEVER exceed 2.0 (the wall boundary)
+        assert!(
+            player.bounding_box.max_x <= 2.0 + 1e-9,
+            "Player bounding box penetrated wall! max_x = {}",
+            player.bounding_box.max_x
+        );
+        // Once collided against the wall at x=2.0 (half_w=0.3), position must stay at 1.7
+        if player.collided_horizontally {
+            assert!(
+                (player.pos.x - 1.7).abs() <= 1e-4,
+                "Player position must stay stable at wall without bouncing back, pos.x = {}",
+                player.pos.x
+            );
+        }
+    }
+}
+

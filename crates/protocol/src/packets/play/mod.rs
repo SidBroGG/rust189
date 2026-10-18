@@ -42,6 +42,7 @@ pub enum ClientboundPlayPacket {
     EntityMetadata(ClientboundEntityMetadataPacket),
     Explosion(ClientboundExplosionPacket),
     PlayerAbilities(ClientboundPlayerAbilitiesPacket),
+    ConfirmTransaction(ClientboundConfirmTransactionPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -144,6 +145,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundPlayerAbilitiesPacket::PACKET_ID => {
                 Ok(Self::PlayerAbilities(ClientboundPlayerAbilitiesPacket::decode(payload)?))
+            }
+            ClientboundConfirmTransactionPacket::PACKET_ID => {
+                Ok(Self::ConfirmTransaction(ClientboundConfirmTransactionPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,
@@ -386,5 +390,30 @@ mod tests {
         let mut bytes = buf.freeze();
         let decoded = ClientboundTeamsPacket::decode(&mut bytes).unwrap();
         assert_eq!(pkt, decoded);
+    }
+
+    #[test]
+    fn test_confirm_transaction_roundtrip() {
+        let client_pkt = ClientboundConfirmTransactionPacket {
+            window_id: 0,
+            action_number: -42,
+            accepted: false,
+        };
+        let mut buf = BytesMut::new();
+        client_pkt.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundConfirmTransactionPacket::decode(&mut bytes).unwrap();
+        assert_eq!(client_pkt, decoded);
+
+        let server_pkt = ServerboundConfirmTransactionPacket {
+            window_id: 0,
+            action_number: -42,
+            accepted: true,
+        };
+        let mut buf2 = BytesMut::new();
+        server_pkt.encode(&mut buf2).unwrap();
+        let mut bytes2 = buf2.freeze();
+        let decoded2 = ServerboundConfirmTransactionPacket::decode(&mut bytes2).unwrap();
+        assert_eq!(server_pkt, decoded2);
     }
 }

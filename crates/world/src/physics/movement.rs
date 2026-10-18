@@ -46,6 +46,7 @@ pub struct PlayerInput {
 pub struct PlayerMovement {
     pub pos: DVec3,
     pub prev_pos: DVec3,
+    pub bounding_box: AABB,
     pub motion: DVec3,
     pub yaw: f32,
     pub pitch: f32,
@@ -93,9 +94,19 @@ impl PlayerMovement {
 
     pub fn new(x: f64, y: f64, z: f64) -> Self {
         let pos = DVec3::new(x, y, z);
+        let half_w = Self::WIDTH * 0.5;
+        let bounding_box = AABB::new(
+            x - half_w,
+            y,
+            z - half_w,
+            x + half_w,
+            y + Self::HEIGHT,
+            z + half_w,
+        );
         Self {
             pos,
             prev_pos: pos,
+            bounding_box,
             motion: DVec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -133,10 +144,75 @@ impl PlayerMovement {
         }
     }
 
-    /// Returns the current bounding box of the player (MCP `EntityPlayer`: 0.6 x 1.8 x 0.6).
+    /// Returns the current bounding box of the player (MCP `Entity.getEntityBoundingBox`).
     #[inline]
     pub fn get_aabb(&self) -> AABB {
-        AABB::from_point_size(self.pos.x, self.pos.y, self.pos.z, Self::WIDTH, Self::HEIGHT)
+        self.bounding_box
+    }
+
+    /// Sets the bounding box of the player (MCP `Entity.setEntityBoundingBox`).
+    #[inline]
+    pub fn set_aabb(&mut self, aabb: AABB) {
+        self.bounding_box = aabb;
+    }
+
+    /// Resets the entity's position coordinates from its current bounding box center and bottom (MCP `Entity.resetPositionToBB`).
+    #[inline]
+    pub fn reset_position_to_bb(&mut self) {
+        self.pos.x = (self.bounding_box.min_x + self.bounding_box.max_x) * 0.5;
+        self.pos.y = self.bounding_box.min_y;
+        self.pos.z = (self.bounding_box.min_z + self.bounding_box.max_z) * 0.5;
+    }
+
+    /// Sets the entity's position and reconstructs bounding box (MCP `Entity.setPosition`).
+    pub fn set_position(&mut self, x: f64, y: f64, z: f64) {
+        self.pos = DVec3::new(x, y, z);
+        let half_w = Self::WIDTH * 0.5;
+        let h = if self.is_sneaking {
+            Self::SNEAK_HEIGHT
+        } else {
+            Self::HEIGHT
+        };
+        self.bounding_box = AABB::new(
+            x - half_w,
+            y,
+            z - half_w,
+            x + half_w,
+            y + h,
+            z + half_w,
+        );
+    }
+
+    /// Sets position and rotation, updating bounding box and resetting prev angles (MCP `Entity.setPositionAndRotation`).
+    pub fn set_position_and_rotation(
+        &mut self,
+        x: f64,
+        y: f64,
+        z: f64,
+        yaw: f32,
+        pitch: f32,
+    ) {
+        self.prev_pos = DVec3::new(x, y, z);
+        self.pos = self.prev_pos;
+        self.prev_yaw = yaw;
+        self.yaw = yaw;
+        self.prev_pitch = pitch;
+        self.pitch = pitch;
+
+        let half_w = Self::WIDTH * 0.5;
+        let h = if self.is_sneaking {
+            Self::SNEAK_HEIGHT
+        } else {
+            Self::HEIGHT
+        };
+        self.bounding_box = AABB::new(
+            x - half_w,
+            y,
+            z - half_w,
+            x + half_w,
+            y + h,
+            z + half_w,
+        );
     }
 
     /// Returns eye height above player feet based on sneaking state.
@@ -284,9 +360,13 @@ impl PlayerMovement {
             strafe = (strafe as f64 * 0.3) as f32;
             forward = (forward as f64 * 0.3) as f32;
             self.is_sprinting = false;
-            self.is_sneaking = true;
-        } else {
+            if !self.is_sneaking {
+                self.is_sneaking = true;
+                self.bounding_box.max_y = self.bounding_box.min_y + Self::SNEAK_HEIGHT;
+            }
+        } else if self.is_sneaking {
             self.is_sneaking = false;
+            self.bounding_box.max_y = self.bounding_box.min_y + Self::HEIGHT;
         }
 
         // Sprinting toggle and state validation
@@ -515,7 +595,7 @@ impl PlayerMovement {
             self.motion = DVec3::ZERO;
         }
 
-        let mut aabb = self.get_aabb();
+        let mut aabb = self.bounding_box;
         let mut d3 = x;
         let d4 = y;
         let mut d5 = z;
@@ -595,7 +675,7 @@ impl PlayerMovement {
         // Step-height climbing (stepHeight 0.6)
         if self.step_height > 0.0 && flag1 && (d3 != x || d5 != z) {
             let d11 = x;
-            let _d7 = y;
+            let d7 = y;
             let d8 = z;
             let step_y = self.step_height as f64;
             let step_colliding = world.get_colliding_bounding_boxes(&orig_aabb.add_coord(d3, step_y, d5));
@@ -654,13 +734,16 @@ impl PlayerMovement {
                 y = down_y;
                 z = step_res_z;
                 aabb = best_bb;
+            } else {
+                x = d11;
+                y = d7;
+                z = d8;
             }
         }
 
-        // Apply updated position
-        self.pos.x = (aabb.min_x + aabb.max_x) * 0.5;
-        self.pos.y = aabb.min_y;
-        self.pos.z = (aabb.min_z + aabb.max_z) * 0.5;
+        // Apply updated bounding box and derived position (MCP `Entity.resetPositionToBB`)
+        self.bounding_box = aabb;
+        self.reset_position_to_bb();
 
         self.collided_horizontally = d3 != x || d5 != z;
         self.collided_vertically = d4 != y;
