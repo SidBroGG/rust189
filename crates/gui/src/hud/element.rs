@@ -1,7 +1,7 @@
-use egui::{Color32, Pos2, Rect, Vec2};
+use egui::{Pos2, Rect, Vec2};
 use serde::{Deserialize, Serialize};
 
-/// Screen anchor position for calculating element base coordinates.
+/// Screen anchor position for reference and compatibility.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HudAnchor {
     TopLeft,
@@ -33,145 +33,137 @@ impl HudAnchor {
     }
 }
 
-/// Configuration and layout parameters for an individual HUD element.
+/// Configuration and relative grid layout parameters for an individual HUD element.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HudElementConfig {
     pub id: String,
     pub name: String,
     pub visible: bool,
-    pub anchor: HudAnchor,
-    pub offset: [f32; 2],
-    pub scale: f32,
-    pub bg_color: [u8; 4],
-    pub border_color: [u8; 4],
-    pub border_width: f32,
-    pub corner_radius: f32,
+    /// Relative grid X position [0.0 .. 1.0] across viewport width.
+    #[serde(default)]
+    pub rel_x: f32,
+    /// Relative grid Y position [0.0 .. 1.0] across viewport height.
+    #[serde(default)]
+    pub rel_y: f32,
+    /// Relative grid width [0.0 .. 1.0] across viewport width.
+    #[serde(default = "default_rel_dim")]
+    pub rel_w: f32,
+    /// Relative grid height [0.0 .. 1.0] across viewport height.
+    #[serde(default = "default_rel_dim")]
+    pub rel_h: f32,
+}
+
+fn default_rel_dim() -> f32 {
+    0.1
+}
+
+impl Default for HudElementConfig {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            visible: true,
+            rel_x: 0.0,
+            rel_y: 0.0,
+            rel_w: 0.2,
+            rel_h: 0.1,
+        }
+    }
 }
 
 impl HudElementConfig {
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
-        anchor: HudAnchor,
-        offset: [f32; 2],
+        rel_x: f32,
+        rel_y: f32,
+        rel_w: f32,
+        rel_h: f32,
     ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
             visible: true,
-            anchor,
-            offset,
-            scale: 1.0,
-            bg_color: [12, 14, 18, 190],
-            border_color: [65, 70, 80, 180],
-            border_width: 1.0,
-            corner_radius: 4.0,
+            rel_x: rel_x.clamp(0.0, 1.0),
+            rel_y: rel_y.clamp(0.0, 1.0),
+            rel_w: rel_w.clamp(0.01, 1.0),
+            rel_h: rel_h.clamp(0.01, 1.0),
         }
     }
 
-    /// Computes the element bounding box on screen based on anchor, offset, and content size.
-    pub fn screen_rect(&self, screen_size: Vec2, content_size: Vec2) -> Rect {
-        let base = self.anchor.compute_base_pos(screen_size);
-        let scaled_size = content_size * self.scale;
-
-        // Position offset depends on anchor alignment
-        let x = match self.anchor {
-            HudAnchor::TopLeft | HudAnchor::CenterLeft | HudAnchor::BottomLeft => {
-                base.x + self.offset[0]
-            }
-            HudAnchor::TopCenter | HudAnchor::Center | HudAnchor::BottomCenter => {
-                base.x + self.offset[0] - scaled_size.x * 0.5
-            }
-            HudAnchor::TopRight | HudAnchor::CenterRight | HudAnchor::BottomRight => {
-                base.x + self.offset[0] - scaled_size.x
-            }
-        };
-
-        let y = match self.anchor {
-            HudAnchor::TopLeft | HudAnchor::TopCenter | HudAnchor::TopRight => {
-                base.y + self.offset[1]
-            }
-            HudAnchor::CenterLeft | HudAnchor::Center | HudAnchor::CenterRight => {
-                base.y + self.offset[1] - scaled_size.y * 0.5
-            }
-            HudAnchor::BottomLeft | HudAnchor::BottomCenter | HudAnchor::BottomRight => {
-                base.y + self.offset[1] - scaled_size.y
-            }
-        };
-
-        Rect::from_min_size(Pos2::new(x, y), scaled_size)
+    /// Computes the element bounding box on screen based on relative coordinates and viewport size.
+    #[inline]
+    pub fn screen_rect(&self, screen_size: Vec2) -> Rect {
+        let x = self.rel_x * screen_size.x;
+        let y = self.rel_y * screen_size.y;
+        let w = (self.rel_w * screen_size.x).max(12.0);
+        let h = (self.rel_h * screen_size.y).max(12.0);
+        Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h))
     }
 
-    /// Calculates new offset from a dragged screen position, applying grid snapping.
+    /// Updates position from dragged screen position, snapping to relative grid units.
     pub fn set_from_screen_pos(
         &mut self,
         target_min: Pos2,
         screen_size: Vec2,
-        content_size: Vec2,
-        grid_step: u32,
+        grid_step: f32,
     ) {
-        let base = self.anchor.compute_base_pos(screen_size);
-        let scaled_size = content_size * self.scale;
+        if screen_size.x <= 0.0 || screen_size.y <= 0.0 {
+            return;
+        }
 
-        // Invert the alignment calculation to get raw offset
-        let raw_ox = match self.anchor {
-            HudAnchor::TopLeft | HudAnchor::CenterLeft | HudAnchor::BottomLeft => {
-                target_min.x - base.x
-            }
-            HudAnchor::TopCenter | HudAnchor::Center | HudAnchor::BottomCenter => {
-                target_min.x - base.x + scaled_size.x * 0.5
-            }
-            HudAnchor::TopRight | HudAnchor::CenterRight | HudAnchor::BottomRight => {
-                target_min.x - base.x + scaled_size.x
-            }
-        };
+        let snapped_x = snap_val_f32(target_min.x, grid_step);
+        let snapped_y = snap_val_f32(target_min.y, grid_step);
 
-        let raw_oy = match self.anchor {
-            HudAnchor::TopLeft | HudAnchor::TopCenter | HudAnchor::TopRight => {
-                target_min.y - base.y
-            }
-            HudAnchor::CenterLeft | HudAnchor::Center | HudAnchor::CenterRight => {
-                target_min.y - base.y + scaled_size.y * 0.5
-            }
-            HudAnchor::BottomLeft | HudAnchor::BottomCenter | HudAnchor::BottomRight => {
-                target_min.y - base.y + scaled_size.y
-            }
-        };
+        let max_x = (screen_size.x - self.rel_w * screen_size.x).max(0.0);
+        let max_y = (screen_size.y - self.rel_h * screen_size.y).max(0.0);
 
-        self.offset = [
-            snap_val(raw_ox, grid_step),
-            snap_val(raw_oy, grid_step),
-        ];
+        let clamped_x = snapped_x.clamp(0.0, max_x);
+        let clamped_y = snapped_y.clamp(0.0, max_y);
+
+        self.rel_x = (clamped_x / screen_size.x).clamp(0.0, 1.0);
+        self.rel_y = (clamped_y / screen_size.y).clamp(0.0, 1.0);
     }
 
-    #[inline]
-    pub fn bg_color32(&self) -> Color32 {
-        Color32::from_rgba_unmultiplied(
-            self.bg_color[0],
-            self.bg_color[1],
-            self.bg_color[2],
-            self.bg_color[3],
-        )
-    }
+    /// Updates dimensions from resized screen bounds, snapping to relative grid units.
+    pub fn set_from_screen_size(
+        &mut self,
+        target_size: Vec2,
+        screen_size: Vec2,
+        grid_step: f32,
+    ) {
+        if screen_size.x <= 0.0 || screen_size.y <= 0.0 {
+            return;
+        }
 
-    #[inline]
-    pub fn border_color32(&self) -> Color32 {
-        Color32::from_rgba_unmultiplied(
-            self.border_color[0],
-            self.border_color[1],
-            self.border_color[2],
-            self.border_color[3],
-        )
+        let min_size = grid_step.max(16.0);
+        let snapped_w = snap_val_f32(target_size.x, grid_step).max(min_size);
+        let snapped_h = snap_val_f32(target_size.y, grid_step).max(min_size);
+
+        let max_w = (screen_size.x - self.rel_x * screen_size.x).max(min_size);
+        let max_h = (screen_size.y - self.rel_y * screen_size.y).max(min_size);
+
+        let clamped_w = snapped_w.clamp(min_size, max_w);
+        let clamped_h = snapped_h.clamp(min_size, max_h);
+
+        self.rel_w = (clamped_w / screen_size.x).clamp(0.01, 1.0);
+        self.rel_h = (clamped_h / screen_size.y).clamp(0.01, 1.0);
     }
 }
 
-/// Snaps a scalar value to the nearest multiple of `step`.
-/// If `step == 0`, snapping is disabled (Free movement).
+/// Snaps a floating-point scalar value to the nearest multiple of `step`.
 #[inline]
-pub fn snap_val(val: f32, step: u32) -> f32 {
-    if step == 0 {
+pub fn snap_val_f32(val: f32, step: f32) -> f32 {
+    if step <= 0.0 {
         val
     } else {
-        (val / step as f32).round() * step as f32
+        (val / step).round() * step
     }
+}
+
+/// Snaps a scalar value to the nearest integer multiple of `step`.
+/// If `step == 0`, snapping is disabled.
+#[inline]
+pub fn snap_val(val: f32, step: u32) -> f32 {
+    snap_val_f32(val, step as f32)
 }

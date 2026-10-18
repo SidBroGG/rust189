@@ -1,4 +1,4 @@
-use super::data::{HudBossBarInfo, HudData};
+use super::data::HudData;
 use egui::{
     Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, Vec2,
 };
@@ -7,12 +7,16 @@ use egui::{
 pub fn get_module_content_size(id: &str, data: &HudData) -> Vec2 {
     match id {
         "crosshair" => Vec2::new(16.0, 16.0),
-        "hotbar" => Vec2::new(186.0, 26.0),
+        "hotbar" => Vec2::new(186.0, 54.0),
         "vitals" => Vec2::new(186.0, 28.0),
         "exp_bar" => Vec2::new(186.0, 16.0),
         "boss_bar" => {
-            let count = data.boss_bars.len().max(1);
-            Vec2::new(186.0, (count as f32 * 20.0).max(20.0))
+            let count = data.boss_bars.len();
+            if count == 0 {
+                Vec2::new(186.0, 20.0)
+            } else {
+                Vec2::new(186.0, count as f32 * 20.0)
+            }
         }
         "scoreboard" => Vec2::new(140.0, 120.0),
         "chat" => Vec2::new(320.0, 140.0),
@@ -61,6 +65,28 @@ pub fn render_crosshair(painter: &Painter, rect: Rect) {
 
     // Center tiny dot
     painter.circle_filled(center, 0.8, Color32::WHITE);
+}
+
+/// Unified Hotbar & Status: Combines Hotbar slots, Experience bar, and Vitals (Health, Armor, Hunger, Air).
+pub fn render_unified_hotbar(painter: &Painter, rect: Rect, data: &HudData, tick_counter: u64) {
+    let slots_h = 24.0;
+    let exp_h = 4.0;
+    let slots_rect = Rect::from_min_max(
+        Pos2::new(rect.left(), rect.bottom() - slots_h),
+        rect.max,
+    );
+    let exp_rect = Rect::from_min_size(
+        Pos2::new(rect.left(), slots_rect.top() - exp_h - 2.0),
+        Vec2::new(rect.width(), exp_h + 10.0),
+    );
+    let vitals_rect = Rect::from_min_max(
+        rect.min,
+        Pos2::new(rect.right(), exp_rect.top()),
+    );
+
+    render_vitals(painter, vitals_rect, data, tick_counter);
+    render_exp_bar(painter, exp_rect, data);
+    render_hotbar(painter, slots_rect, data);
 }
 
 /// 2. Hotbar: 9 slots with active slot highlight border and item badges.
@@ -313,14 +339,12 @@ pub fn render_exp_bar(painter: &Painter, rect: Rect, data: &HudData) {
 
 /// 5. Boss Bar: multiple boss health bars with notch marks and names.
 pub fn render_boss_bar(painter: &Painter, rect: Rect, data: &HudData) {
-    let items = if data.boss_bars.is_empty() {
-        vec![HudBossBarInfo::new("Wither Boss", 1.0)]
-    } else {
-        data.boss_bars.clone()
-    };
+    if data.boss_bars.is_empty() {
+        return;
+    }
 
     let mut y = rect.top() + 2.0;
-    for boss in items {
+    for boss in &data.boss_bars {
         // Boss Title
         painter.text(
             Pos2::new(rect.center().x, y),
@@ -557,17 +581,12 @@ pub fn render_armor_status(painter: &Painter, rect: Rect, data: &HudData) {
         }
     }
     if let Some(held) = &data.held_item {
-        items.push(held);
+        if held.max_damage > 0 {
+            items.push(held);
+        }
     }
 
     if items.is_empty() {
-        painter.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            "No Armor",
-            FontId::proportional(10.0),
-            Color32::from_rgb(140, 145, 160),
-        );
         return;
     }
 
@@ -630,13 +649,6 @@ pub fn render_armor_status(painter: &Painter, rect: Rect, data: &HudData) {
 /// 9. Potion Effects: active potions list with icons, names, levels and timers.
 pub fn render_potion_effects(painter: &Painter, rect: Rect, data: &HudData) {
     if data.potion_effects.is_empty() {
-        painter.text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            "No Active Effects",
-            FontId::proportional(10.0),
-            Color32::from_rgb(140, 145, 160),
-        );
         return;
     }
 

@@ -14,5 +14,5 @@ pub use layout::{
 pub use modules::{
     compute_facing_direction, get_module_content_size, render_armor_status, render_boss_bar,
     render_coords_direction, render_crosshair, render_exp_bar, render_fps_ping, render_hotbar,
-    render_keystrokes, render_potion_effects, render_vitals,
+    render_keystrokes, render_potion_effects, render_unified_hotbar, render_vitals,
 };

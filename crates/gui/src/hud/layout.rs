@@ -1,4 +1,4 @@
-use super::element::{HudAnchor, HudElementConfig};
+use super::element::HudElementConfig;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -8,11 +8,17 @@ pub const DEFAULT_PROFILE_NAME: &str = "Default";
 pub const COMPETITIVE_PROFILE_NAME: &str = "Competitive PvP";
 pub const MINIMAL_PROFILE_NAME: &str = "Minimal";
 
-/// Configuration storing HUD element positions and styling across multiple profiles.
+fn default_global_opacity() -> f32 {
+    0.85
+}
+
+/// Configuration storing HUD element relative grid positions and styling across multiple profiles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HudLayoutConfig {
     pub active_profile: String,
-    pub grid_snap_size: u32, // 0 = Free, 4, 8, 16, 32
+    pub grid_snap_size: u32, // 0 = Free, 8, 16, 24, 32
+    #[serde(default = "default_global_opacity")]
+    pub global_opacity: f32, // 0.0 .. 1.0, master opacity slider for all HUD backgrounds & borders
     pub profiles: BTreeMap<String, BTreeMap<String, HudElementConfig>>,
 }
 
@@ -28,7 +34,8 @@ impl Default for HudLayoutConfig {
 
         Self {
             active_profile: DEFAULT_PROFILE_NAME.to_string(),
-            grid_snap_size: 8,
+            grid_snap_size: 16,
+            global_opacity: default_global_opacity(),
             profiles,
         }
     }
@@ -46,11 +53,9 @@ impl HudLayoutConfig {
         match std::fs::read_to_string(path) {
             Ok(content) => match toml::from_str::<Self>(&content) {
                 Ok(mut config) => {
-                    // Ensure active profile exists
                     if !config.profiles.contains_key(&config.active_profile) {
                         config.active_profile = DEFAULT_PROFILE_NAME.to_string();
                     }
-                    // Ensure all elements exist in active profile
                     let defaults = create_default_elements();
                     if let Some(active_map) = config.profiles.get_mut(&config.active_profile) {
                         for (k, v) in defaults {
@@ -147,148 +152,76 @@ impl HudLayoutConfig {
         true
     }
 
-    /// Resets the current active profile to default positions.
+    /// Resets the current active profile to default relative grid positions.
     pub fn reset_active_profile(&mut self) {
         let defaults = create_default_elements();
         self.profiles.insert(self.active_profile.clone(), defaults);
     }
 }
 
-/// Creates default elements mapping with authentic Minecraft layout.
+/// Creates default elements mapping with authentic Minecraft relative grid layout.
 pub fn create_default_elements() -> BTreeMap<String, HudElementConfig> {
     let mut m = BTreeMap::new();
 
     // 1. Crosshair
-    let mut crosshair = HudElementConfig::new(
-        "crosshair",
-        "Crosshair",
-        HudAnchor::Center,
-        [0.0, 0.0],
+    m.insert(
+        "crosshair".to_string(),
+        HudElementConfig::new("crosshair", "Crosshair", 0.49, 0.49, 0.02, 0.02),
     );
-    crosshair.bg_color = [0, 0, 0, 0];
-    crosshair.border_color = [0, 0, 0, 0];
-    m.insert("crosshair".to_string(), crosshair);
 
-    // 2. Hotbar
-    let mut hotbar = HudElementConfig::new(
-        "hotbar",
-        "Hotbar",
-        HudAnchor::BottomCenter,
-        [0.0, -22.0],
+    // 2. Hotbar & Status (Unified Hotbar + Health hearts + Hunger + Armor + Air + EXP)
+    m.insert(
+        "hotbar".to_string(),
+        HudElementConfig::new("hotbar", "Hotbar & Status", 0.32, 0.88, 0.36, 0.11),
     );
-    hotbar.bg_color = [18, 20, 24, 210];
-    hotbar.border_color = [70, 75, 88, 190];
-    m.insert("hotbar".to_string(), hotbar);
 
-    // 3. Vitals (Health, Armor, Food, Air)
-    let mut vitals = HudElementConfig::new(
-        "vitals",
-        "Health & Hunger",
-        HudAnchor::BottomCenter,
-        [0.0, -48.0],
+    // 3. Boss Bar
+    m.insert(
+        "boss_bar".to_string(),
+        HudElementConfig::new("boss_bar", "Boss Health Bar", 0.32, 0.03, 0.36, 0.05),
     );
-    vitals.bg_color = [0, 0, 0, 0];
-    vitals.border_color = [0, 0, 0, 0];
-    m.insert("vitals".to_string(), vitals);
 
-    // 4. Experience Bar
-    let mut exp_bar = HudElementConfig::new(
-        "exp_bar",
-        "Experience Bar",
-        HudAnchor::BottomCenter,
-        [0.0, -26.0],
+    // 4. Scoreboard Sidebar
+    m.insert(
+        "scoreboard".to_string(),
+        HudElementConfig::new("scoreboard", "Scoreboard", 0.80, 0.32, 0.18, 0.28),
     );
-    exp_bar.bg_color = [0, 0, 0, 0];
-    exp_bar.border_color = [0, 0, 0, 0];
-    m.insert("exp_bar".to_string(), exp_bar);
 
-    // 5. Boss Bar
-    let mut boss_bar = HudElementConfig::new(
-        "boss_bar",
-        "Boss Health Bar",
-        HudAnchor::TopCenter,
-        [0.0, 16.0],
+    // 5. Chat Box
+    m.insert(
+        "chat".to_string(),
+        HudElementConfig::new("chat", "Chat Box", 0.02, 0.68, 0.32, 0.26),
     );
-    boss_bar.bg_color = [12, 14, 18, 180];
-    boss_bar.border_color = [65, 70, 80, 180];
-    m.insert("boss_bar".to_string(), boss_bar);
 
-    // 6. Scoreboard Sidebar
-    let mut scoreboard = HudElementConfig::new(
-        "scoreboard",
-        "Scoreboard",
-        HudAnchor::CenterRight,
-        [-12.0, 0.0],
+    // 6. Keystrokes & CPS
+    m.insert(
+        "keystrokes".to_string(),
+        HudElementConfig::new("keystrokes", "Keystrokes & CPS", 0.02, 0.42, 0.11, 0.18),
     );
-    scoreboard.bg_color = [0, 0, 0, 160];
-    scoreboard.border_color = [55, 60, 70, 150];
-    m.insert("scoreboard".to_string(), scoreboard);
 
-    // 7. Chat Box
-    let mut chat = HudElementConfig::new(
-        "chat",
-        "Chat Box",
-        HudAnchor::BottomLeft,
-        [14.0, -48.0],
+    // 7. FPS & Telemetry
+    m.insert(
+        "fps_ping".to_string(),
+        HudElementConfig::new("fps_ping", "FPS & Telemetry", 0.02, 0.02, 0.18, 0.10),
     );
-    chat.bg_color = [0, 0, 0, 130];
-    chat.border_color = [50, 55, 65, 140];
-    m.insert("chat".to_string(), chat);
 
-    // 8. Keystrokes & CPS
-    let mut keystrokes = HudElementConfig::new(
-        "keystrokes",
-        "Keystrokes & CPS",
-        HudAnchor::CenterLeft,
-        [16.0, -50.0],
+    // 8. Armor Status
+    m.insert(
+        "armor_status".to_string(),
+        HudElementConfig::new("armor_status", "Armor Status", 0.85, 0.82, 0.13, 0.15),
     );
-    keystrokes.bg_color = [14, 16, 22, 210];
-    keystrokes.border_color = [60, 68, 82, 190];
-    m.insert("keystrokes".to_string(), keystrokes);
 
-    // 9. FPS & Frametime Sparkline
-    let mut fps_ping = HudElementConfig::new(
-        "fps_ping",
-        "FPS & Telemetry",
-        HudAnchor::TopLeft,
-        [14.0, 14.0],
+    // 9. Potion Effects
+    m.insert(
+        "potion_effects".to_string(),
+        HudElementConfig::new("potion_effects", "Potion Effects", 0.84, 0.02, 0.14, 0.18),
     );
-    fps_ping.bg_color = [14, 16, 22, 210];
-    fps_ping.border_color = [60, 68, 82, 190];
-    m.insert("fps_ping".to_string(), fps_ping);
 
-    // 10. Armor Status
-    let mut armor_status = HudElementConfig::new(
-        "armor_status",
-        "Armor Status",
-        HudAnchor::BottomRight,
-        [-16.0, -40.0],
+    // 10. Coordinates & Compass Direction
+    m.insert(
+        "coords_direction".to_string(),
+        HudElementConfig::new("coords_direction", "Coordinates & Compass", 0.02, 0.13, 0.18, 0.10),
     );
-    armor_status.bg_color = [14, 16, 22, 210];
-    armor_status.border_color = [60, 68, 82, 190];
-    m.insert("armor_status".to_string(), armor_status);
-
-    // 11. Potion Effects
-    let mut potion_effects = HudElementConfig::new(
-        "potion_effects",
-        "Potion Effects",
-        HudAnchor::TopRight,
-        [-16.0, 16.0],
-    );
-    potion_effects.bg_color = [14, 16, 22, 210];
-    potion_effects.border_color = [60, 68, 82, 190];
-    m.insert("potion_effects".to_string(), potion_effects);
-
-    // 12. Coordinates & Compass Direction
-    let mut coords = HudElementConfig::new(
-        "coords_direction",
-        "Coordinates & Compass",
-        HudAnchor::TopLeft,
-        [14.0, 160.0],
-    );
-    coords.bg_color = [14, 16, 22, 210];
-    coords.border_color = [60, 68, 82, 190];
-    m.insert("coords_direction".to_string(), coords);
 
     m
 }
@@ -298,18 +231,17 @@ pub fn create_competitive_elements() -> BTreeMap<String, HudElementConfig> {
     let mut m = create_default_elements();
 
     if let Some(k) = m.get_mut("keystrokes") {
-        k.offset = [16.0, 20.0];
-        k.anchor = HudAnchor::CenterLeft;
-        k.scale = 1.05;
+        k.rel_x = 0.02;
+        k.rel_y = 0.45;
+        k.rel_w = 0.13;
+        k.rel_h = 0.20;
     }
 
     if let Some(a) = m.get_mut("armor_status") {
-        a.offset = [-16.0, -20.0];
-        a.scale = 1.0;
-    }
-
-    if let Some(p) = m.get_mut("potion_effects") {
-        p.offset = [-16.0, 20.0];
+        a.rel_x = 0.84;
+        a.rel_y = 0.80;
+        a.rel_w = 0.14;
+        a.rel_h = 0.17;
     }
 
     m

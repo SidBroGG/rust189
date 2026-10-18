@@ -1,6 +1,5 @@
 use crate::hud::{
-    get_module_content_size, render_hud_editor, render_module_by_id, HudData, HudEditorState,
-    HudLayoutConfig,
+    render_hud_editor, render_module_by_id, HudData, HudEditorState, HudLayoutConfig,
 };
 use crate::i18n::{t, Language};
 use crate::keybinds::standard_token_to_egui_key;
@@ -190,6 +189,11 @@ impl InGameScreen {
         // 6. RENDER MODULAR HUD ELEMENTS (Driven by HudLayoutConfig)
         let hud_painter = ctx.layer_painter(LayerId::new(Order::Middle, Id::new("hud_modular_layer")));
 
+        let bg_alpha = (255.0 * self.hud_layout.global_opacity).clamp(0.0, 255.0) as u8;
+        let border_alpha = (220.0 * self.hud_layout.global_opacity).clamp(0.0, 255.0) as u8;
+        let elem_bg_col = Color32::from_rgba_unmultiplied(16, 18, 24, bg_alpha);
+        let elem_border_col = Color32::from_rgba_unmultiplied(65, 72, 88, border_alpha);
+
         for (id, elem) in self.hud_layout.active_elements() {
             if !elem.visible {
                 continue;
@@ -200,24 +204,49 @@ impl InGameScreen {
                 continue;
             }
 
-            let content_size = get_module_content_size(id, &self.hud_data);
-            let rect = elem.screen_rect(screen_size, content_size);
-
-            // Draw element background & border if configured
-            if elem.bg_color[3] > 0 {
-                hud_painter.rect_filled(
-                    rect,
-                    CornerRadius::same(elem.corner_radius as u8),
-                    elem.bg_color32(),
-                );
+            // Skip legacy separate vitals and exp_bar (unified into hotbar)
+            if id == "vitals" || id == "exp_bar" {
+                continue;
             }
-            if elem.border_width > 0.0 && elem.border_color[3] > 0 {
-                hud_painter.rect_stroke(
-                    rect,
-                    CornerRadius::same(elem.corner_radius as u8),
-                    Stroke::new(elem.border_width, elem.border_color32()),
-                    egui::StrokeKind::Inside,
-                );
+
+            // Boss health bar is hidden if there is no active boss
+            if id == "boss_bar" && self.hud_data.boss_bars.is_empty() {
+                continue;
+            }
+
+            // Potion effects hidden if no active effects
+            if id == "potion_effects" && self.hud_data.potion_effects.is_empty() {
+                continue;
+            }
+
+            // Armor status hidden if no armor equipped
+            if id == "armor_status" {
+                let has_armor = self.hud_data.armor_items.iter().any(|a| a.is_some())
+                    || self.hud_data.held_item.as_ref().map_or(false, |h| h.max_damage > 0);
+                if !has_armor {
+                    continue;
+                }
+            }
+
+            let rect = elem.screen_rect(screen_size);
+
+            // Draw element background & border if configured (unless crosshair, scoreboard or chat)
+            if id != "crosshair" && id != "scoreboard" && id != "chat" {
+                if bg_alpha > 0 {
+                    hud_painter.rect_filled(
+                        rect,
+                        CornerRadius::same(4),
+                        elem_bg_col,
+                    );
+                }
+                if border_alpha > 0 {
+                    hud_painter.rect_stroke(
+                        rect,
+                        CornerRadius::same(4),
+                        Stroke::new(1.0_f32, elem_border_col),
+                        egui::StrokeKind::Inside,
+                    );
+                }
             }
 
             // Special cases: Scoreboard & Chat are interactive or multi-line egui Areas
@@ -227,8 +256,9 @@ impl InGameScreen {
                         .fixed_pos(rect.min)
                         .show(ctx, |ui| {
                             Frame::NONE
-                                .fill(elem.bg_color32())
-                                .corner_radius(CornerRadius::same(elem.corner_radius as u8))
+                                .fill(elem_bg_col)
+                                .stroke(Stroke::new(1.0_f32, elem_border_col))
+                                .corner_radius(CornerRadius::same(4))
                                 .inner_margin(egui::Margin::symmetric(8, 6))
                                 .show(ui, |ui| {
                                     ui.set_width(rect.width());
@@ -267,15 +297,11 @@ impl InGameScreen {
                 egui::Area::new(Id::new("chat_area"))
                     .fixed_pos(rect.min)
                     .show(ctx, |ui| {
-                        let bg_alpha = if self.chat_opened { elem.bg_color[3] } else { (elem.bg_color[3] as f32 * 0.7) as u8 };
+                        let chat_bg_alpha = if self.chat_opened { bg_alpha } else { (bg_alpha as f32 * 0.7) as u8 };
                         Frame::NONE
-                            .fill(Color32::from_rgba_unmultiplied(
-                                elem.bg_color[0],
-                                elem.bg_color[1],
-                                elem.bg_color[2],
-                                bg_alpha,
-                            ))
-                            .corner_radius(CornerRadius::same(elem.corner_radius as u8))
+                            .fill(Color32::from_rgba_unmultiplied(16, 18, 24, chat_bg_alpha))
+                            .stroke(Stroke::new(1.0_f32, elem_border_col))
+                            .corner_radius(CornerRadius::same(4))
                             .inner_margin(egui::Margin::symmetric(8, 8))
                             .show(ui, |ui| {
                                 ui.set_width(rect.width());

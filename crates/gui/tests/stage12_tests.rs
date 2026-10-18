@@ -1,6 +1,6 @@
 use egui::{Pos2, Vec2};
 use gui::hud::{
-    compute_facing_direction, snap_val, HudAnchor, HudElementConfig, HudItemInfo, HudLayoutConfig,
+    compute_facing_direction, snap_val, HudElementConfig, HudItemInfo, HudLayoutConfig,
     HudPotionInfo, COMPETITIVE_PROFILE_NAME, DEFAULT_PROFILE_NAME, MINIMAL_PROFILE_NAME,
 };
 
@@ -12,16 +12,18 @@ fn test_hud_layout_toml_serialization_roundtrip() {
 
     // Modify an element in active profile
     if let Some(keystrokes) = config.get_element_mut("keystrokes") {
-        keystrokes.offset = [24.0, -48.0];
-        keystrokes.scale = 1.25;
+        keystrokes.rel_x = 0.05;
+        keystrokes.rel_y = 0.40;
+        keystrokes.rel_w = 0.15;
+        keystrokes.rel_h = 0.20;
         keystrokes.visible = true;
     }
 
     // Add a custom profile
     config.create_profile("Ranked Duels", Some(COMPETITIVE_PROFILE_NAME));
     if let Some(cps) = config.get_element_mut("fps_ping") {
-        cps.offset = [10.0, 10.0];
-        cps.scale = 1.1;
+        cps.rel_x = 0.03;
+        cps.rel_y = 0.04;
     }
 
     // Serialize to TOML
@@ -46,8 +48,10 @@ fn test_hud_layout_toml_serialization_roundtrip() {
     assert!(restored.profiles.contains_key("Ranked Duels"));
 
     let ks = restored.profiles.get(COMPETITIVE_PROFILE_NAME).unwrap().get("keystrokes").unwrap();
-    assert_eq!(ks.offset, [24.0, -48.0]);
-    assert_eq!(ks.scale, 1.25);
+    assert_eq!(ks.rel_x, 0.05);
+    assert_eq!(ks.rel_y, 0.40);
+    assert_eq!(ks.rel_w, 0.15);
+    assert_eq!(ks.rel_h, 0.20);
     assert!(ks.visible);
 }
 
@@ -85,46 +89,30 @@ fn test_grid_snapping_precision_and_free_movement() {
 }
 
 #[test]
-fn test_hud_anchor_projection_and_screen_rect() {
+fn test_hud_relative_grid_projection_and_screen_rect() {
     let screen = Vec2::new(1920.0, 1080.0);
-    let content = Vec2::new(100.0, 40.0);
 
-    // TopLeft: base = (0, 0)
-    let tl = HudElementConfig::new("test_tl", "TL", HudAnchor::TopLeft, [10.0, 20.0]);
-    let r_tl = tl.screen_rect(screen, content);
-    assert_eq!(r_tl.min, Pos2::new(10.0, 20.0));
-    assert_eq!(r_tl.size(), content);
+    // TopLeft relative positioning
+    let tl = HudElementConfig::new("test_tl", "TL", 0.1, 0.2, 0.2, 0.1);
+    let r_tl = tl.screen_rect(screen);
+    assert_eq!(r_tl.min, Pos2::new(192.0, 216.0));
+    assert_eq!(r_tl.size(), Vec2::new(384.0, 108.0));
 
-    // TopCenter: base = (960, 0), center alignment
-    let tc = HudElementConfig::new("test_tc", "TC", HudAnchor::TopCenter, [0.0, 15.0]);
-    let r_tc = tc.screen_rect(screen, content);
-    assert_eq!(r_tc.min, Pos2::new(960.0 - 50.0, 15.0));
+    // Center positioning
+    let c = HudElementConfig::new("test_c", "C", 0.4, 0.45, 0.2, 0.1);
+    let r_c = c.screen_rect(screen);
+    assert_eq!(r_c.min, Pos2::new(768.0, 486.0));
 
-    // TopRight: base = (1920, 0), right alignment
-    let tr = HudElementConfig::new("test_tr", "TR", HudAnchor::TopRight, [-10.0, 15.0]);
-    let r_tr = tr.screen_rect(screen, content);
-    assert_eq!(r_tr.min, Pos2::new(1920.0 - 10.0 - 100.0, 15.0));
+    // Dragging & Snapping calculation: set_from_screen_pos with 16px grid
+    let mut draggable = HudElementConfig::new("drag", "Drag", 0.0, 0.0, 0.2, 0.1);
+    draggable.set_from_screen_pos(Pos2::new(51.3, 78.9), screen, 16.0);
+    assert_eq!(draggable.rel_x, 48.0 / 1920.0);
+    assert_eq!(draggable.rel_y, 80.0 / 1080.0);
 
-    // BottomCenter: base = (960, 1080), center & bottom alignment
-    let bc = HudElementConfig::new("test_bc", "BC", HudAnchor::BottomCenter, [0.0, -30.0]);
-    let r_bc = bc.screen_rect(screen, content);
-    assert_eq!(r_bc.min, Pos2::new(960.0 - 50.0, 1080.0 - 30.0 - 40.0));
-
-    // Center: base = (960, 540)
-    let c = HudElementConfig::new("test_c", "C", HudAnchor::Center, [0.0, 0.0]);
-    let r_c = c.screen_rect(screen, content);
-    assert_eq!(r_c.min, Pos2::new(960.0 - 50.0, 540.0 - 20.0));
-
-    // Scaling factor 2.0x
-    let mut scaled = tl.clone();
-    scaled.scale = 2.0;
-    let r_scaled = scaled.screen_rect(screen, content);
-    assert_eq!(r_scaled.size(), Vec2::new(200.0, 80.0));
-
-    // Dragging & Snapping calculation: set_from_screen_pos
-    let mut draggable = HudElementConfig::new("drag", "Drag", HudAnchor::TopLeft, [0.0, 0.0]);
-    draggable.set_from_screen_pos(Pos2::new(51.3, 78.9), screen, content, 8);
-    assert_eq!(draggable.offset, [48.0, 80.0]);
+    // Resizing & Snapping calculation: set_from_screen_size with 16px grid
+    draggable.set_from_screen_size(Vec2::new(205.0, 155.0), screen, 16.0);
+    assert_eq!(draggable.rel_w, 208.0 / 1920.0);
+    assert_eq!(draggable.rel_h, 160.0 / 1080.0);
 }
 
 #[test]
@@ -210,9 +198,9 @@ fn test_hud_profiles_management_and_fallback() {
 
     // Default profile exists
     assert_eq!(config.active_profile, DEFAULT_PROFILE_NAME);
+    assert_eq!(config.global_opacity, 0.85);
     assert!(config.active_elements().contains_key("hotbar"));
     assert!(config.active_elements().contains_key("crosshair"));
-    assert!(config.active_elements().contains_key("vitals"));
 
     // Switch to Competitive PvP
     config.switch_profile(COMPETITIVE_PROFILE_NAME);
