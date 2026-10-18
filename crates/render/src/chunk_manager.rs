@@ -156,6 +156,7 @@ pub type SectionKey = (i32, i32, usize);
 pub struct RawSectionMesh {
     pub key: SectionKey,
     pub mesh: SectionMeshData,
+    pub epoch: u64,
 }
 
 /// GPU-allocated vertex and index buffers for a chunk section.
@@ -181,6 +182,7 @@ pub struct ChunkMeshManager {
     rx: Receiver<RawSectionMesh>,
     pub gpu_meshes: HashMap<SectionKey, GpuSectionMesh>,
     pub pending_tasks: HashSet<SectionKey>,
+    pub epoch: u64,
 }
 
 impl Default for ChunkMeshManager {
@@ -209,6 +211,7 @@ impl ChunkMeshManager {
             rx,
             gpu_meshes: HashMap::new(),
             pending_tasks: HashSet::new(),
+            epoch: 0,
         }
     }
 
@@ -247,6 +250,7 @@ impl ChunkMeshManager {
         self.pending_tasks.insert(key);
 
         let tx = self.tx.clone();
+        let epoch = self.epoch;
         self.thread_pool.spawn(move || {
             let mesh = ChunkMesher::mesh_section(
                 &section,
@@ -256,7 +260,7 @@ impl ChunkMeshManager {
                 &snapshot,
                 &atlas,
             );
-            let _ = tx.send(RawSectionMesh { key, mesh });
+            let _ = tx.send(RawSectionMesh { key, mesh, epoch });
         });
     }
 
@@ -276,7 +280,15 @@ impl ChunkMeshManager {
                 Err(_) => break,
             };
 
+            // Discard meshing results that were started in an older world or dimension
+            if raw.epoch != self.epoch {
+                continue;
+            }
+
             let key = raw.key;
+            if !self.pending_tasks.contains(&key) {
+                continue;
+            }
             self.pending_tasks.remove(&key);
 
             let base_x = (key.0 * 16) as f32;
@@ -366,6 +378,7 @@ impl ChunkMeshManager {
 
     /// Clears all GPU meshes and pending meshing tasks.
     pub fn clear(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
         self.gpu_meshes.clear();
         self.pending_tasks.clear();
         while self.rx.try_recv().is_ok() {}

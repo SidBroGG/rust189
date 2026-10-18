@@ -133,15 +133,10 @@ impl PlayerMovement {
         }
     }
 
-    /// Returns the current bounding box of the player.
+    /// Returns the current bounding box of the player (MCP `EntityPlayer`: 0.6 x 1.8 x 0.6).
     #[inline]
     pub fn get_aabb(&self) -> AABB {
-        let h = if self.is_sneaking {
-            Self::SNEAK_HEIGHT
-        } else {
-            Self::HEIGHT
-        };
-        AABB::from_point_size(self.pos.x, self.pos.y, self.pos.z, Self::WIDTH, h)
+        AABB::from_point_size(self.pos.x, self.pos.y, self.pos.z, Self::WIDTH, Self::HEIGHT)
     }
 
     /// Returns eye height above player feet based on sneaking state.

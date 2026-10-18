@@ -50,6 +50,9 @@ pub struct App {
     pub player_look: (f32, f32),
     pub player_on_ground: bool,
     pub has_spawned: bool,
+    pub last_reported_pos: (f64, f64, f64),
+    pub last_reported_look: (f32, f32),
+    pub position_update_ticks: u32,
     pub pending_connection: Option<tokio::sync::oneshot::Receiver<Result<PlaySessionHandle, String>>>,
     pub connecting_server_ip: Option<String>,
 
@@ -89,6 +92,9 @@ impl App {
             player_look: (0.0, 0.0),
             player_on_ground: false,
             has_spawned: false,
+            last_reported_pos: (0.0, 64.0, 0.0),
+            last_reported_look: (0.0, 0.0),
+            position_update_ticks: 0,
             pending_connection: None,
             connecting_server_ip: None,
 
@@ -126,6 +132,9 @@ impl App {
 
     fn initiate_connection(&mut self, server_ip: &str) {
         self.has_spawned = false;
+        self.last_reported_pos = (0.0, 64.0, 0.0);
+        self.last_reported_look = (0.0, 0.0);
+        self.position_update_ticks = 0;
         let (host, port) = if let Some((h, p)) = server_ip.split_once(':') {
             (h.to_string(), p.parse::<u16>().unwrap_or(25565))
         } else {
@@ -217,6 +226,11 @@ impl App {
                         gamemode = jg.game_mode,
                         "Joined game world (JoinGame)"
                     );
+                    self.world.clear();
+                    if let Some(cm) = &mut self.chunk_manager {
+                        cm.clear();
+                    }
+                    self.profiler.loaded_chunks = 0;
                     self.player_entity_id = jg.entity_id;
                     self.world.dimension = jg.dimension;
                     if jg.game_mode == 1 || jg.game_mode == 3 {
@@ -252,7 +266,12 @@ impl App {
                 }
                 ClientboundPlayPacket::Respawn(rp) => {
                     info!(dimension = rp.dimension, "Respawned in dimension");
+                    self.world.clear();
                     self.world.dimension = rp.dimension as i8;
+                    if let Some(cm) = &mut self.chunk_manager {
+                        cm.clear();
+                    }
+                    self.profiler.loaded_chunks = 0;
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.dimension = rp.dimension as i8;
@@ -264,23 +283,36 @@ impl App {
                     self.world.age = tu.world_age;
                 }
                 ClientboundPlayPacket::PlayerPosLook(pos_look) => {
+                    info!(
+                        x = pos_look.x,
+                        y = pos_look.y,
+                        z = pos_look.z,
+                        yaw = pos_look.yaw,
+                        pitch = pos_look.pitch,
+                        flags = pos_look.flags,
+                        "Received PlayerPosLook setback/teleport from server"
+                    );
+
                     // Update player position according to relative/absolute flags
                     if (pos_look.flags & 0x01) != 0 {
                         self.player.pos.x += pos_look.x;
                     } else {
                         self.player.pos.x = pos_look.x;
+                        self.player.motion.x = 0.0;
                     }
 
                     if (pos_look.flags & 0x02) != 0 {
                         self.player.pos.y += pos_look.y;
                     } else {
                         self.player.pos.y = pos_look.y;
+                        self.player.motion.y = 0.0;
                     }
 
                     if (pos_look.flags & 0x04) != 0 {
                         self.player.pos.z += pos_look.z;
                     } else {
                         self.player.pos.z = pos_look.z;
+                        self.player.motion.z = 0.0;
                     }
 
                     if (pos_look.flags & 0x08) != 0 {
@@ -298,13 +330,16 @@ impl App {
                     self.player.prev_pos = self.player.pos;
                     self.player.prev_yaw = self.player.yaw;
                     self.player.prev_pitch = self.player.pitch;
-                    self.player.motion = glam::DVec3::ZERO;
 
                     self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                     self.player_look = (self.player.yaw, self.player.pitch);
-                    self.player_on_ground = self.player.on_ground;
+                    self.player_on_ground = false;
 
-                    // Confirm position back to server and mark spawned
+                    self.last_reported_pos = self.player_pos;
+                    self.last_reported_look = self.player_look;
+                    self.position_update_ticks = 0;
+
+                    // Confirm position back to server and mark spawned (on_ground = false per MCP line 717)
                     self.has_spawned = true;
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerPositionAndLook {
@@ -313,7 +348,7 @@ impl App {
                             z: self.player.pos.z,
                             yaw: self.player.yaw,
                             pitch: self.player.pitch,
-                            on_ground: self.player.on_ground,
+                            on_ground: false,
                         });
                     }
 
@@ -727,6 +762,10 @@ impl App {
                     warn!(reason = %dc.reason, "Disconnected from server");
                     self.session = None;
                     self.world.clear();
+                    if let Some(cm) = &mut self.chunk_manager {
+                        cm.clear();
+                    }
+                    self.profiler.loaded_chunks = 0;
                     if let Some(sm) = &mut self.screen_manager {
                         sm.exit_in_game();
                     }
@@ -815,15 +854,49 @@ impl App {
                 }
 
                 // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
+                let d0 = self.player_pos.0 - self.last_reported_pos.0;
+                let d1 = self.player_pos.1 - self.last_reported_pos.1;
+                let d2 = self.player_pos.2 - self.last_reported_pos.2;
+                let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
+                let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
+                let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
+                let flag3 = d3 != 0.0 || d4 != 0.0;
+
                 if let Some(s) = &self.session {
-                    s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                        x: self.player_pos.0,
-                        y: self.player_pos.1,
-                        z: self.player_pos.2,
-                        yaw: self.player_look.0,
-                        pitch: self.player_look.1,
-                        on_ground: self.player_on_ground,
-                    });
+                    if flag2 && flag3 {
+                        s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                            x: self.player_pos.0,
+                            y: self.player_pos.1,
+                            z: self.player_pos.2,
+                            yaw: self.player_look.0,
+                            pitch: self.player_look.1,
+                            on_ground: self.player_on_ground,
+                        });
+                    } else if flag2 {
+                        s.send(OutgoingPlayPacket::PlayerPosition {
+                            x: self.player_pos.0,
+                            y: self.player_pos.1,
+                            z: self.player_pos.2,
+                            on_ground: self.player_on_ground,
+                        });
+                    } else if flag3 {
+                        s.send(OutgoingPlayPacket::PlayerLook {
+                            yaw: self.player_look.0,
+                            pitch: self.player_look.1,
+                            on_ground: self.player_on_ground,
+                        });
+                    } else {
+                        s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
+                    }
+                }
+
+                self.position_update_ticks += 1;
+                if flag2 {
+                    self.last_reported_pos = self.player_pos;
+                    self.position_update_ticks = 0;
+                }
+                if flag3 {
+                    self.last_reported_look = self.player_look;
                 }
             }
         }

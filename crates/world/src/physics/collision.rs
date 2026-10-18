@@ -96,7 +96,24 @@ pub fn is_fence_block(id: u16) -> bool {
 pub fn can_fence_connect_to(world: &World, x: i32, y: i32, z: i32) -> bool {
     let state = world.block_at(x, y, z);
     let id = state.id();
-    if is_fence_block(id) || id == 107 || (183..=187).contains(&id) {
+    if is_fence_block(id) || id == 139 || id == 107 || (183..=187).contains(&id) {
+        return true;
+    }
+    state.is_opaque()
+}
+
+/// Checks if a block is a thin pane (iron bars, glass pane, stained glass pane).
+#[inline]
+pub fn is_pane_block(id: u16) -> bool {
+    matches!(id, 101 | 102 | 160)
+}
+
+/// Checks if a pane connects to neighbor block (MCP `BlockPane.canPaneConnectToBlock`).
+#[inline]
+pub fn can_pane_connect_to(world: &World, x: i32, y: i32, z: i32) -> bool {
+    let state = world.block_at(x, y, z);
+    let id = state.id();
+    if is_pane_block(id) || matches!(id, 20 | 95) {
         return true;
     }
     state.is_opaque()
@@ -217,6 +234,53 @@ pub fn get_block_collision_boxes(
         let x_max = if east { 1.0 } else { 0.625 };
         if west || east || (!north && !south) {
             let bb = AABB::new(fx + x_min, fy, fz + 0.375, fx + x_max, fy + 1.5, fz + 0.625);
+            if bb.intersects(mask) {
+                boxes.push(bb);
+            }
+        }
+        return;
+    }
+
+    // Panes (101 Iron Bars, 102 Glass Pane, 160 Stained Glass Pane): MCP `BlockPane.addCollisionBoxesToList`
+    if is_pane_block(id) {
+        let north = can_pane_connect_to(world, x, y, z - 1);
+        let south = can_pane_connect_to(world, x, y, z + 1);
+        let west = can_pane_connect_to(world, x - 1, y, z);
+        let east = can_pane_connect_to(world, x + 1, y, z);
+
+        if (!west || !east) && (west || east || north || south) {
+            if west {
+                let bb = AABB::new(fx, fy, fz + 0.4375, fx + 0.5, fy + 1.0, fz + 0.5625);
+                if bb.intersects(mask) {
+                    boxes.push(bb);
+                }
+            } else if east {
+                let bb = AABB::new(fx + 0.5, fy, fz + 0.4375, fx + 1.0, fy + 1.0, fz + 0.5625);
+                if bb.intersects(mask) {
+                    boxes.push(bb);
+                }
+            }
+        } else {
+            let bb = AABB::new(fx, fy, fz + 0.4375, fx + 1.0, fy + 1.0, fz + 0.5625);
+            if bb.intersects(mask) {
+                boxes.push(bb);
+            }
+        }
+
+        if (!north || !south) && (west || east || north || south) {
+            if north {
+                let bb = AABB::new(fx + 0.4375, fy, fz, fx + 0.5625, fy + 1.0, fz + 0.5);
+                if bb.intersects(mask) {
+                    boxes.push(bb);
+                }
+            } else if south {
+                let bb = AABB::new(fx + 0.4375, fy, fz + 0.5, fx + 0.5625, fy + 1.0, fz + 1.0);
+                if bb.intersects(mask) {
+                    boxes.push(bb);
+                }
+            }
+        } else {
+            let bb = AABB::new(fx + 0.4375, fy, fz, fx + 0.5625, fy + 1.0, fz + 1.0);
             if bb.intersects(mask) {
                 boxes.push(bb);
             }
@@ -359,7 +423,7 @@ impl World {
         let mut list = Vec::new();
         let min_x = mask.min_x.floor() as i32;
         let max_x = (mask.max_x + 1.0).floor() as i32;
-        let min_y = (mask.min_y.floor() as i32).max(0);
+        let min_y = ((mask.min_y.floor() as i32) - 1).max(0);
         let max_y = ((mask.max_y + 1.0).floor() as i32).min(256);
         let min_z = mask.min_z.floor() as i32;
         let max_z = (mask.max_z + 1.0).floor() as i32;
@@ -401,7 +465,7 @@ impl World {
 
         let min_x = mask.min_x.floor() as i32;
         let max_x = (mask.max_x + 1.0).floor() as i32;
-        let min_y = (mask.min_y.floor() as i32).max(0);
+        let min_y = ((mask.min_y.floor() as i32) - 1).max(0);
         let max_y = ((mask.max_y + 1.0).floor() as i32).min(256);
         let min_z = mask.min_z.floor() as i32;
         let max_z = (mask.max_z + 1.0).floor() as i32;
