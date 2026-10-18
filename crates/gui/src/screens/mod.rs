@@ -17,6 +17,7 @@ pub enum GuiOutput {
     DisconnectFromServer,
     SendChatMessage(String),
     Respawn,
+    DropItem { drop_all: bool },
     Quit,
     NicknameUpdated(String),
     SettingsUpdated {
@@ -141,6 +142,9 @@ impl ScreenManager {
                 }
                 InGameAction::Respawn => {
                     return GuiOutput::Respawn;
+                }
+                InGameAction::DropItem { drop_all } => {
+                    return GuiOutput::DropItem { drop_all };
                 }
                 InGameAction::None => {}
             }

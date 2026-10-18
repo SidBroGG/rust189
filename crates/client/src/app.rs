@@ -56,6 +56,7 @@ pub struct App {
     pub player_pos: (f64, f64, f64),
     pub player_look: (f32, f32),
     pub player_on_ground: bool,
+    pub player_gamemode: u8,
     pub has_spawned: bool,
     pub last_reported_pos: (f64, f64, f64),
     pub last_reported_look: (f32, f32),
@@ -134,6 +135,7 @@ impl App {
             player_pos: (0.0, 64.0, 0.0),
             player_look: (0.0, 0.0),
             player_on_ground: false,
+            player_gamemode: 0,
             has_spawned: false,
             last_reported_pos: (0.0, 64.0, 0.0),
             last_reported_look: (0.0, 0.0),
@@ -582,6 +584,46 @@ impl App {
         }
     }
 
+    /// Drops the item or item stack from the currently selected hotbar slot (MCP EntityPlayerSP.dropOneItem).
+    pub fn execute_drop_item(&mut self, drop_all: bool) {
+        let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+        if !is_in_game || self.player_health <= 0.0 || self.player_gamemode == 3 {
+            return;
+        }
+
+        // Cancel any active item usage (eating, bow, blocking)
+        if self.item_use_state.active_action != ItemUseAction::None {
+            self.item_use_state.stop();
+        }
+        if self.breaking_block_pos.is_some() {
+            self.handle_left_release();
+        }
+
+        let status = if drop_all {
+            DiggingAction::DropAllItems
+        } else {
+            DiggingAction::DropItem
+        };
+
+        if let Some(s) = &self.session {
+            s.send(OutgoingPlayPacket::PlayerDigging {
+                status,
+                position: Position::new(0, 0, 0),
+                facing: BlockFace::Down,
+            });
+        }
+
+        // Immediate client-side inventory prediction for zero-latency HUD responsiveness
+        if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+            if drop_all || item.count <= 1 {
+                self.hotbar_items[self.selected_hotbar_slot] = None;
+                self.held_item_id = 0;
+            } else {
+                item.count -= 1;
+            }
+        }
+    }
+
     pub fn handle_right_click(&mut self) {
         let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
         if (self.session.is_some() && !self.has_spawned) || !is_in_game {
@@ -953,6 +995,7 @@ impl App {
                     self.profiler.loaded_chunks = 0;
                     self.player_entity_id = jg.entity_id;
                     self.world.dimension = jg.dimension;
+                    self.player_gamemode = jg.game_mode;
                     self.player.capabilities.is_creative = jg.game_mode == 1;
                     if jg.game_mode == 1 || jg.game_mode == 3 {
                         self.player.capabilities.allow_flying = true;
@@ -993,6 +1036,7 @@ impl App {
                     info!(dimension = rp.dimension, "Respawned in dimension");
                     self.world.clear();
                     self.world.dimension = rp.dimension as i8;
+                    self.player_gamemode = rp.game_mode;
                     self.player_health = 20.0;
                     self.player_air = 300;
                     self.hurt_time = 0;
@@ -1753,6 +1797,7 @@ impl App {
                     // State 3: Change Game Mode (0: survival, 1: creative, 2: adventure, 3: spectator)
                     if cgs.state == 3 {
                         let gm = cgs.value as u8;
+                        self.player_gamemode = gm;
                         self.player.capabilities.is_creative = gm == 1;
                         if gm == 1 || gm == 3 {
                             self.player.capabilities.allow_flying = true;
@@ -2467,6 +2512,20 @@ impl ApplicationHandler for App {
                         info!(perspective = ?self.camera_controller.perspective, "Cycled camera perspective (F5)");
                     }
 
+                    let matches_drop = matches_winit_key(
+                        &self.config.keybinds.drop_item,
+                        &key_event.logical_key,
+                        &key_event.physical_key,
+                    );
+                    if matches_drop {
+                        let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                        if is_in_game && !self.is_cursor_needed() {
+                            let is_ctrl = self.pressed_keys.contains(&KeyCode::ControlLeft)
+                                || self.pressed_keys.contains(&KeyCode::ControlRight);
+                            self.execute_drop_item(is_ctrl);
+                        }
+                    }
+
                     let matches_cinematic = matches_winit_key(
                         &self.config.keybinds.toggle_cinematic,
                         &key_event.logical_key,
@@ -2727,6 +2786,12 @@ impl ApplicationHandler for App {
                             w.set_cursor_visible(false);
                             self.mouse_grabbed = true;
                         }
+                    }
+                    GuiOutput::DropItem { drop_all } => {
+                        let is_ctrl = drop_all
+                            || self.pressed_keys.contains(&KeyCode::ControlLeft)
+                            || self.pressed_keys.contains(&KeyCode::ControlRight);
+                        self.execute_drop_item(is_ctrl);
                     }
                     GuiOutput::NicknameUpdated(new_nick) => {
                         if self.config.auth.nickname != new_nick {

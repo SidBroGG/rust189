@@ -225,3 +225,20 @@ fn test_hud_profiles_management_and_fallback() {
     assert!(!config.profiles.contains_key("Custom Match"));
     assert_eq!(config.active_profile, DEFAULT_PROFILE_NAME);
 }
+
+#[test]
+fn test_drop_item_action_and_localization() {
+    use gui::{t, Language, InGameAction, GuiOutput};
+
+    assert_eq!(t(Language::Russian, "ingame.drop_item"), "Выбросить предмет (Q)");
+    assert_eq!(t(Language::English, "ingame.drop_item"), "Drop Item (Q)");
+
+    let action = InGameAction::DropItem { drop_all: false };
+    assert_eq!(action, InGameAction::DropItem { drop_all: false });
+
+    let output = GuiOutput::DropItem { drop_all: true };
+    match output {
+        GuiOutput::DropItem { drop_all } => assert!(drop_all),
+        _ => panic!("Expected DropItem output"),
+    }
+}

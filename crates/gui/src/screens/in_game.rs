@@ -27,6 +27,7 @@ pub enum InGameAction {
     OpenSettings,
     SendChat(String),
     Respawn,
+    DropItem { drop_all: bool },
 }
 
 /// A timestamped chat line for smooth alpha fading.
@@ -705,6 +706,23 @@ impl InGameScreen {
                         {
                             self.escape_menu_opened = false;
                             self.hud_editor_opened = true;
+                        }
+
+                        ui.add_space(6.0);
+
+                        // Drop item button in game menu
+                        if ui
+                            .add_sized(
+                                btn_size,
+                                egui::Button::new(
+                                    RichText::new(t(self.language, "ingame.drop_item"))
+                                        .size(13.0)
+                                        .color(Color32::from_rgb(255, 205, 110)),
+                                ),
+                            )
+                            .clicked()
+                        {
+                            action = InGameAction::DropItem { drop_all: false };
                         }
 
                         ui.add_space(6.0);
