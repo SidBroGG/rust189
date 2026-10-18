@@ -95,13 +95,14 @@ fn test_hud_relative_grid_projection_and_screen_rect() {
     // TopLeft relative positioning
     let tl = HudElementConfig::new("test_tl", "TL", 0.1, 0.2, 0.2, 0.1);
     let r_tl = tl.screen_rect(screen);
-    assert_eq!(r_tl.min, Pos2::new(192.0, 216.0));
-    assert_eq!(r_tl.size(), Vec2::new(384.0, 108.0));
+    assert_eq!(r_tl.width(), 384.0);
+    // Aspect ratio locked to base.x / base.y (100.0 / 40.0 = 2.5)
+    assert!((r_tl.height() - 384.0 / 2.5).abs() < 1e-4);
 
     // Center positioning
     let c = HudElementConfig::new("test_c", "C", 0.4, 0.45, 0.2, 0.1);
     let r_c = c.screen_rect(screen);
-    assert_eq!(r_c.min, Pos2::new(768.0, 486.0));
+    assert_eq!(r_c.width(), 384.0);
 
     // Dragging & Snapping calculation: set_from_screen_pos with 16px grid
     let mut draggable = HudElementConfig::new("drag", "Drag", 0.0, 0.0, 0.2, 0.1);
@@ -112,7 +113,7 @@ fn test_hud_relative_grid_projection_and_screen_rect() {
     // Resizing & Snapping calculation: set_from_screen_size with 16px grid
     draggable.set_from_screen_size(Vec2::new(205.0, 155.0), screen, 16.0);
     assert_eq!(draggable.rel_w, 208.0 / 1920.0);
-    assert_eq!(draggable.rel_h, 160.0 / 1080.0);
+    assert!((draggable.rel_h - (208.0 / 2.5) / 1080.0).abs() < 1e-4);
 }
 
 #[test]
@@ -200,7 +201,7 @@ fn test_hud_profiles_management_and_fallback() {
     assert_eq!(config.active_profile, DEFAULT_PROFILE_NAME);
     assert_eq!(config.global_opacity, 0.85);
     assert!(config.active_elements().contains_key("hotbar"));
-    assert!(config.active_elements().contains_key("crosshair"));
+    assert!(!config.active_elements().contains_key("crosshair"));
 
     // Switch to Competitive PvP
     config.switch_profile(COMPETITIVE_PROFILE_NAME);

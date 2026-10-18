@@ -69,24 +69,243 @@ pub fn render_crosshair(painter: &Painter, rect: Rect) {
 
 /// Unified Hotbar & Status: Combines Hotbar slots, Experience bar, and Vitals (Health, Armor, Hunger, Air).
 pub fn render_unified_hotbar(painter: &Painter, rect: Rect, data: &HudData, tick_counter: u64) {
-    let slots_h = 24.0;
-    let exp_h = 4.0;
-    let slots_rect = Rect::from_min_max(
-        Pos2::new(rect.left(), rect.bottom() - slots_h),
-        rect.max,
-    );
-    let exp_rect = Rect::from_min_size(
-        Pos2::new(rect.left(), slots_rect.top() - exp_h - 2.0),
-        Vec2::new(rect.width(), exp_h + 10.0),
-    );
-    let vitals_rect = Rect::from_min_max(
-        rect.min,
-        Pos2::new(rect.right(), exp_rect.top()),
-    );
+    if data.gamemode == 3 {
+        // In Spectator mode, hotbar and player stats are not displayed
+        return;
+    }
 
-    render_vitals(painter, vitals_rect, data, tick_counter);
-    render_exp_bar(painter, exp_rect, data);
-    render_hotbar(painter, slots_rect, data);
+    let scale = (rect.width() / 186.0).clamp(0.4, 3.0);
+    let center_x = rect.center().x;
+
+    let is_survival = data.gamemode == 0 || data.gamemode == 2;
+    let show_vitals = is_survival && !data.is_creative;
+
+    // 1. Hotbar slots (bottom)
+    let slot_w = 20.0 * scale;
+    let slot_h = 20.0 * scale;
+    let bar_w = slot_w * 9.0;
+    let start_x = center_x - bar_w * 0.5;
+    let start_y = rect.bottom() - slot_h - 2.0 * scale;
+
+    for i in 0..9 {
+        let x = start_x + i as f32 * slot_w;
+        let slot_rect = Rect::from_min_size(Pos2::new(x, start_y), Vec2::new(slot_w - 1.0 * scale, slot_h));
+
+        let is_selected = i == data.selected_hotbar_slot;
+        let slot_bg = if is_selected {
+            Color32::from_rgba_unmultiplied(45, 50, 65, 230)
+        } else {
+            Color32::from_rgba_unmultiplied(20, 22, 28, 200)
+        };
+        painter.rect_filled(slot_rect, CornerRadius::same((2.0 * scale) as u8), slot_bg);
+
+        let border_stroke = if is_selected {
+            Stroke::new((1.8 * scale).max(1.0), Color32::WHITE)
+        } else {
+            Stroke::new((1.0 * scale).max(0.5), Color32::from_rgb(60, 65, 75))
+        };
+        painter.rect_stroke(slot_rect, CornerRadius::same((2.0 * scale) as u8), border_stroke, egui::StrokeKind::Inside);
+
+        painter.text(
+            Pos2::new(slot_rect.left() + 2.0 * scale, slot_rect.top() + 1.0 * scale),
+            Align2::LEFT_TOP,
+            format!("{}", i + 1),
+            FontId::monospace(8.0 * scale),
+            Color32::from_rgb(140, 145, 160),
+        );
+
+        if let Some(item) = &data.hotbar_items[i] {
+            let short_name: String = item.name.chars().take(3).collect();
+            painter.text(
+                Pos2::new(slot_rect.center().x, slot_rect.center().y - 1.0 * scale),
+                Align2::CENTER_CENTER,
+                short_name,
+                FontId::proportional(9.0 * scale),
+                Color32::WHITE,
+            );
+
+            if item.count > 1 {
+                painter.text(
+                    Pos2::new(slot_rect.right() - 2.0 * scale, slot_rect.bottom() - 1.0 * scale),
+                    Align2::RIGHT_BOTTOM,
+                    format!("{}", item.count),
+                    FontId::monospace(8.5 * scale),
+                    Color32::from_rgb(255, 255, 85),
+                );
+            }
+
+            if item.max_damage > 0 {
+                let ratio = item.durability_ratio();
+                let bar_w = (slot_rect.width() - 4.0 * scale) * ratio;
+                let bar_y = slot_rect.bottom() - 2.5 * scale;
+                let bar_color = if ratio > 0.5 {
+                    Color32::from_rgb(85, 255, 85)
+                } else if ratio > 0.2 {
+                    Color32::from_rgb(255, 170, 0)
+                } else {
+                    Color32::from_rgb(255, 85, 85)
+                };
+                painter.line_segment(
+                    [Pos2::new(slot_rect.left() + 2.0 * scale, bar_y), Pos2::new(slot_rect.left() + 2.0 * scale + bar_w, bar_y)],
+                    Stroke::new(1.5 * scale, bar_color),
+                );
+            }
+        }
+    }
+
+    // 2. Experience bar (middle, directly above hotbar slots)
+    let show_exp = show_vitals || data.exp_level > 0 || data.exp_progress > 0.0;
+    let exp_y = start_y - 5.0 * scale;
+    if show_exp {
+        let exp_bar_rect = Rect::from_min_size(
+            Pos2::new(start_x, exp_y),
+            Vec2::new(bar_w, (4.0 * scale).max(2.0)),
+        );
+        painter.rect_filled(exp_bar_rect, CornerRadius::same(1), Color32::from_rgb(25, 35, 20));
+        painter.rect_stroke(
+            exp_bar_rect,
+            CornerRadius::same(1),
+            Stroke::new(1.0_f32, Color32::from_rgb(10, 15, 10)),
+            egui::StrokeKind::Inside,
+        );
+
+        let progress = data.exp_progress.clamp(0.0, 1.0);
+        if progress > 0.0 {
+            let fill_w = exp_bar_rect.width() * progress;
+            let fill_rect = Rect::from_min_size(exp_bar_rect.min, Vec2::new(fill_w, exp_bar_rect.height()));
+            painter.rect_filled(fill_rect, CornerRadius::same(1), Color32::from_rgb(128, 255, 32));
+        }
+
+        if data.exp_level > 0 {
+            let lvl_str = format!("{}", data.exp_level);
+            let lvl_center = Pos2::new(center_x, exp_y - 4.0 * scale);
+            let font = FontId::monospace((9.0 * scale).max(7.0));
+            for (dx, dy) in [(-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0)] {
+                painter.text(
+                    Pos2::new(lvl_center.x + dx, lvl_center.y + dy),
+                    Align2::CENTER_CENTER,
+                    &lvl_str,
+                    font.clone(),
+                    Color32::BLACK,
+                );
+            }
+            painter.text(
+                lvl_center,
+                Align2::CENTER_CENTER,
+                lvl_str,
+                font,
+                Color32::from_rgb(128, 255, 32),
+            );
+        }
+    }
+
+    // 3. Vitals: Health, Armor, Food, Air (strictly omitted in Creative & Spectator)
+    if show_vitals {
+        let vitals_bottom_y = if show_exp { exp_y - 6.0 * scale } else { start_y - 6.0 * scale };
+        let vitals_top_y = vitals_bottom_y - 9.0 * scale;
+
+        // Health row (bottom left, above exp bar)
+        let is_low_hp = data.health <= 4.0;
+        let full_hearts = (data.health / 2.0).floor() as usize;
+        let half_heart = (data.health % 2.0) >= 1.0;
+
+        for i in 0..10 {
+            let shake = if is_low_hp {
+                let s = ((tick_counter + i as u64 * 7) % 4) as f32;
+                if s == 1.0 { -1.5 * scale } else if s == 2.0 { 1.5 * scale } else { 0.0 }
+            } else {
+                0.0
+            };
+
+            let x = start_x + i as f32 * 8.5 * scale;
+            let y = vitals_bottom_y + shake;
+
+            painter.circle_filled(Pos2::new(x + 2.0 * scale, y - 2.0 * scale), 3.0 * scale, Color32::from_rgb(40, 10, 10));
+            painter.circle_filled(Pos2::new(x + 5.0 * scale, y - 2.0 * scale), 3.0 * scale, Color32::from_rgb(40, 10, 10));
+
+            let heart_color = if i < full_hearts {
+                Color32::from_rgb(255, 34, 34)
+            } else if i == full_hearts && half_heart {
+                Color32::from_rgb(255, 85, 85)
+            } else {
+                Color32::from_rgba_unmultiplied(30, 0, 0, 150)
+            };
+
+            let radius = if i < full_hearts || (i == full_hearts && half_heart) { 2.4 * scale } else { 1.4 * scale };
+            painter.circle_filled(Pos2::new(x + 2.0 * scale, y - 2.0 * scale), radius, heart_color);
+            painter.circle_filled(Pos2::new(x + 5.0 * scale, y - 2.0 * scale), radius, heart_color);
+        }
+
+        // Absorption golden hearts
+        if data.absorption > 0.0 {
+            let abs_full = (data.absorption / 2.0).floor() as usize;
+            for i in 0..abs_full.min(10) {
+                let x = start_x + i as f32 * 8.5 * scale;
+                painter.circle_filled(Pos2::new(x + 3.5 * scale, vitals_bottom_y - 2.0 * scale), 2.2 * scale, Color32::from_rgb(255, 215, 0));
+            }
+        }
+
+        // Armor shields (top left, above health)
+        if data.armor_value > 0 {
+            let full_shields = (data.armor_value / 2) as usize;
+            let half_shield = (data.armor_value % 2) != 0;
+
+            for i in 0..10 {
+                let x = start_x + i as f32 * 8.5 * scale;
+                let shield_rect = Rect::from_min_size(Pos2::new(x, vitals_top_y), Vec2::new(7.0 * scale, 7.0 * scale));
+                let col = if i < full_shields {
+                    Color32::from_rgb(180, 185, 200)
+                } else if i == full_shields && half_shield {
+                    Color32::from_rgb(130, 135, 150)
+                } else {
+                    Color32::from_rgba_unmultiplied(40, 45, 55, 120)
+                };
+                painter.rect_filled(shield_rect, CornerRadius::same(1), col);
+            }
+        }
+
+        // Food / Hunger (bottom right, above exp bar)
+        let full_shanks = (data.food / 2) as usize;
+        let half_shank = (data.food % 2) != 0;
+        let right_end = start_x + bar_w;
+
+        for i in 0..10 {
+            let x = right_end - (i as f32 + 1.0) * 8.5 * scale;
+            let y = vitals_bottom_y;
+
+            let shank_color = if i < full_shanks {
+                Color32::from_rgb(185, 105, 50)
+            } else if i == full_shanks && half_shank {
+                Color32::from_rgb(215, 140, 80)
+            } else {
+                Color32::from_rgba_unmultiplied(40, 25, 15, 140)
+            };
+
+            painter.rect_filled(
+                Rect::from_min_size(Pos2::new(x, y - 5.0 * scale), Vec2::new(7.0 * scale, 6.0 * scale)),
+                CornerRadius::same(1),
+                shank_color,
+            );
+        }
+
+        // Air bubbles (top right, above food)
+        if data.is_in_water || data.air < 300 {
+            let bubbles = ((data.air as f32 / 300.0) * 10.0).ceil().clamp(0.0, 10.0) as usize;
+            for i in 0..bubbles {
+                let x = right_end - (i as f32 + 1.0) * 8.5 * scale;
+                painter.circle_stroke(
+                    Pos2::new(x + 3.5 * scale, vitals_top_y + 3.5 * scale),
+                    2.8 * scale,
+                    Stroke::new(1.0_f32, Color32::from_rgb(60, 180, 255)),
+                );
+                painter.circle_filled(
+                    Pos2::new(x + 2.5 * scale, vitals_top_y + 2.5 * scale),
+                    1.0 * scale,
+                    Color32::WHITE,
+                );
+            }
+        }
+    }
 }
 
 /// 2. Hotbar: 9 slots with active slot highlight border and item badges.
@@ -395,12 +614,15 @@ pub fn render_boss_bar(painter: &Painter, rect: Rect, data: &HudData) {
 
 /// 6. Keystrokes & CPS: W, A, S, D, LMB (CPS), RMB (CPS), Space keys.
 pub fn render_keystrokes(painter: &Painter, rect: Rect, data: &HudData) {
-    let kw = 24.0;
-    let kh = 22.0;
-    let gap = 3.0;
+    let scale = (rect.width() / 84.0).min(rect.height() / 92.0).clamp(0.4, 3.0);
+    let kw = 24.0 * scale;
+    let kh = 22.0 * scale;
+    let gap = 3.0 * scale;
+    let space_h = 11.0 * scale;
 
+    let total_h = kh * 3.0 + gap * 3.0 + space_h;
     let center_x = rect.center().x;
-    let top_y = rect.top() + 4.0;
+    let top_y = rect.center().y - total_h * 0.5;
 
     // Helper closure to draw a single keystroke button
     let draw_key = |p: &Painter, r: Rect, label: &str, sub: Option<&str>, pressed: bool| {
@@ -418,22 +640,27 @@ pub fn render_keystrokes(painter: &Painter, rect: Rect, data: &HudData) {
             )
         };
 
-        p.rect_filled(r, CornerRadius::same(3), bg);
-        p.rect_stroke(r, CornerRadius::same(3), Stroke::new(1.0_f32, border_col), egui::StrokeKind::Inside);
+        p.rect_filled(r, CornerRadius::same((3.0 * scale).max(1.0) as u8), bg);
+        p.rect_stroke(
+            r,
+            CornerRadius::same((3.0 * scale).max(1.0) as u8),
+            Stroke::new((1.0 * scale).max(0.5), border_col),
+            egui::StrokeKind::Inside,
+        );
 
         if let Some(subtext) = sub {
             p.text(
-                Pos2::new(r.center().x, r.top() + 3.0),
+                Pos2::new(r.center().x, r.top() + 3.0 * scale),
                 Align2::CENTER_TOP,
                 label,
-                FontId::proportional(9.0),
+                FontId::proportional(9.0 * scale),
                 text_col,
             );
             p.text(
-                Pos2::new(r.center().x, r.bottom() - 2.0),
+                Pos2::new(r.center().x, r.bottom() - 2.0 * scale),
                 Align2::CENTER_BOTTOM,
                 subtext,
-                FontId::monospace(8.0),
+                FontId::monospace(8.0 * scale),
                 text_col,
             );
         } else {
@@ -441,7 +668,7 @@ pub fn render_keystrokes(painter: &Painter, rect: Rect, data: &HudData) {
                 r.center(),
                 Align2::CENTER_CENTER,
                 label,
-                FontId::proportional(11.0),
+                FontId::proportional(11.0 * scale),
                 text_col,
             );
         }
@@ -473,14 +700,15 @@ pub fn render_keystrokes(painter: &Painter, rect: Rect, data: &HudData) {
     // Row 4: [ ---- SPACE ---- ]
     let r4_y = r3_y + kh + gap;
     let space_w = kw * 3.0 + gap * 2.0;
-    let space_rect = Rect::from_min_size(Pos2::new(center_x - space_w * 0.5, r4_y), Vec2::new(space_w, 11.0));
+    let space_rect = Rect::from_min_size(Pos2::new(center_x - space_w * 0.5, r4_y), Vec2::new(space_w, space_h));
     draw_key(painter, space_rect, "——", None, data.key_space);
 }
 
 /// 7. FPS & Telemetry Sparkline: FPS, 1% Low, RTT and mini frametime graph.
 pub fn render_fps_ping(painter: &Painter, rect: Rect, data: &HudData) {
-    let top_y = rect.top() + 4.0;
-    let left_x = rect.left() + 6.0;
+    let scale = (rect.width() / 180.0).min(rect.height() / 52.0).clamp(0.4, 3.0);
+    let top_y = rect.top() + 4.0 * scale;
+    let left_x = rect.left() + 6.0 * scale;
 
     let (fps, low1, rtt) = if let Some(b) = &data.benchmark {
         (b.current_fps, b.low_1_percent_fps, b.rtt_ms as i32)
@@ -493,16 +721,16 @@ pub fn render_fps_ping(painter: &Painter, rect: Rect, data: &HudData) {
         Pos2::new(left_x, top_y),
         Align2::LEFT_TOP,
         format!("FPS: {:.0}", fps),
-        FontId::monospace(11.0),
+        FontId::monospace(11.0 * scale),
         Color32::from_rgb(85, 255, 85),
     );
 
     // 1% Low
     painter.text(
-        Pos2::new(left_x + 68.0, top_y),
+        Pos2::new(left_x + 68.0 * scale, top_y),
         Align2::LEFT_TOP,
         format!("1%: {:.0}", low1),
-        FontId::monospace(10.0),
+        FontId::monospace(10.0 * scale),
         Color32::from_rgb(255, 215, 85),
     );
 
@@ -515,17 +743,19 @@ pub fn render_fps_ping(painter: &Painter, rect: Rect, data: &HudData) {
         Color32::from_rgb(255, 85, 85)
     };
     painter.text(
-        Pos2::new(rect.right() - 6.0, top_y),
+        Pos2::new(rect.right() - 6.0 * scale, top_y),
         Align2::RIGHT_TOP,
         format!("{} ms", rtt),
-        FontId::monospace(10.0),
+        FontId::monospace(10.0 * scale),
         ping_color,
     );
 
     // Mini Frametime Graph
+    let graph_top = top_y + 16.0 * scale;
+    let graph_h = (rect.bottom() - 4.0 * scale - graph_top).max(8.0 * scale);
     let graph_rect = Rect::from_min_size(
-        Pos2::new(left_x, top_y + 16.0),
-        Vec2::new(rect.width() - 12.0, rect.height() - 22.0),
+        Pos2::new(left_x, graph_top),
+        Vec2::new(rect.width() - 12.0 * scale, graph_h),
     );
 
     painter.rect_filled(graph_rect, CornerRadius::same(2), Color32::from_rgb(14, 16, 22));
@@ -682,34 +912,35 @@ pub fn render_potion_effects(painter: &Painter, rect: Rect, data: &HudData) {
 
 /// 10. Coordinates, Biome & Compass Direction.
 pub fn render_coords_direction(painter: &Painter, rect: Rect, data: &HudData) {
-    let top_y = rect.top() + 4.0;
-    let left_x = rect.left() + 6.0;
+    let scale = (rect.width() / 170.0).min(rect.height() / 48.0).clamp(0.4, 3.0);
+    let top_y = rect.top() + 4.0 * scale;
+    let left_x = rect.left() + 6.0 * scale;
 
     // XYZ
     painter.text(
         Pos2::new(left_x, top_y),
         Align2::LEFT_TOP,
         format!("XYZ: {:.1} / {:.1} / {:.1}", data.pos.0, data.pos.1, data.pos.2),
-        FontId::monospace(10.0),
+        FontId::monospace(10.0 * scale),
         Color32::WHITE,
     );
 
     // Compass Direction based on yaw
     let (dir_name, axis_name) = compute_facing_direction(data.look.0);
     painter.text(
-        Pos2::new(left_x, top_y + 16.0),
+        Pos2::new(left_x, top_y + 15.0 * scale),
         Align2::LEFT_TOP,
         format!("Facing: {} ({})", dir_name, axis_name),
-        FontId::proportional(10.0),
+        FontId::proportional(10.0 * scale),
         Color32::from_rgb(85, 255, 255),
     );
 
     // Yaw / Pitch / Biome
     painter.text(
-        Pos2::new(left_x, top_y + 32.0),
+        Pos2::new(left_x, top_y + 30.0 * scale),
         Align2::LEFT_TOP,
         format!("Biome: {} [Y:{:.0} P:{:.0}]", data.biome, data.look.0, data.look.1),
-        FontId::proportional(9.0),
+        FontId::proportional(9.0 * scale),
         Color32::from_rgb(170, 175, 190),
     );
 }

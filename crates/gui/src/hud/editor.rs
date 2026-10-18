@@ -17,6 +17,8 @@ pub struct HudEditorState {
     pub resizing_id: Option<String>,
     pub drag_start_mouse: Pos2,
     pub drag_start_rect: Rect,
+    pub snap_guide_x: Option<f32>,
+    pub snap_guide_y: Option<f32>,
     pub new_profile_name: String,
     pub show_new_profile_modal: bool,
 }
@@ -29,6 +31,8 @@ impl Default for HudEditorState {
             resizing_id: None,
             drag_start_mouse: Pos2::ZERO,
             drag_start_rect: Rect::ZERO,
+            snap_guide_x: None,
+            snap_guide_y: None,
             new_profile_name: String::new(),
             show_new_profile_modal: false,
         }
@@ -49,39 +53,37 @@ pub fn render_hud_editor(
 
     // Compute interface-scaled grid step
     let gui_scale = ctx.zoom_factor().max(1.0);
-    let effective_grid_step = if layout.grid_snap_size > 0 {
-        (layout.grid_snap_size as f32 * gui_scale).max(8.0)
-    } else {
-        1.0_f32
-    };
+    let effective_grid_step = (16.0_f32 * gui_scale).max(8.0);
 
     // 1. Semi-transparent backdrop and grid overlay on Background layer
-    // Placing on Order::Background guarantees grid lines are always behind all HUD elements and controls
     let bg_painter = ctx.layer_painter(LayerId::new(Order::Background, Id::new("hud_editor_grid_layer")));
     bg_painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(100));
 
-    if layout.grid_snap_size > 0 {
-        let grid_col = Color32::from_rgba_unmultiplied(255, 255, 255, 14);
-        let mut x = effective_grid_step;
-        while x < screen_size.x {
-            bg_painter.line_segment(
-                [Pos2::new(x, 0.0), Pos2::new(x, screen_size.y)],
-                Stroke::new(1.0_f32, grid_col),
-            );
-            x += effective_grid_step;
-        }
-
-        let mut y = effective_grid_step;
-        while y < screen_size.y {
-            bg_painter.line_segment(
-                [Pos2::new(0.0, y), Pos2::new(screen_size.x, y)],
-                Stroke::new(1.0_f32, grid_col),
-            );
-            y += effective_grid_step;
-        }
+    let grid_col = Color32::from_rgba_unmultiplied(255, 255, 255, 14);
+    let mut x = effective_grid_step;
+    while x < screen_size.x {
+        bg_painter.line_segment(
+            [Pos2::new(x, 0.0), Pos2::new(x, screen_size.y)],
+            Stroke::new(1.0_f32, grid_col),
+        );
+        x += effective_grid_step;
     }
 
+    let mut y = effective_grid_step;
+    while y < screen_size.y {
+        bg_painter.line_segment(
+            [Pos2::new(0.0, y), Pos2::new(screen_size.x, y)],
+            Stroke::new(1.0_f32, grid_col),
+        );
+        y += effective_grid_step;
+    }
+
+    // Rigid center crosshair on background layer as center reference
+    let center = Pos2::new(screen_size.x * 0.5, screen_size.y * 0.5);
+    render_crosshair(&bg_painter, Rect::from_center_size(center, Vec2::splat(16.0)));
+
     // 2. Mouse Input Handling for dragging and resizing
+    let pointer_over_ui = ctx.is_pointer_over_area();
     let mouse_pos = ctx.input(|i| i.pointer.hover_pos()).unwrap_or(Pos2::ZERO);
     let mouse_pressed = ctx.input(|i| i.pointer.primary_pressed());
     let mouse_down = ctx.input(|i| i.pointer.primary_down());
@@ -89,21 +91,28 @@ pub fn render_hud_editor(
     if !mouse_down {
         state.dragging_id = None;
         state.resizing_id = None;
+        state.snap_guide_x = None;
+        state.snap_guide_y = None;
     }
 
-    let element_ids: Vec<String> = layout.active_elements().keys().cloned().collect();
+    let element_ids: Vec<String> = layout
+        .active_elements()
+        .keys()
+        .filter(|&k| k != "crosshair")
+        .cloned()
+        .collect();
 
     // 3. Process mouse interactions (Resizing and Moving)
     let resize_handle_size = 12.0_f32;
 
-    // Check if mouse pressed to initiate drag or resize
-    if mouse_pressed {
+    // Check if mouse pressed to initiate drag or resize ONLY when not interacting with windows
+    if mouse_pressed && !pointer_over_ui {
         let mut hit_element = false;
 
         // Check selected element's resize handle first
         if let Some(sel_id) = &state.selected_id {
             if let Some(elem) = layout.get_element(sel_id) {
-                let rect = elem.screen_rect(screen_size);
+                let rect = elem.screen_rect_with_grid(screen_size, effective_grid_step);
                 let handle_rect = Rect::from_min_max(
                     Pos2::new(rect.right() - resize_handle_size, rect.bottom() - resize_handle_size),
                     Pos2::new(rect.right() + 2.0, rect.bottom() + 2.0),
@@ -121,7 +130,7 @@ pub fn render_hud_editor(
         if !hit_element {
             for id in element_ids.iter().rev() {
                 if let Some(elem) = layout.get_element(id) {
-                    let rect = elem.screen_rect(screen_size);
+                    let rect = elem.screen_rect_with_grid(screen_size, effective_grid_step);
                     let handle_rect = Rect::from_min_max(
                         Pos2::new(rect.right() - resize_handle_size, rect.bottom() - resize_handle_size),
                         Pos2::new(rect.right() + 2.0, rect.bottom() + 2.0),
@@ -146,15 +155,9 @@ pub fn render_hud_editor(
             }
         }
 
-        // If clicked on empty space and top toolbar is not hovered, deselect
+        // If clicked on empty space on the background canvas, deselect
         if !hit_element {
-            let toolbar_rect = Rect::from_center_size(
-                Pos2::new(screen_size.x * 0.5, 30.0),
-                Vec2::new(600.0, 50.0),
-            );
-            if !toolbar_rect.contains(mouse_pos) {
-                state.selected_id = None;
-            }
+            state.selected_id = None;
         }
     }
 
@@ -175,7 +178,29 @@ pub fn render_hud_editor(
             ctx.set_cursor_icon(CursorIcon::ResizeNwSe);
         } else if let Some(dragging_id) = &state.dragging_id {
             let delta = mouse_pos - state.drag_start_mouse;
-            let target_min = state.drag_start_rect.min + delta;
+            let elem_w = state.drag_start_rect.width();
+            let elem_h = state.drag_start_rect.height();
+            let mut target_min = state.drag_start_rect.min + delta;
+
+            // Vertical center magnetization (centering along X axis: element center X == screen center X)
+            let screen_center_x = screen_size.x * 0.5;
+            let elem_center_x = target_min.x + elem_w * 0.5;
+            if (elem_center_x - screen_center_x).abs() <= 14.0 {
+                target_min.x = screen_center_x - elem_w * 0.5;
+                state.snap_guide_x = Some(screen_center_x);
+            } else {
+                state.snap_guide_x = None;
+            }
+
+            // Horizontal center magnetization (centering along Y axis: element center Y == screen center Y)
+            let screen_center_y = screen_size.y * 0.5;
+            let elem_center_y = target_min.y + elem_h * 0.5;
+            if (elem_center_y - screen_center_y).abs() <= 14.0 {
+                target_min.y = screen_center_y - elem_h * 0.5;
+                state.snap_guide_y = Some(screen_center_y);
+            } else {
+                state.snap_guide_y = None;
+            }
 
             if let Some(elem) = layout.get_element_mut(dragging_id) {
                 elem.set_from_screen_pos(target_min, screen_size, effective_grid_step);
@@ -184,9 +209,23 @@ pub fn render_hud_editor(
         }
     }
 
-    // 4. Render HUD elements on Middle layer
+    // 4. Render HUD elements on Middle layer (strictly underneath Foreground Toolbar window)
     let elem_painter = ctx.layer_painter(LayerId::new(Order::Middle, Id::new("hud_editor_elements_layer")));
-    let fg_painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("hud_editor_fg_layer")));
+    let fg_painter = ctx.layer_painter(LayerId::new(Order::Middle, Id::new("hud_editor_fg_layer")));
+
+    // Active center guide lines
+    if let Some(cx) = state.snap_guide_x {
+        fg_painter.line_segment(
+            [Pos2::new(cx, 0.0), Pos2::new(cx, screen_size.y)],
+            Stroke::new(1.5_f32, Color32::from_rgb(0, 255, 255)),
+        );
+    }
+    if let Some(cy) = state.snap_guide_y {
+        fg_painter.line_segment(
+            [Pos2::new(0.0, cy), Pos2::new(screen_size.x, cy)],
+            Stroke::new(1.5_f32, Color32::from_rgb(0, 255, 255)),
+        );
+    }
 
     let bg_alpha = (255.0 * layout.global_opacity).clamp(0.0, 255.0) as u8;
     let border_alpha = (220.0 * layout.global_opacity).clamp(0.0, 255.0) as u8;
@@ -199,9 +238,9 @@ pub fn render_hud_editor(
             None => continue,
         };
 
-        let rect = elem_config.screen_rect(screen_size);
+        let rect = elem_config.screen_rect_with_grid(screen_size, effective_grid_step);
         let is_selected = state.selected_id.as_deref() == Some(id.as_str());
-        let is_hovered = rect.contains(mouse_pos);
+        let is_hovered = rect.contains(mouse_pos) && !pointer_over_ui;
 
         // Draw element background and border with global opacity
         if bg_alpha > 0 {
@@ -251,7 +290,7 @@ pub fn render_hud_editor(
             Pos2::new(rect.right(), rect.bottom()),
         );
 
-        let handle_hovered = handle_rect.contains(mouse_pos);
+        let handle_hovered = handle_rect.contains(mouse_pos) && !pointer_over_ui;
         if handle_hovered && state.dragging_id.is_none() {
             ctx.set_cursor_icon(CursorIcon::ResizeNwSe);
         } else if is_hovered && state.resizing_id.is_none() && state.dragging_id.is_none() {
@@ -273,8 +312,10 @@ pub fn render_hud_editor(
         }
     }
 
-    // 5. Floating Top Toolbar (Profile switcher, Grid Snapping, Opacity slider, Selected visibility, Save)
+    // 5. Floating Top Toolbar (Profile switcher, Opacity slider, Selected visibility, Save)
+    // Placed on Order::Foreground so it is always on top of all HUD elements and canvas handles
     Window::new("HudEditorToolbar")
+        .order(Order::Foreground)
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
@@ -312,16 +353,6 @@ pub fn render_hud_editor(
                 if ui.button("+ New").clicked() {
                     state.show_new_profile_modal = true;
                     state.new_profile_name = format!("Profile {}", layout.profiles.len() + 1);
-                }
-
-                ui.separator();
-
-                // Interface-responsive Grid Snapping Selector
-                ui.label("Grid:");
-                for &(label, step) in &[("Free", 0), ("8px", 8), ("16px", 16), ("24px", 24), ("32px", 32)] {
-                    if ui.selectable_label(layout.grid_snap_size == step, label).clicked() {
-                        layout.grid_snap_size = step;
-                    }
                 }
 
                 ui.separator();

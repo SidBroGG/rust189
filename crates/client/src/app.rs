@@ -847,13 +847,18 @@ impl App {
                     self.profiler.loaded_chunks = 0;
                     self.player_entity_id = jg.entity_id;
                     self.world.dimension = jg.dimension;
+                    self.player.capabilities.is_creative = jg.game_mode == 1;
                     if jg.game_mode == 1 || jg.game_mode == 3 {
                         self.player.capabilities.allow_flying = true;
-                        self.player.capabilities.is_creative = jg.game_mode == 1;
+                    } else {
+                        self.player.capabilities.allow_flying = false;
+                        self.player.capabilities.is_flying = false;
                     }
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.dimension = jg.dimension;
+                            ig.gamemode = jg.game_mode;
+                            ig.is_creative = jg.game_mode == 1;
                             ig.add_chat_message("§aSuccessfully connected to world!".into());
                         }
                     }
@@ -1451,6 +1456,11 @@ impl App {
                     self.player.capabilities.is_creative = pa.creative_mode;
                     self.player.capabilities.fly_speed = pa.fly_speed;
                     self.player.capabilities.walk_speed = pa.walk_speed;
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            ig.is_creative = pa.creative_mode;
+                        }
+                    }
                 }
                 ClientboundPlayPacket::EntityEquipment(eq) => {
                     self.world.entity_tracker.equipment(eq.entity_id, eq.slot, eq.item);
@@ -1559,6 +1569,25 @@ impl App {
                 ClientboundPlayPacket::RemoveEntityEffect(ree) => {
                     if ree.entity_id == self.player_entity_id {
                         self.active_potions.retain(|p| p.id != ree.effect_id as u8);
+                    }
+                }
+                ClientboundPlayPacket::ChangeGameState(cgs) => {
+                    // State 3: Change Game Mode (0: survival, 1: creative, 2: adventure, 3: spectator)
+                    if cgs.state == 3 {
+                        let gm = cgs.value as u8;
+                        self.player.capabilities.is_creative = gm == 1;
+                        if gm == 1 || gm == 3 {
+                            self.player.capabilities.allow_flying = true;
+                        } else {
+                            self.player.capabilities.allow_flying = false;
+                            self.player.capabilities.is_flying = false;
+                        }
+                        if let Some(sm) = &mut self.screen_manager {
+                            if let Some(ig) = &mut sm.in_game {
+                                ig.gamemode = gm;
+                                ig.is_creative = gm == 1;
+                            }
+                        }
                     }
                 }
                 ClientboundPlayPacket::Unknown { payload_len, .. } => {
@@ -2424,6 +2453,8 @@ impl ApplicationHandler for App {
                         ig.hud_data.potion_effects = self.active_potions.clone();
                         ig.hud_data.boss_bars = self.active_boss_bars.clone();
                         ig.hud_data.ping_ms = self.profiler.calculate_snapshot().rtt_ms as i32;
+                        ig.hud_data.gamemode = ig.gamemode;
+                        ig.hud_data.is_creative = self.player.capabilities.is_creative || ig.is_creative || ig.gamemode == 1;
                     }
                     let is_fullscreen = self
                         .window

@@ -146,6 +146,10 @@ pub struct HudData {
     pub biome: String,
     pub dimension: i8,
 
+    // Gamemode & Capabilities
+    pub gamemode: u8,
+    pub is_creative: bool,
+
     // Telemetry
     pub benchmark: Option<BenchmarkSnapshot>,
     pub ping_ms: i32,
@@ -183,6 +187,8 @@ impl Default for HudData {
             look: (0.0, 0.0),
             biome: "Plains".to_string(),
             dimension: 0,
+            gamemode: 0,
+            is_creative: false,
             benchmark: None,
             ping_ms: 0,
         }
@@ -251,6 +257,8 @@ impl HudData {
             look: (-45.0, 12.5),
             biome: "Plains".to_string(),
             dimension: 0,
+            gamemode: 0,
+            is_creative: false,
             benchmark: None,
             ping_ms: 28,
         }

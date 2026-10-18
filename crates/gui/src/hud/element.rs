@@ -33,6 +33,23 @@ impl HudAnchor {
     }
 }
 
+/// Native baseline content dimensions (width, height) for each HUD module at 1.0x scale.
+#[inline]
+pub fn get_module_base_size(id: &str) -> Vec2 {
+    match id {
+        "hotbar" => Vec2::new(186.0, 52.0),
+        "boss_bar" => Vec2::new(186.0, 22.0),
+        "scoreboard" => Vec2::new(140.0, 120.0),
+        "chat" => Vec2::new(320.0, 130.0),
+        "keystrokes" => Vec2::new(84.0, 92.0),
+        "fps_ping" => Vec2::new(180.0, 52.0),
+        "armor_status" => Vec2::new(100.0, 75.0),
+        "potion_effects" => Vec2::new(110.0, 65.0),
+        "coords_direction" => Vec2::new(170.0, 48.0),
+        _ => Vec2::new(100.0, 40.0),
+    }
+}
+
 /// Configuration and relative grid layout parameters for an individual HUD element.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HudElementConfig {
@@ -91,13 +108,44 @@ impl HudElementConfig {
         }
     }
 
-    /// Computes the element bounding box on screen based on relative coordinates and viewport size.
+    /// Computes the element bounding box on screen based on relative coordinates and viewport size,
+    /// enforcing strict aspect-ratio locking so elements never stretch in only one dimension.
     #[inline]
     pub fn screen_rect(&self, screen_size: Vec2) -> Rect {
-        let x = self.rel_x * screen_size.x;
-        let y = self.rel_y * screen_size.y;
-        let w = (self.rel_w * screen_size.x).max(12.0);
-        let h = (self.rel_h * screen_size.y).max(12.0);
+        self.screen_rect_with_grid(screen_size, 16.0)
+    }
+
+    /// Computes the element bounding box on screen snapped to a specific grid step.
+    #[inline]
+    pub fn screen_rect_with_grid(&self, screen_size: Vec2, grid_step: f32) -> Rect {
+        let base = get_module_base_size(&self.id);
+        let aspect = (base.x / base.y.max(1.0)).max(0.1);
+
+        let raw_w = (self.rel_w * screen_size.x).clamp(base.x * 0.4, screen_size.x * 0.95);
+        let w = if grid_step > 0.0 {
+            snap_val_f32(raw_w, grid_step).max(base.x * 0.4)
+        } else {
+            raw_w
+        };
+        let h = w / aspect;
+
+        let max_x = (screen_size.x - w).max(0.0);
+        let max_y = (screen_size.y - h).max(0.0);
+
+        let raw_x = (self.rel_x * screen_size.x).clamp(0.0, max_x);
+        let raw_y = (self.rel_y * screen_size.y).clamp(0.0, max_y);
+
+        let x = if grid_step > 0.0 {
+            snap_val_f32(raw_x, grid_step).clamp(0.0, max_x)
+        } else {
+            raw_x
+        };
+        let y = if grid_step > 0.0 {
+            snap_val_f32(raw_y, grid_step).clamp(0.0, max_y)
+        } else {
+            raw_y
+        };
+
         Rect::from_min_size(Pos2::new(x, y), Vec2::new(w, h))
     }
 
@@ -112,11 +160,16 @@ impl HudElementConfig {
             return;
         }
 
+        let base = get_module_base_size(&self.id);
+        let aspect = (base.x / base.y.max(1.0)).max(0.1);
+        let w = (self.rel_w * screen_size.x).clamp(base.x * 0.4, screen_size.x * 0.95);
+        let h = w / aspect;
+
         let snapped_x = snap_val_f32(target_min.x, grid_step);
         let snapped_y = snap_val_f32(target_min.y, grid_step);
 
-        let max_x = (screen_size.x - self.rel_w * screen_size.x).max(0.0);
-        let max_y = (screen_size.y - self.rel_h * screen_size.y).max(0.0);
+        let max_x = (screen_size.x - w).max(0.0);
+        let max_y = (screen_size.y - h).max(0.0);
 
         let clamped_x = snapped_x.clamp(0.0, max_x);
         let clamped_y = snapped_y.clamp(0.0, max_y);
@@ -125,7 +178,7 @@ impl HudElementConfig {
         self.rel_y = (clamped_y / screen_size.y).clamp(0.0, 1.0);
     }
 
-    /// Updates dimensions from resized screen bounds, snapping to relative grid units.
+    /// Updates dimensions from resized screen bounds, scaling width and height together proportionally.
     pub fn set_from_screen_size(
         &mut self,
         target_size: Vec2,
@@ -136,18 +189,15 @@ impl HudElementConfig {
             return;
         }
 
-        let min_size = grid_step.max(16.0);
-        let snapped_w = snap_val_f32(target_size.x, grid_step).max(min_size);
-        let snapped_h = snap_val_f32(target_size.y, grid_step).max(min_size);
+        let base = get_module_base_size(&self.id);
+        let aspect = (base.x / base.y.max(1.0)).max(0.1);
 
-        let max_w = (screen_size.x - self.rel_x * screen_size.x).max(min_size);
-        let max_h = (screen_size.y - self.rel_y * screen_size.y).max(min_size);
+        let min_w = base.x * 0.5;
+        let max_w = (screen_size.x - self.rel_x * screen_size.x).max(min_w);
+        let snapped_w = snap_val_f32(target_size.x, grid_step).clamp(min_w, max_w);
 
-        let clamped_w = snapped_w.clamp(min_size, max_w);
-        let clamped_h = snapped_h.clamp(min_size, max_h);
-
-        self.rel_w = (clamped_w / screen_size.x).clamp(0.01, 1.0);
-        self.rel_h = (clamped_h / screen_size.y).clamp(0.01, 1.0);
+        self.rel_w = (snapped_w / screen_size.x).clamp(0.01, 1.0);
+        self.rel_h = (snapped_w / aspect) / screen_size.y;
     }
 }
 

@@ -56,6 +56,8 @@ pub struct InGameScreen {
     pub benchmark: Option<BenchmarkSnapshot>,
     pub is_modal_open: bool,
     pub nametags: Vec<NametagInfo>,
+    pub gamemode: u8,
+    pub is_creative: bool,
 
     // Modular HUD Layout and Editor
     pub hud_layout: HudLayoutConfig,
@@ -92,6 +94,8 @@ impl InGameScreen {
             benchmark: None,
             is_modal_open: false,
             nametags: Vec::new(),
+            gamemode: 0,
+            is_creative: false,
             hud_layout,
             hud_editor: HudEditorState::default(),
             hud_data: HudData::default(),
@@ -116,6 +120,8 @@ impl InGameScreen {
         self.hud_data.pos = self.pos;
         self.hud_data.look = self.look;
         self.hud_data.dimension = self.dimension;
+        self.hud_data.gamemode = self.gamemode;
+        self.hud_data.is_creative = self.is_creative || self.gamemode == 1;
         self.hud_data.benchmark = self.benchmark.clone();
     }
 
@@ -189,6 +195,13 @@ impl InGameScreen {
         // 6. RENDER MODULAR HUD ELEMENTS (Driven by HudLayoutConfig)
         let hud_painter = ctx.layer_painter(LayerId::new(Order::Middle, Id::new("hud_modular_layer")));
 
+        // Rigid center crosshair (always at exact screen center when escape menu is not open)
+        if !self.escape_menu_opened {
+            let center = Pos2::new(screen_size.x * 0.5, screen_size.y * 0.5);
+            let crosshair_rect = Rect::from_center_size(center, Vec2::splat(16.0));
+            crate::hud::render_crosshair(&hud_painter, crosshair_rect);
+        }
+
         let bg_alpha = (255.0 * self.hud_layout.global_opacity).clamp(0.0, 255.0) as u8;
         let border_alpha = (220.0 * self.hud_layout.global_opacity).clamp(0.0, 255.0) as u8;
         let elem_bg_col = Color32::from_rgba_unmultiplied(16, 18, 24, bg_alpha);
@@ -199,8 +212,8 @@ impl InGameScreen {
                 continue;
             }
 
-            // Crosshair is hidden when escape menu is open
-            if id == "crosshair" && self.escape_menu_opened {
+            // Crosshair is fixed and rendered separately, skip if present in layout
+            if id == "crosshair" {
                 continue;
             }
 

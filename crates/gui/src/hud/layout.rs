@@ -56,6 +56,11 @@ impl HudLayoutConfig {
                     if !config.profiles.contains_key(&config.active_profile) {
                         config.active_profile = DEFAULT_PROFILE_NAME.to_string();
                     }
+                    for profile_map in config.profiles.values_mut() {
+                        profile_map.remove("crosshair");
+                        profile_map.remove("vitals");
+                        profile_map.remove("exp_bar");
+                    }
                     let defaults = create_default_elements();
                     if let Some(active_map) = config.profiles.get_mut(&config.active_profile) {
                         for (k, v) in defaults {
@@ -163,64 +168,58 @@ impl HudLayoutConfig {
 pub fn create_default_elements() -> BTreeMap<String, HudElementConfig> {
     let mut m = BTreeMap::new();
 
-    // 1. Crosshair
-    m.insert(
-        "crosshair".to_string(),
-        HudElementConfig::new("crosshair", "Crosshair", 0.49, 0.49, 0.02, 0.02),
-    );
-
-    // 2. Hotbar & Status (Unified Hotbar + Health hearts + Hunger + Armor + Air + EXP)
+    // 1. Hotbar & Status (Unified Hotbar + Health hearts + Hunger + Armor + Air + EXP)
     m.insert(
         "hotbar".to_string(),
-        HudElementConfig::new("hotbar", "Hotbar & Status", 0.32, 0.88, 0.36, 0.11),
+        HudElementConfig::new("hotbar", "Hotbar & Status", 0.375, 0.90, 0.25, 0.08),
     );
 
-    // 3. Boss Bar
+    // 2. Boss Bar
     m.insert(
         "boss_bar".to_string(),
-        HudElementConfig::new("boss_bar", "Boss Health Bar", 0.32, 0.03, 0.36, 0.05),
+        HudElementConfig::new("boss_bar", "Boss Health Bar", 0.375, 0.02, 0.25, 0.04),
     );
 
-    // 4. Scoreboard Sidebar
+    // 3. Scoreboard Sidebar
     m.insert(
         "scoreboard".to_string(),
-        HudElementConfig::new("scoreboard", "Scoreboard", 0.80, 0.32, 0.18, 0.28),
+        HudElementConfig::new("scoreboard", "Scoreboard", 0.82, 0.30, 0.16, 0.22),
     );
 
-    // 5. Chat Box
+    // 4. Chat Box
     m.insert(
         "chat".to_string(),
-        HudElementConfig::new("chat", "Chat Box", 0.02, 0.68, 0.32, 0.26),
+        HudElementConfig::new("chat", "Chat Box", 0.02, 0.70, 0.32, 0.22),
     );
 
-    // 6. Keystrokes & CPS
+    // 5. Keystrokes & CPS
     m.insert(
         "keystrokes".to_string(),
-        HudElementConfig::new("keystrokes", "Keystrokes & CPS", 0.02, 0.42, 0.11, 0.18),
+        HudElementConfig::new("keystrokes", "Keystrokes & CPS", 0.02, 0.40, 0.10, 0.16),
     );
 
-    // 7. FPS & Telemetry
+    // 6. FPS & Telemetry
     m.insert(
         "fps_ping".to_string(),
-        HudElementConfig::new("fps_ping", "FPS & Telemetry", 0.02, 0.02, 0.18, 0.10),
+        HudElementConfig::new("fps_ping", "FPS & Telemetry", 0.02, 0.02, 0.20, 0.08),
     );
 
-    // 8. Armor Status
+    // 7. Armor Status
     m.insert(
         "armor_status".to_string(),
-        HudElementConfig::new("armor_status", "Armor Status", 0.85, 0.82, 0.13, 0.15),
+        HudElementConfig::new("armor_status", "Armor Status", 0.85, 0.78, 0.12, 0.14),
     );
 
-    // 9. Potion Effects
+    // 8. Potion Effects
     m.insert(
         "potion_effects".to_string(),
-        HudElementConfig::new("potion_effects", "Potion Effects", 0.84, 0.02, 0.14, 0.18),
+        HudElementConfig::new("potion_effects", "Potion Effects", 0.85, 0.02, 0.13, 0.12),
     );
 
-    // 10. Coordinates & Compass Direction
+    // 9. Coordinates & Compass Direction
     m.insert(
         "coords_direction".to_string(),
-        HudElementConfig::new("coords_direction", "Coordinates & Compass", 0.02, 0.13, 0.18, 0.10),
+        HudElementConfig::new("coords_direction", "Coordinates & Compass", 0.02, 0.12, 0.18, 0.08),
     );
 
     m

@@ -1952,6 +1952,31 @@ impl ClientboundRemoveEntityEffectPacket {
     }
 }
 
+/// Clientbound Change Game State packet (0x2B).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundChangeGameStatePacket {
+    pub state: u8,
+    pub value: f32,
+}
 
+impl ClientboundChangeGameStatePacket {
+    pub const PACKET_ID: i32 = 0x2B;
 
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 5 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 5,
+                available: buf.remaining(),
+            });
+        }
+        let state = buf.get_u8();
+        let value = buf.get_f32();
+        Ok(Self { state, value })
+    }
 
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.state]);
+        buf.extend_from_slice(&self.value.to_be_bytes());
+        Ok(())
+    }
+}
