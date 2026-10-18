@@ -130,6 +130,49 @@ fn test_unified_target_picking() {
 }
 
 #[test]
+fn test_npc_armor_stand_interaction_and_marker_exclusion() {
+    let mut world = World::new();
+    let spatial_hash = EntitySpatialHash::new(4.0);
+
+    // Block behind NPC at z = 4
+    world.set_block(0, 64, 4, BlockState::new(1, 0));
+
+    // Spawn ArmorStand NPC at (0.0, 64.0, 2.5) -> object 78
+    // Fixed coordinates: 0, 64 * 32 = 2048, 2.5 * 32 = 80
+    world.entity_tracker.spawn_object(300, 78, 0, 2048, 80, 0, 0, 0, 0, 0, 0);
+
+    // Player looks forward at eye height 65.5 (torso/head level of ArmorStand)
+    let eye_pos = DVec3::new(0.0, 65.5, 0.0);
+    let look_dir = DVec3::new(0.0, 0.0, 1.0);
+
+    // Raycast should hit the ArmorStand NPC at height 1.975 (not the block behind)
+    let target = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None);
+    match target {
+        TargetHit::Entity(eh) => {
+            assert_eq!(eh.entity_id, 300);
+            assert!(eh.distance < 3.0);
+        }
+        _ => panic!("Expected ArmorStand NPC entity hit"),
+    }
+
+    // Now spawn a Marker ArmorStand (floating hologram) between player and NPC at z = 1.0
+    // Marker flag has index 10 byte with bit 0x10 set
+    let marker_metadata = vec![protocol::codec::MetadataEntry {
+        index: 10,
+        value: protocol::codec::MetadataValue::Byte(0x10),
+    }];
+    world.entity_tracker.spawn_object(301, 78, 0, 2048, 32, 0, 0, 0, 0, 0, 0);
+    world.entity_tracker.update_metadata(301, marker_metadata);
+
+    // Marker armorstand must NOT be collided with, ray must pass through to NPC (id 300)
+    let target_through_marker = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None);
+    match target_through_marker {
+        TargetHit::Entity(eh) => assert_eq!(eh.entity_id, 300, "Should hit NPC behind marker hologram"),
+        _ => panic!("Expected ArmorStand NPC hit through marker"),
+    }
+}
+
+#[test]
 fn test_mcp_digging_speed_and_relative_hardness() {
     // 1. Tool material efficiencies
     assert_eq!(ToolMaterial::Wood.efficiency_multiplier(), 2.0);

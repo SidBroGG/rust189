@@ -241,30 +241,33 @@ impl App {
         match self.current_target {
             TargetHit::Entity(eh) => {
                 let entity_id = eh.entity_id;
-                if let Some(s) = &self.session {
-                    s.send(OutgoingPlayPacket::UseEntity {
-                        entity_id,
-                        action: UseEntityAction::Attack,
-                        target: None,
-                    });
-                }
+                let attack_reach = if self.player.capabilities.is_creative { 6.0 } else { 3.0 };
+                if eh.distance <= attack_reach {
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::UseEntity {
+                            entity_id,
+                            action: UseEntityAction::Attack,
+                            target: None,
+                        });
+                    }
 
-                let is_crit = is_critical_hit(
-                    self.player.fall_distance,
-                    self.player_on_ground,
-                    false,
-                    false,
-                    false,
-                    false,
-                );
+                    let is_crit = is_critical_hit(
+                        self.player.fall_distance,
+                        self.player_on_ground,
+                        false,
+                        false,
+                        false,
+                        false,
+                    );
 
-                if let Some(ent) = self.world.entity_tracker.entities.get(&entity_id) {
-                    let pos = glam::Vec3::new(ent.pos.x as f32, (ent.pos.y + 0.8) as f32, ent.pos.z as f32);
-                    if let Some(ir) = &mut self.interaction_renderer {
-                        if is_crit {
-                            ir.spawn_crit_particles(pos, false, 14);
-                        } else if self.player.is_sprinting {
-                            ir.spawn_crit_particles(pos, true, 8);
+                    if let Some(ent) = self.world.entity_tracker.entities.get(&entity_id) {
+                        let pos = glam::Vec3::new(ent.pos.x as f32, (ent.pos.y + 0.8) as f32, ent.pos.z as f32);
+                        if let Some(ir) = &mut self.interaction_renderer {
+                            if is_crit {
+                                ir.spawn_crit_particles(pos, false, 14);
+                            } else if self.player.is_sprinting {
+                                ir.spawn_crit_particles(pos, true, 8);
+                            }
                         }
                     }
                 }
@@ -366,12 +369,28 @@ impl App {
         match self.current_target {
             TargetHit::Entity(eh) => {
                 let entity_id = eh.entity_id;
+                let rel_target = self.world.entity_tracker.entities.get(&entity_id).map(|ent| {
+                    (
+                        (eh.hit_pos.x - ent.pos.x) as f32,
+                        (eh.hit_pos.y - ent.pos.y) as f32,
+                        (eh.hit_pos.z - ent.pos.z) as f32,
+                    )
+                });
+
                 if let Some(s) = &self.session {
+                    // 1. Send InteractAt with relative click position (MCP isPlayerRightClickingOnEntity)
+                    s.send(OutgoingPlayPacket::UseEntity {
+                        entity_id,
+                        action: UseEntityAction::InteractAt,
+                        target: rel_target,
+                    });
+                    // 2. Send Interact (MCP interactWithEntitySendPacket) for plugins listening to PlayerInteractEntityEvent
                     s.send(OutgoingPlayPacket::UseEntity {
                         entity_id,
                         action: UseEntityAction::Interact,
                         target: None,
                     });
+                    // 3. Play arm swing animation
                     s.send(OutgoingPlayPacket::Animation);
                 }
             }

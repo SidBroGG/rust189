@@ -4,7 +4,7 @@ use crate::physics::aabb::AABB;
 use crate::physics::collision::get_block_collision_boxes;
 use crate::world::World;
 use glam::DVec3;
-use hashbrown::{HashMap, HashSet};
+use hashbrown::HashMap;
 use protocol::BlockFace;
 
 /// Result of a 3D voxel DDA raycast against blocks.
@@ -291,7 +291,7 @@ impl EntitySpatialHash {
         }
     }
 
-    /// Traces a ray against entities using spatial grid filtering.
+    /// Traces a ray against entities using exact bounding box intersection and collision filtering.
     pub fn ray_trace_entities(
         &self,
         tracker: &EntityTracker,
@@ -304,52 +304,41 @@ impl EntitySpatialHash {
             return None;
         }
         let unit_dir = dir.normalize();
-        let end = start + unit_dir * max_distance;
+        let border_size = 0.1;
 
-        let min_cx = self.to_cell_coord(start.x.min(end.x));
-        let max_cx = self.to_cell_coord(start.x.max(end.x));
-        let min_cy = self.to_cell_coord(start.y.min(end.y));
-        let max_cy = self.to_cell_coord(start.y.max(end.y));
-        let min_cz = self.to_cell_coord(start.z.min(end.z));
-        let max_cz = self.to_cell_coord(start.z.max(end.z));
-
-        let mut tested_entities = HashSet::new();
         let mut closest_hit: Option<EntityRayHit> = None;
         let mut min_dist = max_distance;
 
-        // Expanded border size in MCP 1.8.9: 0.1 block
-        let border_size = 0.1;
+        // Iterate tracker entities directly for guaranteed consistency, zero quantization error,
+        // and instant targeting without awaiting physics ticks.
+        for entity in tracker.entities.values() {
+            if Some(entity.id) == ignore_id || !entity.can_be_collided_with() {
+                continue;
+            }
 
-        for cx in min_cx..=max_cx {
-            for cy in min_cy..=max_cy {
-                for cz in min_cz..=max_cz {
-                    if let Some(entity_ids) = self.cells.get(&(cx, cy, cz)) {
-                        for &id in entity_ids {
-                            if Some(id) == ignore_id || !tested_entities.insert(id) {
-                                continue;
-                            }
-                            if let Some(entity) = tracker.entities.get(&id) {
-                                let mut bb = entity.bounding_box();
-                                bb.min_x -= border_size;
-                                bb.min_y -= border_size;
-                                bb.min_z -= border_size;
-                                bb.max_x += border_size;
-                                bb.max_y += border_size;
-                                bb.max_z += border_size;
+            // Quick radial reject: if entity center is farther than max_distance + 3.0 blocks, skip.
+            let dist_sq = (entity.pos - start).length_squared();
+            let max_r = max_distance + 3.0;
+            if dist_sq > max_r * max_r {
+                continue;
+            }
 
-                                if let Some((t, _)) = bb.ray_trace(start, unit_dir, min_dist) {
-                                    if t < min_dist {
-                                        min_dist = t;
-                                        closest_hit = Some(EntityRayHit {
-                                            entity_id: id,
-                                            hit_pos: start + unit_dir * t,
-                                            distance: t,
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
+            let mut bb = entity.bounding_box();
+            bb.min_x -= border_size;
+            bb.min_y -= border_size;
+            bb.min_z -= border_size;
+            bb.max_x += border_size;
+            bb.max_y += border_size;
+            bb.max_z += border_size;
+
+            if let Some((t, _)) = bb.ray_trace(start, unit_dir, min_dist) {
+                if t < min_dist {
+                    min_dist = t;
+                    closest_hit = Some(EntityRayHit {
+                        entity_id: entity.id,
+                        hit_pos: start + unit_dir * t,
+                        distance: t,
+                    });
                 }
             }
         }
@@ -368,22 +357,26 @@ pub fn pick_target(
     ignore_entity_id: Option<i32>,
 ) -> TargetHit {
     let block_reach = if is_creative { CREATIVE_BLOCK_REACH } else { SURVIVAL_BLOCK_REACH };
-    let entity_reach = if is_creative { CREATIVE_ENTITY_REACH } else { SURVIVAL_ENTITY_REACH };
 
     let block_hit = ray_trace_voxels(world, eye_pos, look_dir, block_reach);
-    let entity_max_dist = block_hit.as_ref().map_or(entity_reach, |b| b.distance.min(entity_reach));
+    let search_distance = block_reach;
 
     let entity_hit = spatial_hash.ray_trace_entities(
         &world.entity_tracker,
         eye_pos,
         look_dir,
-        entity_max_dist,
+        search_distance,
         ignore_entity_id,
     );
 
     if let Some(eh) = entity_hit {
-        TargetHit::Entity(eh)
-    } else if let Some(bh) = block_hit {
+        let closer_than_block = block_hit.as_ref().map_or(true, |b| eh.distance <= b.distance);
+        if closer_than_block {
+            return TargetHit::Entity(eh);
+        }
+    }
+
+    if let Some(bh) = block_hit {
         TargetHit::Block(bh)
     } else {
         TargetHit::Miss

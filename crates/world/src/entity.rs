@@ -65,6 +65,8 @@ pub struct TrackedEntity {
     pub is_sneaking: bool,
     pub is_sprinting: bool,
     pub is_invisible: bool,
+    pub is_armor_stand_marker: bool,
+    pub is_armor_stand_small: bool,
     pub custom_name: Option<String>,
     pub custom_name_visible: bool,
     pub equipment: [Option<Slot>; 5],
@@ -108,6 +110,8 @@ impl TrackedEntity {
             is_sneaking: false,
             is_sprinting: false,
             is_invisible: false,
+            is_armor_stand_marker: false,
+            is_armor_stand_small: false,
             custom_name: None,
             custom_name_visible: false,
             equipment: [None, None, None, None, None],
@@ -203,7 +207,7 @@ impl TrackedEntity {
         self.apply_metadata_flags();
     }
 
-    /// Extracts sneak/sprint/invisible flags and custom name from entity metadata.
+    /// Extracts sneak/sprint/invisible flags, ArmorStand flags, and custom name from entity metadata.
     fn apply_metadata_flags(&mut self) {
         for entry in &self.metadata {
             match entry.index {
@@ -224,8 +228,32 @@ impl TrackedEntity {
                         self.custom_name_visible = b == 1;
                     }
                 }
+                10 => {
+                    if let MetadataValue::Byte(b) = entry.value {
+                        if matches!(self.kind, EntityKind::Object { object_type: 78, .. }) {
+                            self.is_armor_stand_small = (b & 0x01) != 0;
+                            self.is_armor_stand_marker = (b & 0x10) != 0;
+                        }
+                    }
+                }
                 _ => {}
             }
+        }
+    }
+
+    /// Returns whether this entity can be targeted, clicked, or collided with (MCP Entity.canBeCollidedWith).
+    pub fn can_be_collided_with(&self) -> bool {
+        match self.kind {
+            EntityKind::Player { .. } => true,
+            EntityKind::Mob { .. } => true,
+            EntityKind::Object { object_type, .. } => match object_type {
+                // ArmorStand: cannot be collided with if it has the marker flag (e.g. floating holograms)
+                78 => !self.is_armor_stand_marker,
+                // Boat, Minecart, Item Frame, Ender Crystal
+                1 | 10 | 71 | 51 => true,
+                // Items, arrows, snowballs, potions, xp orbs, etc. cannot be clicked
+                _ => false,
+            },
         }
     }
 
@@ -283,18 +311,39 @@ impl TrackedEntity {
                 }
             }
             EntityKind::Mob { mob_type } => match *mob_type {
-                54 => (0.6, 1.95), // Zombie
-                51 => (0.6, 1.99), // Skeleton
-                50 => (0.6, 1.7),  // Creeper
-                52 => (1.4, 0.9),  // Spider
-                58 => (0.6, 2.9),  // Enderman
-                100 => (1.4, 2.7), // Iron Golem
-                65 => (0.4, 0.3),  // Bat
+                54 => (0.6, 1.95),  // Zombie
+                51 => (0.6, 1.99),  // Skeleton
+                50 => (0.6, 1.7),   // Creeper
+                52 => (1.4, 0.9),   // Spider
+                58 => (0.6, 2.9),   // Enderman
+                100 => (1.4, 2.7),  // Iron Golem
+                65 => (0.4, 0.3),   // Bat
+                120 => (0.6, 1.95), // Villager
+                90 => (0.9, 0.9),   // Pig
+                91 => (0.9, 1.3),   // Sheep
+                92 => (0.9, 1.4),   // Cow
+                93 => (0.4, 0.7),   // Chicken
+                95 => (0.6, 0.8),   // Wolf
+                96 => (1.4, 1.2),   // Mooshroom
+                101 => (1.4, 1.6),  // Horse
                 _ => (0.6, 1.8),
             },
             EntityKind::Object { object_type, .. } => match *object_type {
+                78 => {
+                    if self.is_armor_stand_marker {
+                        (0.0, 0.0)
+                    } else if self.is_armor_stand_small {
+                        (0.5, 0.9875)
+                    } else {
+                        (0.5, 1.975) // Vanilla EntityArmorStand: setSize(0.5F, 1.975F)
+                    }
+                }
+                1 => (1.5, 0.6),    // Boat
+                10 => (0.98, 0.7),  // Minecart
+                71 => (0.5, 0.5),   // Item Frame
+                51 => (2.0, 2.0),   // Ender Crystal
                 60 | 61 | 62 => (0.5, 0.5), // Projectiles
-                2 => (0.25, 0.25),          // Item drop
+                2 => (0.25, 0.25),  // Item drop
                 _ => (0.5, 0.5),
             },
         };
