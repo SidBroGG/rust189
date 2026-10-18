@@ -1,4 +1,5 @@
 pub mod clipboard;
+pub mod hud;
 pub mod i18n;
 pub mod integration;
 pub mod keybinds;
@@ -9,6 +10,11 @@ pub mod theme;
 pub mod widgets;
 
 pub use clipboard::{get_clipboard_text, set_clipboard_text, text_input_with_paste};
+pub use hud::{
+    snap_val, HudAnchor, HudBossBarInfo, HudData, HudEditorState, HudElementConfig,
+    HudItemInfo, HudLayoutConfig, HudPotionInfo, COMPETITIVE_PROFILE_NAME,
+    DEFAULT_PROFILE_NAME, MINIMAL_PROFILE_NAME,
+};
 pub use i18n::{t, Language};
 pub use integration::GuiIntegration;
 pub use keybinds::{

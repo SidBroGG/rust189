@@ -602,3 +602,34 @@ impl ServerboundAnimationPacket {
     }
 }
 
+/// Serverbound Held Item Change packet (0x09).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerboundHeldItemChangePacket {
+    pub slot: i16,
+}
+
+impl ServerboundHeldItemChangePacket {
+    pub const PACKET_ID: i32 = 0x09;
+
+    pub fn new(slot: i16) -> Self {
+        Self { slot }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&self.slot.to_be_bytes());
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 2 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 2,
+                available: buf.remaining(),
+            });
+        }
+        let slot = buf.get_i16();
+        Ok(Self { slot })
+    }
+}
+
+

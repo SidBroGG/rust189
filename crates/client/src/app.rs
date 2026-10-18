@@ -1,9 +1,11 @@
 use assets::SkinManager;
 use crate::config::ClientConfig;
+use egui::Color32;
 use egui_wgpu::ScreenDescriptor;
 use gui::{
     matches_winit_key, winit_key_to_standard, winit_mouse_to_standard, GuiIntegration,
-    GuiOutput, Language, NametagInfo, ScaledResolution, ScreenManager,
+    GuiOutput, HudBossBarInfo, HudItemInfo, HudPotionInfo, Language, NametagInfo,
+    ScaledResolution, ScreenManager,
 };
 use protocol::{
     connect_offline, BlockFace, ClientboundPlayPacket, DiggingAction, OutgoingPlayPacket,
@@ -85,6 +87,21 @@ pub struct App {
     pub server_break_progress: HashMap<(i32, i32, i32), u8>,
     pub held_item_id: i16,
     pub right_click_delay_timer: u8,
+
+    // Player Vitals & Inventory (Stage 12)
+    pub player_health: f32,
+    pub player_max_health: f32,
+    pub player_absorption: f32,
+    pub player_food: u8,
+    pub player_saturation: f32,
+    pub player_air: i16,
+    pub player_exp_level: i32,
+    pub player_exp_progress: f32,
+    pub selected_hotbar_slot: usize,
+    pub hotbar_items: [Option<HudItemInfo>; 9],
+    pub armor_items: [Option<HudItemInfo>; 4],
+    pub active_potions: Vec<HudPotionInfo>,
+    pub active_boss_bars: Vec<HudBossBarInfo>,
 }
 
 impl App {
@@ -140,6 +157,35 @@ impl App {
             server_break_progress: HashMap::new(),
             held_item_id: 276,
             right_click_delay_timer: 0,
+
+            player_health: 20.0,
+            player_max_health: 20.0,
+            player_absorption: 0.0,
+            player_food: 20,
+            player_saturation: 5.0,
+            player_air: 300,
+            player_exp_level: 0,
+            player_exp_progress: 0.0,
+            selected_hotbar_slot: 0,
+            hotbar_items: [
+                Some(HudItemInfo::new(276, 1, 0, 1561, "Diamond Sword")),
+                Some(HudItemInfo::new(261, 1, 0, 384, "Bow")),
+                Some(HudItemInfo::new(278, 1, 0, 1561, "Diamond Pickaxe")),
+                Some(HudItemInfo::new(279, 1, 0, 1561, "Diamond Axe")),
+                Some(HudItemInfo::new(277, 1, 0, 1561, "Diamond Shovel")),
+                Some(HudItemInfo::new(322, 64, 0, 0, "Golden Apple")),
+                Some(HudItemInfo::new(1, 64, 0, 0, "Stone")),
+                Some(HudItemInfo::new(5, 64, 0, 0, "Wood Planks")),
+                None,
+            ],
+            armor_items: [
+                Some(HudItemInfo::new(310, 1, 0, 363, "Diamond Helmet")),
+                Some(HudItemInfo::new(311, 1, 0, 528, "Diamond Chestplate")),
+                Some(HudItemInfo::new(312, 1, 0, 495, "Diamond Leggings")),
+                Some(HudItemInfo::new(313, 1, 0, 429, "Diamond Boots")),
+            ],
+            active_potions: Vec::new(),
+            active_boss_bars: Vec::new(),
         }
     }
 
@@ -162,6 +208,79 @@ impl App {
             }
         }
         None
+    }
+
+    /// Converts a Protocol 47 Slot into displayable HUD item info with name and max durability.
+    pub fn get_item_info_from_slot(slot: &Slot) -> HudItemInfo {
+        let (name, max_dur) = match slot.item_id {
+            276 => ("Diamond Sword", 1561),
+            267 => ("Iron Sword", 250),
+            272 => ("Stone Sword", 131),
+            268 => ("Wooden Sword", 59),
+            283 => ("Golden Sword", 32),
+            261 => ("Bow", 384),
+            278 => ("Diamond Pickaxe", 1561),
+            257 => ("Iron Pickaxe", 250),
+            274 => ("Stone Pickaxe", 131),
+            270 => ("Wooden Pickaxe", 59),
+            279 => ("Diamond Axe", 1561),
+            258 => ("Iron Axe", 250),
+            275 => ("Stone Axe", 131),
+            271 => ("Wooden Axe", 59),
+            277 => ("Diamond Shovel", 1561),
+            256 => ("Iron Shovel", 250),
+            273 => ("Stone Shovel", 131),
+            269 => ("Wooden Shovel", 59),
+            310 => ("Diamond Helmet", 363),
+            311 => ("Diamond Chestplate", 528),
+            312 => ("Diamond Leggings", 495),
+            313 => ("Diamond Boots", 429),
+            306 => ("Iron Helmet", 165),
+            307 => ("Iron Chestplate", 240),
+            308 => ("Iron Leggings", 225),
+            309 => ("Iron Boots", 195),
+            298 => ("Leather Helmet", 55),
+            299 => ("Leather Tunic", 80),
+            300 => ("Leather Pants", 75),
+            301 => ("Leather Boots", 65),
+            322 => ("Golden Apple", 0),
+            368 => ("Ender Pearl", 0),
+            1 => ("Stone", 0),
+            5 => ("Wood Planks", 0),
+            _ => ("Item", 0),
+        };
+        HudItemInfo::new(slot.item_id, slot.item_count, slot.item_damage, max_dur, name)
+    }
+
+    /// Converts a Protocol 47 potion effect ID into displayable HUD potion info.
+    pub fn get_potion_info(effect_id: u8, amplifier: u8, duration: i32) -> HudPotionInfo {
+        let (name, color) = match effect_id {
+            1 => ("Speed", Color32::from_rgb(124, 175, 255)),
+            2 => ("Slowness", Color32::from_rgb(90, 108, 129)),
+            3 => ("Haste", Color32::from_rgb(217, 192, 67)),
+            4 => ("Mining Fatigue", Color32::from_rgb(74, 66, 23)),
+            5 => ("Strength", Color32::from_rgb(147, 36, 35)),
+            6 => ("Instant Health", Color32::from_rgb(248, 36, 35)),
+            7 => ("Instant Damage", Color32::from_rgb(67, 10, 9)),
+            8 => ("Jump Boost", Color32::from_rgb(34, 255, 76)),
+            9 => ("Nausea", Color32::from_rgb(85, 29, 74)),
+            10 => ("Regeneration", Color32::from_rgb(205, 92, 171)),
+            11 => ("Resistance", Color32::from_rgb(153, 69, 58)),
+            12 => ("Fire Resistance", Color32::from_rgb(228, 154, 58)),
+            13 => ("Water Breathing", Color32::from_rgb(46, 82, 153)),
+            14 => ("Invisibility", Color32::from_rgb(127, 131, 146)),
+            15 => ("Blindness", Color32::from_rgb(31, 31, 35)),
+            16 => ("Night Vision", Color32::from_rgb(31, 31, 161)),
+            17 => ("Hunger", Color32::from_rgb(88, 118, 83)),
+            18 => ("Weakness", Color32::from_rgb(72, 77, 72)),
+            19 => ("Poison", Color32::from_rgb(78, 147, 49)),
+            20 => ("Wither", Color32::from_rgb(53, 42, 39)),
+            21 => ("Health Boost", Color32::from_rgb(248, 125, 35)),
+            22 => ("Absorption", Color32::from_rgb(37, 82, 165)),
+            23 => ("Saturation", Color32::from_rgb(248, 36, 35)),
+            _ => ("Potion", Color32::from_rgb(180, 180, 200)),
+        };
+        HudPotionInfo::new(effect_id, name, amplifier, duration, color)
     }
 
     /// Returns the primary block texture key in the texture atlas for block break particles.
@@ -1372,6 +1491,76 @@ impl App {
                         self.server_break_progress.remove(&pos);
                     }
                 }
+                ClientboundPlayPacket::UpdateHealth(uh) => {
+                    self.player_health = uh.health;
+                    self.player_food = uh.food.clamp(0, 20) as u8;
+                    self.player_saturation = uh.food_saturation;
+                }
+                ClientboundPlayPacket::SetExperience(exp) => {
+                    self.player_exp_progress = exp.experience_bar;
+                    self.player_exp_level = exp.level;
+                }
+                ClientboundPlayPacket::HeldItemChange(hic) => {
+                    self.selected_hotbar_slot = hic.slot.clamp(0, 8) as usize;
+                    if let Some(item) = &self.hotbar_items[self.selected_hotbar_slot] {
+                        self.held_item_id = item.item_id;
+                    }
+                }
+                ClientboundPlayPacket::SetSlot(ss) => {
+                    if ss.window_id == 0 {
+                        let item_info = ss.item.as_ref().map(Self::get_item_info_from_slot);
+                        match ss.slot {
+                            5 => self.armor_items[0] = item_info,
+                            6 => self.armor_items[1] = item_info,
+                            7 => self.armor_items[2] = item_info,
+                            8 => self.armor_items[3] = item_info,
+                            36..=44 => {
+                                let idx = (ss.slot - 36) as usize;
+                                self.hotbar_items[idx] = item_info.clone();
+                                if idx == self.selected_hotbar_slot {
+                                    self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                ClientboundPlayPacket::WindowItems(wi) => {
+                    if wi.window_id == 0 {
+                        for (idx, slot_opt) in wi.items.iter().enumerate() {
+                            let item_info = slot_opt.as_ref().map(Self::get_item_info_from_slot);
+                            match idx {
+                                5 => self.armor_items[0] = item_info,
+                                6 => self.armor_items[1] = item_info,
+                                7 => self.armor_items[2] = item_info,
+                                8 => self.armor_items[3] = item_info,
+                                36..=44 => {
+                                    let hotbar_idx = idx - 36;
+                                    self.hotbar_items[hotbar_idx] = item_info.clone();
+                                    if hotbar_idx == self.selected_hotbar_slot {
+                                        self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                ClientboundPlayPacket::EntityEffect(ee) => {
+                    if ee.entity_id == self.player_entity_id {
+                        let info = Self::get_potion_info(ee.effect_id as u8, ee.amplifier as u8, ee.duration);
+                        if let Some(pos) = self.active_potions.iter().position(|p| p.id == ee.effect_id as u8) {
+                            self.active_potions[pos] = info;
+                        } else {
+                            self.active_potions.push(info);
+                        }
+                    }
+                }
+                ClientboundPlayPacket::RemoveEntityEffect(ree) => {
+                    if ree.entity_id == self.player_entity_id {
+                        self.active_potions.retain(|p| p.id != ree.effect_id as u8);
+                    }
+                }
                 ClientboundPlayPacket::Unknown { payload_len, .. } => {
                     self.profiler.on_bytes_received(payload_len);
                 }
@@ -1902,14 +2091,20 @@ impl ApplicationHandler for App {
                         winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
                     };
                     if scroll_dir.abs() > 0.01 {
-                        let hotbar_items = [276, 261, 278, 279, 277, 322, 1, 5, 0];
-                        let current_idx = hotbar_items.iter().position(|&id| id == self.held_item_id).unwrap_or(0);
-                        let next_idx = if scroll_dir > 0.0 {
-                            (current_idx + hotbar_items.len() - 1) % hotbar_items.len()
+                        let next_slot = if scroll_dir > 0.0 {
+                            (self.selected_hotbar_slot + 8) % 9
                         } else {
-                            (current_idx + 1) % hotbar_items.len()
+                            (self.selected_hotbar_slot + 1) % 9
                         };
-                        self.held_item_id = hotbar_items[next_idx];
+                        self.selected_hotbar_slot = next_slot;
+                        if let Some(item) = &self.hotbar_items[next_slot] {
+                            self.held_item_id = item.item_id;
+                        } else {
+                            self.held_item_id = 0;
+                        }
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::HeldItemChange(next_slot as i16));
+                        }
                         if self.item_use_state.active_action != ItemUseAction::None {
                             self.item_use_state.stop();
                         }
@@ -1939,6 +2134,26 @@ impl ApplicationHandler for App {
                                     self.mouse_grabbed = false;
                                 }
                             }
+
+                            // Right Shift toggles HUD Layout Editor
+                            if code == KeyCode::ShiftRight {
+                                if let Some(sm) = &mut self.screen_manager {
+                                    if let Some(ig) = &mut sm.in_game {
+                                        if !ig.chat_opened {
+                                            ig.hud_editor_opened = !ig.hud_editor_opened;
+                                            if ig.hud_editor_opened {
+                                                if let Some(w) = &self.window {
+                                                    let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                                    w.set_cursor_visible(true);
+                                                    self.mouse_grabbed = false;
+                                                }
+                                            } else {
+                                                let _ = ig.hud_layout.save_to_file(&ig.layout_path);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                         winit::event::ElementState::Released => {
                             self.pressed_keys.remove(&code);
@@ -1948,21 +2163,29 @@ impl ApplicationHandler for App {
 
                 if !consumed && key_event.state == winit::event::ElementState::Pressed {
                     if let PhysicalKey::Code(code) = key_event.physical_key {
-                        let hotbar_item = match code {
-                            KeyCode::Digit1 => Some(276), // Diamond Sword (Sword blocking)
-                            KeyCode::Digit2 => Some(261), // Bow (Pulling & Crit arrow)
-                            KeyCode::Digit3 => Some(278), // Diamond Pickaxe (Digging stone/ores)
-                            KeyCode::Digit4 => Some(279), // Diamond Axe (Digging wood)
-                            KeyCode::Digit5 => Some(277), // Diamond Shovel (Digging dirt/sand)
-                            KeyCode::Digit6 => Some(322), // Golden Apple (Eating)
-                            KeyCode::Digit7 => Some(1),   // Stone (Block placement)
-                            KeyCode::Digit8 => Some(5),   // Oak Wood Planks (Block placement)
-                            KeyCode::Digit9 => Some(0),   // Empty Hand
+                        let slot_opt = match code {
+                            KeyCode::Digit1 => Some(0),
+                            KeyCode::Digit2 => Some(1),
+                            KeyCode::Digit3 => Some(2),
+                            KeyCode::Digit4 => Some(3),
+                            KeyCode::Digit5 => Some(4),
+                            KeyCode::Digit6 => Some(5),
+                            KeyCode::Digit7 => Some(6),
+                            KeyCode::Digit8 => Some(7),
+                            KeyCode::Digit9 => Some(8),
                             _ => None,
                         };
-                        if let Some(item_id) = hotbar_item {
-                            if self.held_item_id != item_id {
-                                self.held_item_id = item_id;
+                        if let Some(slot_idx) = slot_opt {
+                            if self.selected_hotbar_slot != slot_idx {
+                                self.selected_hotbar_slot = slot_idx;
+                                if let Some(item) = &self.hotbar_items[slot_idx] {
+                                    self.held_item_id = item.item_id;
+                                } else {
+                                    self.held_item_id = 0;
+                                }
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::HeldItemChange(slot_idx as i16));
+                                }
                                 if self.item_use_state.active_action != ItemUseAction::None {
                                     self.item_use_state.stop();
                                 }
@@ -2155,6 +2378,48 @@ impl ApplicationHandler for App {
                     if let Some(ig) = &mut sm.in_game {
                         ig.benchmark = Some(self.profiler.calculate_snapshot());
                         ig.nametags = nametags;
+
+                        // Synchronize vitals, inventory, keystrokes, and telemetry into HUD data
+                        ig.hud_data.health = self.player_health;
+                        ig.hud_data.max_health = self.player_max_health;
+                        ig.hud_data.absorption = self.player_absorption;
+                        ig.hud_data.food = self.player_food;
+                        ig.hud_data.saturation = self.player_saturation;
+                        ig.hud_data.air = self.player_air;
+                        ig.hud_data.is_in_water = self.player.is_in_water;
+                        ig.hud_data.exp_level = self.player_exp_level;
+                        ig.hud_data.exp_progress = self.player_exp_progress;
+                        ig.hud_data.selected_hotbar_slot = self.selected_hotbar_slot;
+                        ig.hud_data.hotbar_items = self.hotbar_items.clone();
+                        ig.hud_data.armor_items = self.armor_items.clone();
+                        ig.hud_data.held_item = self.hotbar_items[self.selected_hotbar_slot].clone();
+
+                        let mut total_armor = 0u8;
+                        for item in &self.armor_items {
+                            if let Some(a) = item {
+                                total_armor += match a.item_id {
+                                    310 => 3, 311 => 8, 312 => 6, 313 => 3,
+                                    306 => 2, 307 => 6, 308 => 5, 309 => 2,
+                                    298 => 1, 299 => 3, 300 => 2, 301 => 1,
+                                    _ => 0,
+                                };
+                            }
+                        }
+                        ig.hud_data.armor_value = total_armor.min(20);
+
+                        ig.hud_data.key_w = self.pressed_keys.contains(&KeyCode::KeyW);
+                        ig.hud_data.key_a = self.pressed_keys.contains(&KeyCode::KeyA);
+                        ig.hud_data.key_s = self.pressed_keys.contains(&KeyCode::KeyS);
+                        ig.hud_data.key_d = self.pressed_keys.contains(&KeyCode::KeyD);
+                        ig.hud_data.key_space = self.pressed_keys.contains(&KeyCode::Space);
+                        ig.hud_data.key_lmb = self.is_left_clicking;
+                        ig.hud_data.key_rmb = self.is_right_clicking;
+                        ig.hud_data.lmb_cps = self.click_tracker.left_cps();
+                        ig.hud_data.rmb_cps = self.click_tracker.right_cps();
+
+                        ig.hud_data.potion_effects = self.active_potions.clone();
+                        ig.hud_data.boss_bars = self.active_boss_bars.clone();
+                        ig.hud_data.ping_ms = self.profiler.calculate_snapshot().rtt_ms as i32;
                     }
                     let is_fullscreen = self
                         .window

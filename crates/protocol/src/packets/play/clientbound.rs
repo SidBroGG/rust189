@@ -1,7 +1,7 @@
 use crate::codec::buf_ext::{BufExt, BufMutExt};
 use crate::codec::metadata::MetadataEntry;
 use crate::codec::position::Position;
-use crate::codec::slot::Slot;
+use crate::codec::slot::{read_slot, write_slot, Slot};
 use crate::error::ProtocolError;
 use bytes::{Buf, Bytes, BytesMut};
 use uuid::Uuid;
@@ -1694,6 +1694,264 @@ impl ClientboundBlockBreakAnimPacket {
         Ok(())
     }
 }
+
+/// Clientbound Update Health packet (0x06).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundUpdateHealthPacket {
+    pub health: f32,
+    pub food: i32,
+    pub food_saturation: f32,
+}
+
+impl ClientboundUpdateHealthPacket {
+    pub const PACKET_ID: i32 = 0x06;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 4 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 4,
+                available: buf.remaining(),
+            });
+        }
+        let health = buf.get_f32();
+        let food = buf.read_varint()?;
+        if buf.remaining() < 4 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 4,
+                available: buf.remaining(),
+            });
+        }
+        let food_saturation = buf.get_f32();
+        Ok(Self {
+            health,
+            food,
+            food_saturation,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&self.health.to_be_bytes());
+        buf.write_varint(self.food);
+        buf.extend_from_slice(&self.food_saturation.to_be_bytes());
+        Ok(())
+    }
+}
+
+/// Clientbound Set Experience packet (0x1F).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundSetExperiencePacket {
+    pub experience_bar: f32,
+    pub level: i32,
+    pub total_experience: i32,
+}
+
+impl ClientboundSetExperiencePacket {
+    pub const PACKET_ID: i32 = 0x1F;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 4 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 4,
+                available: buf.remaining(),
+            });
+        }
+        let experience_bar = buf.get_f32();
+        let level = buf.read_varint()?;
+        let total_experience = buf.read_varint()?;
+        Ok(Self {
+            experience_bar,
+            level,
+            total_experience,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&self.experience_bar.to_be_bytes());
+        buf.write_varint(self.level);
+        buf.write_varint(self.total_experience);
+        Ok(())
+    }
+}
+
+/// Clientbound Held Item Change packet (0x09).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundHeldItemChangePacket {
+    pub slot: i8,
+}
+
+impl ClientboundHeldItemChangePacket {
+    pub const PACKET_ID: i32 = 0x09;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let slot = buf.get_i8();
+        Ok(Self { slot })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.slot as u8]);
+        Ok(())
+    }
+}
+
+/// Clientbound Set Slot packet (0x2F).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundSetSlotPacket {
+    pub window_id: i8,
+    pub slot: i16,
+    pub item: Option<Slot>,
+}
+
+impl ClientboundSetSlotPacket {
+    pub const PACKET_ID: i32 = 0x2F;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 3 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 3,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_i8();
+        let slot = buf.get_i16();
+        let item = read_slot(buf)?;
+        Ok(Self {
+            window_id,
+            slot,
+            item,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id as u8]);
+        buf.extend_from_slice(&self.slot.to_be_bytes());
+        write_slot(self.item.as_ref(), buf)?;
+        Ok(())
+    }
+}
+
+/// Clientbound Window Items packet (0x30).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundWindowItemsPacket {
+    pub window_id: u8,
+    pub items: Vec<Option<Slot>>,
+}
+
+impl ClientboundWindowItemsPacket {
+    pub const PACKET_ID: i32 = 0x30;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 3 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 3,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_u8();
+        let count = buf.get_i16();
+        let mut items = Vec::with_capacity(count.max(0) as usize);
+        for _ in 0..count {
+            items.push(read_slot(buf)?);
+        }
+        Ok(Self { window_id, items })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id]);
+        buf.extend_from_slice(&(self.items.len() as i16).to_be_bytes());
+        for item in &self.items {
+            write_slot(item.as_ref(), buf)?;
+        }
+        Ok(())
+    }
+}
+
+/// Clientbound Entity Effect packet (0x1D).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundEntityEffectPacket {
+    pub entity_id: i32,
+    pub effect_id: i8,
+    pub amplifier: i8,
+    pub duration: i32,
+    pub hide_particles: bool,
+}
+
+impl ClientboundEntityEffectPacket {
+    pub const PACKET_ID: i32 = 0x1D;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let entity_id = buf.read_varint()?;
+        if buf.remaining() < 2 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 2,
+                available: buf.remaining(),
+            });
+        }
+        let effect_id = buf.get_i8();
+        let amplifier = buf.get_i8();
+        let duration = buf.read_varint()?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let hide_particles = buf.get_u8() != 0;
+        Ok(Self {
+            entity_id,
+            effect_id,
+            amplifier,
+            duration,
+            hide_particles,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.entity_id);
+        buf.extend_from_slice(&[self.effect_id as u8, self.amplifier as u8]);
+        buf.write_varint(self.duration);
+        buf.extend_from_slice(&[if self.hide_particles { 1 } else { 0 }]);
+        Ok(())
+    }
+}
+
+/// Clientbound Remove Entity Effect packet (0x1E).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundRemoveEntityEffectPacket {
+    pub entity_id: i32,
+    pub effect_id: i8,
+}
+
+impl ClientboundRemoveEntityEffectPacket {
+    pub const PACKET_ID: i32 = 0x1E;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let entity_id = buf.read_varint()?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let effect_id = buf.get_i8();
+        Ok(Self {
+            entity_id,
+            effect_id,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.entity_id);
+        buf.extend_from_slice(&[self.effect_id as u8]);
+        Ok(())
+    }
+}
+
 
 
 

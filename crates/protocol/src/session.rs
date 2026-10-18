@@ -73,6 +73,7 @@ pub enum OutgoingPlayPacket {
         target: Option<(f32, f32, f32)>,
     },
     Animation,
+    HeldItemChange(i16),
 }
 
 impl OutgoingPlayPacket {
@@ -207,6 +208,11 @@ impl OutgoingPlayPacket {
                 let pkt = ServerboundAnimationPacket;
                 pkt.encode(buf)?;
                 Ok(ServerboundAnimationPacket::PACKET_ID)
+            }
+            Self::HeldItemChange(slot) => {
+                let pkt = ServerboundHeldItemChangePacket::new(*slot);
+                pkt.encode(buf)?;
+                Ok(ServerboundHeldItemChangePacket::PACKET_ID)
             }
         }
     }

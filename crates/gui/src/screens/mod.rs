@@ -87,7 +87,7 @@ impl ScreenManager {
             return true;
         }
         if let Some(ig) = &self.in_game {
-            return ig.escape_menu_opened || ig.chat_opened;
+            return ig.escape_menu_opened || ig.chat_opened || ig.hud_editor_opened;
         }
         true
     }

@@ -44,6 +44,13 @@ pub enum ClientboundPlayPacket {
     PlayerAbilities(ClientboundPlayerAbilitiesPacket),
     ConfirmTransaction(ClientboundConfirmTransactionPacket),
     BlockBreakAnim(ClientboundBlockBreakAnimPacket),
+    UpdateHealth(ClientboundUpdateHealthPacket),
+    SetExperience(ClientboundSetExperiencePacket),
+    HeldItemChange(ClientboundHeldItemChangePacket),
+    SetSlot(ClientboundSetSlotPacket),
+    WindowItems(ClientboundWindowItemsPacket),
+    EntityEffect(ClientboundEntityEffectPacket),
+    RemoveEntityEffect(ClientboundRemoveEntityEffectPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -152,6 +159,27 @@ impl ClientboundPlayPacket {
             }
             ClientboundBlockBreakAnimPacket::PACKET_ID => {
                 Ok(Self::BlockBreakAnim(ClientboundBlockBreakAnimPacket::decode(payload)?))
+            }
+            ClientboundUpdateHealthPacket::PACKET_ID => {
+                Ok(Self::UpdateHealth(ClientboundUpdateHealthPacket::decode(payload)?))
+            }
+            ClientboundSetExperiencePacket::PACKET_ID => {
+                Ok(Self::SetExperience(ClientboundSetExperiencePacket::decode(payload)?))
+            }
+            ClientboundHeldItemChangePacket::PACKET_ID => {
+                Ok(Self::HeldItemChange(ClientboundHeldItemChangePacket::decode(payload)?))
+            }
+            ClientboundSetSlotPacket::PACKET_ID => {
+                Ok(Self::SetSlot(ClientboundSetSlotPacket::decode(payload)?))
+            }
+            ClientboundWindowItemsPacket::PACKET_ID => {
+                Ok(Self::WindowItems(ClientboundWindowItemsPacket::decode(payload)?))
+            }
+            ClientboundEntityEffectPacket::PACKET_ID => {
+                Ok(Self::EntityEffect(ClientboundEntityEffectPacket::decode(payload)?))
+            }
+            ClientboundRemoveEntityEffectPacket::PACKET_ID => {
+                Ok(Self::RemoveEntityEffect(ClientboundRemoveEntityEffectPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,
@@ -488,6 +516,95 @@ mod tests {
         let mut bytes6 = buf6.freeze();
         let decoded_break = ClientboundBlockBreakAnimPacket::decode(&mut bytes6).unwrap();
         assert_eq!(break_anim, decoded_break);
+    }
+
+    #[test]
+    fn test_hud_packets_roundtrip() {
+        use crate::codec::slot::Slot;
+
+        // 1. Update Health
+        let hp = ClientboundUpdateHealthPacket {
+            health: 14.5,
+            food: 18,
+            food_saturation: 5.0,
+        };
+        let mut buf = BytesMut::new();
+        hp.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_hp = ClientboundUpdateHealthPacket::decode(&mut bytes).unwrap();
+        assert_eq!(hp, decoded_hp);
+
+        // 2. Set Experience
+        let exp = ClientboundSetExperiencePacket {
+            experience_bar: 0.65,
+            level: 30,
+            total_experience: 1395,
+        };
+        let mut buf2 = BytesMut::new();
+        exp.encode(&mut buf2).unwrap();
+        let mut bytes2 = buf2.freeze();
+        let decoded_exp = ClientboundSetExperiencePacket::decode(&mut bytes2).unwrap();
+        assert_eq!(exp, decoded_exp);
+
+        // 3. Held Item Change
+        let held = ClientboundHeldItemChangePacket { slot: 3 };
+        let mut buf3 = BytesMut::new();
+        held.encode(&mut buf3).unwrap();
+        let mut bytes3 = buf3.freeze();
+        let decoded_held = ClientboundHeldItemChangePacket::decode(&mut bytes3).unwrap();
+        assert_eq!(held, decoded_held);
+
+        // 4. Set Slot
+        let set_slot = ClientboundSetSlotPacket {
+            window_id: 0,
+            slot: 36,
+            item: Some(Slot::new(276, 1, 15, None)),
+        };
+        let mut buf4 = BytesMut::new();
+        set_slot.encode(&mut buf4).unwrap();
+        let mut bytes4 = buf4.freeze();
+        let decoded_set_slot = ClientboundSetSlotPacket::decode(&mut bytes4).unwrap();
+        assert_eq!(set_slot, decoded_set_slot);
+
+        // 5. Window Items
+        let win_items = ClientboundWindowItemsPacket {
+            window_id: 0,
+            items: vec![
+                Some(Slot::new(310, 1, 0, None)),
+                None,
+                Some(Slot::new(276, 1, 5, None)),
+            ],
+        };
+        let mut buf5 = BytesMut::new();
+        win_items.encode(&mut buf5).unwrap();
+        let mut bytes5 = buf5.freeze();
+        let decoded_win_items = ClientboundWindowItemsPacket::decode(&mut bytes5).unwrap();
+        assert_eq!(win_items, decoded_win_items);
+
+        // 6. Entity Effect
+        let effect = ClientboundEntityEffectPacket {
+            entity_id: 1,
+            effect_id: 1, // Speed
+            amplifier: 1, // Speed II
+            duration: 1200, // 60s
+            hide_particles: false,
+        };
+        let mut buf6 = BytesMut::new();
+        effect.encode(&mut buf6).unwrap();
+        let mut bytes6 = buf6.freeze();
+        let decoded_effect = ClientboundEntityEffectPacket::decode(&mut bytes6).unwrap();
+        assert_eq!(effect, decoded_effect);
+
+        // 7. Remove Entity Effect
+        let rem_effect = ClientboundRemoveEntityEffectPacket {
+            entity_id: 1,
+            effect_id: 1,
+        };
+        let mut buf7 = BytesMut::new();
+        rem_effect.encode(&mut buf7).unwrap();
+        let mut bytes7 = buf7.freeze();
+        let decoded_rem_effect = ClientboundRemoveEntityEffectPacket::decode(&mut bytes7).unwrap();
+        assert_eq!(rem_effect, decoded_rem_effect);
     }
 }
 
