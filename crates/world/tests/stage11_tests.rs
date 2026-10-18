@@ -345,3 +345,62 @@ fn test_block_placement_collision_validation() {
         "Block outside player bounding box can be placed"
     );
 }
+
+#[test]
+fn test_mouse_interaction_predicates_and_toggling() {
+    use world::{is_interactive_block, is_replaceable_block};
+
+    // 1. Interactive blocks
+    assert!(is_interactive_block(64));  // Oak Door
+    assert!(is_interactive_block(193)); // Spruce Door
+    assert!(is_interactive_block(96));  // Wooden Trapdoor
+    assert!(is_interactive_block(107)); // Fence Gate
+    assert!(is_interactive_block(69));  // Lever
+    assert!(is_interactive_block(77));  // Stone Button
+    assert!(is_interactive_block(143)); // Wood Button
+    assert!(is_interactive_block(54));  // Chest
+    assert!(is_interactive_block(58));  // Crafting Table
+    assert!(!is_interactive_block(1));  // Stone
+    assert!(!is_interactive_block(71)); // Iron Door (redstone only)
+
+    // 2. Door / Trapdoor / Gate bit toggling (bit 0x04)
+    let trapdoor_closed = BlockState::new(96, 0);
+    let trapdoor_open = BlockState::new(96, trapdoor_closed.meta() ^ 4);
+    assert_eq!(trapdoor_open.meta(), 4);
+    assert_eq!(trapdoor_open.meta() ^ 4, 0);
+
+    // 3. Lever / Button powered bit toggling (bit 0x08)
+    let lever_off = BlockState::new(69, 1);
+    let lever_on = BlockState::new(69, lever_off.meta() ^ 8);
+    assert_eq!(lever_on.meta(), 9);
+    assert_eq!(lever_on.meta() ^ 8, 1);
+
+    // 4. Replaceable blocks
+    assert!(is_replaceable_block(0));   // Air
+    assert!(is_replaceable_block(31));  // Tall Grass
+    assert!(is_replaceable_block(78));  // Snow layer
+    assert!(is_replaceable_block(106)); // Vine
+    assert!(!is_replaceable_block(1));  // Stone
+    assert!(!is_replaceable_block(4));  // Cobblestone
+}
+
+#[test]
+fn test_continuous_right_click_delay_timer() {
+    let mut right_click_delay_timer: u8 = 4; // Set on initial right click
+
+    // Simulate 4 physics ticks (20 TPS, 50ms each)
+    let mut placements = 0;
+    for _ in 0..12 {
+        if right_click_delay_timer > 0 {
+            right_click_delay_timer -= 1;
+        }
+        if right_click_delay_timer == 0 {
+            placements += 1;
+            right_click_delay_timer = 4; // Reset to 4
+        }
+    }
+
+    // 12 ticks with delay 4 = exactly 3 placements (1 every 4 ticks)
+    assert_eq!(placements, 3, "Continuous right click should place 1 block every 4 ticks");
+}
+

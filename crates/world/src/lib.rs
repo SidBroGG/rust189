@@ -11,7 +11,7 @@ pub mod section;
 pub mod tab_list;
 pub mod world;
 
-pub use block::BlockState;
+pub use block::{is_interactive_block, is_replaceable_block, BlockState};
 pub use chat::{parse_chat_message, parse_spans, strip_formatting, ChatSpan};
 pub use chunk::{ChunkColumn, WorldError};
 pub use entity::{EntityKind, EntityTracker, TrackedEntity};

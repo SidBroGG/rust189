@@ -26,10 +26,11 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Icon, Window, WindowId};
 use world::{
-    get_block_selection_box, get_player_relative_block_hardness, is_critical_hit, is_water_block,
-    pick_target, BlockState, CameraController, CameraPerspective, ClickTracker, EntityKind,
-    EntitySpatialHash, FrameStage, ItemUseAction, ItemUseState, PerformanceProfiler, PlayerInput,
-    PlayerMovement, TargetHit, TrackedEntity, World, AABB,
+    get_block_selection_box, get_player_relative_block_hardness, is_critical_hit,
+    is_interactive_block, is_replaceable_block, is_water_block, pick_target, BlockState,
+    CameraController, CameraPerspective, ClickTracker, EntityKind, EntitySpatialHash, FrameStage,
+    ItemUseAction, ItemUseState, PerformanceProfiler, PlayerInput, PlayerMovement, TargetHit,
+    TrackedEntity, World, AABB,
 };
 
 pub struct App {
@@ -83,6 +84,7 @@ pub struct App {
     pub is_right_clicking: bool,
     pub server_break_progress: HashMap<(i32, i32, i32), u8>,
     pub held_item_id: i16,
+    pub right_click_delay_timer: u8,
 }
 
 impl App {
@@ -137,6 +139,7 @@ impl App {
             is_right_clicking: false,
             server_break_progress: HashMap::new(),
             held_item_id: 276,
+            right_click_delay_timer: 0,
         }
     }
 
@@ -190,10 +193,44 @@ impl App {
         }
     }
 
+    pub fn recalculate_current_target(&mut self) {
+        let pt = (self.last_physics_tick.elapsed().as_secs_f32() / 0.05).clamp(0.0, 1.0);
+        let pose = self.camera_controller.compute_camera_pose(
+            &self.world,
+            &self.player,
+            pt,
+            self.config.video.view_bobbing,
+        );
+        self.camera.position = pose.position;
+        self.camera.yaw = pose.yaw;
+        self.camera.pitch = pose.pitch;
+        self.camera.roll = pose.roll;
+        self.camera.bob_x = pose.bob_x;
+        self.camera.bob_y = pose.bob_y;
+
+        let eye_pos = glam::DVec3::new(
+            self.camera.position.x as f64,
+            self.camera.position.y as f64,
+            self.camera.position.z as f64,
+        );
+        let fwd = self.camera.forward();
+        let look_dir = glam::DVec3::new(fwd.x as f64, fwd.y as f64, fwd.z as f64);
+        self.current_target = pick_target(
+            &self.world,
+            &self.spatial_hash,
+            eye_pos,
+            look_dir,
+            self.player.capabilities.is_creative,
+            Some(self.player_entity_id),
+        );
+    }
+
     pub fn handle_left_click(&mut self) {
-        if !self.has_spawned {
+        let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+        if !self.has_spawned && !is_in_game {
             return;
         }
+        self.recalculate_current_target();
         self.click_tracker.register_left_click();
 
         // Arm swing packet
@@ -271,7 +308,7 @@ impl App {
                             facing: bh.face,
                         });
                     }
-                    self.world.set_block(pos.0, pos.1, pos.2, BlockState(0));
+                    self.world.set_block(pos.0, pos.1, pos.2, BlockState::AIR);
                     let chunk_x = pos.0 >> 4;
                     let chunk_z = pos.2 >> 4;
                     let sec_idx = ((pos.1 >> 4) as usize).min(15);
@@ -318,33 +355,95 @@ impl App {
     }
 
     pub fn handle_right_click(&mut self) {
-        if !self.has_spawned {
+        let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+        if !self.has_spawned && !is_in_game {
             return;
         }
+        self.recalculate_current_target();
         self.click_tracker.register_right_click();
+        self.right_click_delay_timer = 4;
 
-        let action = ItemUseState::get_action_for_item(self.held_item_id);
-        if action != ItemUseAction::None {
-            self.item_use_state.start_using(self.held_item_id);
-            return;
-        }
+        match self.current_target {
+            TargetHit::Entity(eh) => {
+                let entity_id = eh.entity_id;
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::UseEntity {
+                        entity_id,
+                        action: UseEntityAction::Interact,
+                        target: None,
+                    });
+                    s.send(OutgoingPlayPacket::Animation);
+                }
+            }
+            TargetHit::Block(bh) => {
+                let block = self.world.get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
 
-        // Block placement (blocks 1..255)
-        if self.held_item_id > 0 && self.held_item_id < 256 {
-            if let TargetHit::Block(bh) = self.current_target {
-                let (dx, dy, dz) = bh.face.normal();
-                let place_pos = (bh.block_pos.0 + dx, bh.block_pos.1 + dy, bh.block_pos.2 + dz);
+                // 1. Interactive block activation (Doors, Trapdoors, Fence Gates, Levers, Buttons, Containers)
+                if (!self.player.is_sneaking || self.held_item_id <= 0) && is_interactive_block(block.id()) {
+                    let mut block_toggled = false;
 
-                let place_aabb = AABB::new(
-                    place_pos.0 as f64,
-                    place_pos.1 as f64,
-                    place_pos.2 as f64,
-                    place_pos.0 as f64 + 1.0,
-                    place_pos.1 as f64 + 1.0,
-                    place_pos.2 as f64 + 1.0,
-                );
+                    // Wooden Doors (64, 193..=197)
+                    if matches!(block.id(), 64 | 193..=197) {
+                        let is_upper = (block.meta() & 8) != 0;
+                        let (door_x, door_y, door_z) = if is_upper {
+                            (bh.block_pos.0, bh.block_pos.1 - 1, bh.block_pos.2)
+                        } else {
+                            bh.block_pos
+                        };
+                        let lower_state = self.world.get_block(door_x, door_y, door_z);
+                        if matches!(lower_state.id(), 64 | 193..=197) {
+                            let toggled_meta = lower_state.meta() ^ 4;
+                            let new_state = BlockState::new(lower_state.id(), toggled_meta);
+                            self.world.set_block(door_x, door_y, door_z, new_state);
+                            let chunk_x = door_x >> 4;
+                            let chunk_z = door_z >> 4;
+                            let sec_idx = ((door_y >> 4) as usize).min(15);
+                            if let Some(cm) = &mut self.chunk_manager {
+                                cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                            }
+                            block_toggled = true;
+                        }
+                    }
+                    // Wooden Trapdoors (96)
+                    else if block.id() == 96 {
+                        let toggled_meta = block.meta() ^ 4;
+                        let new_state = BlockState::new(block.id(), toggled_meta);
+                        self.world.set_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2, new_state);
+                        let chunk_x = bh.block_pos.0 >> 4;
+                        let chunk_z = bh.block_pos.2 >> 4;
+                        let sec_idx = ((bh.block_pos.1 >> 4) as usize).min(15);
+                        if let Some(cm) = &mut self.chunk_manager {
+                            cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                        }
+                        block_toggled = true;
+                    }
+                    // Fence Gates (107, 183..=187)
+                    else if matches!(block.id(), 107 | 183..=187) {
+                        let toggled_meta = block.meta() ^ 4;
+                        let new_state = BlockState::new(block.id(), toggled_meta);
+                        self.world.set_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2, new_state);
+                        let chunk_x = bh.block_pos.0 >> 4;
+                        let chunk_z = bh.block_pos.2 >> 4;
+                        let sec_idx = ((bh.block_pos.1 >> 4) as usize).min(15);
+                        if let Some(cm) = &mut self.chunk_manager {
+                            cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                        }
+                        block_toggled = true;
+                    }
+                    // Lever (69) and Buttons (77, 143)
+                    else if matches!(block.id(), 69 | 77 | 143) {
+                        let toggled_meta = block.meta() ^ 8;
+                        let new_state = BlockState::new(block.id(), toggled_meta);
+                        self.world.set_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2, new_state);
+                        let chunk_x = bh.block_pos.0 >> 4;
+                        let chunk_z = bh.block_pos.2 >> 4;
+                        let sec_idx = ((bh.block_pos.1 >> 4) as usize).min(15);
+                        if let Some(cm) = &mut self.chunk_manager {
+                            cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                        }
+                        block_toggled = true;
+                    }
 
-                if !self.player.bounding_box.intersects(&place_aabb) {
                     if let Some(s) = &self.session {
                         let cursor_x = (bh.cursor_x * 16.0) as u8;
                         let cursor_y = (bh.cursor_y * 16.0) as u8;
@@ -353,25 +452,121 @@ impl App {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
                             position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
                             direction: bh.face as u8,
-                            item: Some(Slot {
-                                item_id: self.held_item_id,
-                                item_count: 1,
-                                item_damage: 0,
-                                nbt: None,
-                            }),
+                            item: if self.held_item_id > 0 {
+                                Some(Slot {
+                                    item_id: self.held_item_id,
+                                    item_count: 1,
+                                    item_damage: 0,
+                                    nbt: None,
+                                })
+                            } else {
+                                None
+                            },
                             cursor_x,
                             cursor_y,
                             cursor_z,
                         });
                         s.send(OutgoingPlayPacket::Animation);
                     }
+                    let _ = block_toggled;
+                    return;
+                }
 
-                    self.world.set_block(place_pos.0, place_pos.1, place_pos.2, BlockState(self.held_item_id as u16));
-                    let chunk_x = place_pos.0 >> 4;
-                    let chunk_z = place_pos.2 >> 4;
-                    let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
-                    if let Some(cm) = &mut self.chunk_manager {
-                        cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                // 2. Item use (Bow, Sword blocking, Food, Potion)
+                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                if action != ItemUseAction::None {
+                    self.item_use_state.start_using(self.held_item_id);
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(-1, -1, -1),
+                            direction: 255,
+                            item: Some(Slot {
+                                item_id: self.held_item_id,
+                                item_count: 1,
+                                item_damage: 0,
+                                nbt: None,
+                            }),
+                            cursor_x: 0,
+                            cursor_y: 0,
+                            cursor_z: 0,
+                        });
+                    }
+                    return;
+                }
+
+                // 3. Block placement (blocks 1..255)
+                if self.held_item_id > 0 && self.held_item_id < 256 {
+                    let place_pos = if is_replaceable_block(block.id()) {
+                        bh.block_pos
+                    } else {
+                        let (dx, dy, dz) = bh.face.normal();
+                        (bh.block_pos.0 + dx, bh.block_pos.1 + dy, bh.block_pos.2 + dz)
+                    };
+
+                    let place_aabb = AABB::new(
+                        place_pos.0 as f64,
+                        place_pos.1 as f64,
+                        place_pos.2 as f64,
+                        place_pos.0 as f64 + 1.0,
+                        place_pos.1 as f64 + 1.0,
+                        place_pos.2 as f64 + 1.0,
+                    );
+
+                    if !self.player.bounding_box.intersects(&place_aabb) {
+                        if let Some(s) = &self.session {
+                            let cursor_x = (bh.cursor_x * 16.0) as u8;
+                            let cursor_y = (bh.cursor_y * 16.0) as u8;
+                            let cursor_z = (bh.cursor_z * 16.0) as u8;
+
+                            s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                                position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
+                                direction: bh.face as u8,
+                                item: Some(Slot {
+                                    item_id: self.held_item_id,
+                                    item_count: 1,
+                                    item_damage: 0,
+                                    nbt: None,
+                                }),
+                                cursor_x,
+                                cursor_y,
+                                cursor_z,
+                            });
+                            s.send(OutgoingPlayPacket::Animation);
+                        }
+
+                        self.world.set_block(
+                            place_pos.0,
+                            place_pos.1,
+                            place_pos.2,
+                            BlockState::new(self.held_item_id as u16, 0),
+                        );
+                        let chunk_x = place_pos.0 >> 4;
+                        let chunk_z = place_pos.2 >> 4;
+                        let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
+                        if let Some(cm) = &mut self.chunk_manager {
+                            cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                        }
+                    }
+                }
+            }
+            TargetHit::Miss => {
+                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                if action != ItemUseAction::None {
+                    self.item_use_state.start_using(self.held_item_id);
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(-1, -1, -1),
+                            direction: 255,
+                            item: Some(Slot {
+                                item_id: self.held_item_id,
+                                item_count: 1,
+                                item_damage: 0,
+                                nbt: None,
+                            }),
+                            cursor_x: 0,
+                            cursor_y: 0,
+                            cursor_z: 0,
+                        });
                     }
                 }
             }
@@ -1174,16 +1369,37 @@ impl App {
             self.world.entity_tracker.tick();
             self.spatial_hash.rebuild(&self.world.entity_tracker);
 
+            if self.right_click_delay_timer > 0 {
+                self.right_click_delay_timer -= 1;
+            }
+
             if self.is_right_clicking {
-                self.item_use_state.tick();
+                let finished = self.item_use_state.tick();
+                if finished {
+                    if matches!(
+                        self.item_use_state.active_action,
+                        ItemUseAction::Eat | ItemUseAction::Drink
+                    ) {
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::PlayerDigging {
+                                status: DiggingAction::ReleaseUseItem,
+                                position: Position::new(0, 0, 0),
+                                facing: BlockFace::Down,
+                            });
+                        }
+                        self.item_use_state.stop();
+                    }
+                } else if self.right_click_delay_timer == 0 && self.item_use_state.active_action == ItemUseAction::None {
+                    self.handle_right_click();
+                }
             }
 
             if let Some(ir) = &mut self.interaction_renderer {
                 ir.tick_particles(0.05);
             }
 
-            if self.has_spawned {
-                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+            let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+            if self.has_spawned || is_in_game {
                 let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
                 let mut input = PlayerInput::default();
 
@@ -1203,6 +1419,7 @@ impl App {
 
                 // Block destruction continuous tick
                 if self.is_left_clicking {
+                    self.recalculate_current_target();
                     if let Some(pos) = self.breaking_block_pos {
                         let is_still_targeting = match self.current_target {
                             TargetHit::Block(ref b) => b.block_pos == pos,
@@ -1251,7 +1468,7 @@ impl App {
                                     });
                                 }
 
-                                self.world.set_block(pos.0, pos.1, pos.2, BlockState(0));
+                                self.world.set_block(pos.0, pos.1, pos.2, BlockState::AIR);
                                 let chunk_x = pos.0 >> 4;
                                 let chunk_z = pos.2 >> 4;
                                 let sec_idx = ((pos.1 >> 4) as usize).min(15);
@@ -1268,6 +1485,12 @@ impl App {
 
                                 self.breaking_block_pos = None;
                                 self.breaking_block_damage = 0.0;
+
+                                // Continuous mining: automatically begin mining next targeted block
+                                self.recalculate_current_target();
+                                if let TargetHit::Block(_) = self.current_target {
+                                    self.handle_left_click();
+                                }
                             }
                         } else {
                             if let Some(s) = &self.session {
@@ -1279,7 +1502,13 @@ impl App {
                             }
                             self.breaking_block_pos = None;
                             self.breaking_block_damage = 0.0;
+
+                            if let TargetHit::Block(_) = self.current_target {
+                                self.handle_left_click();
+                            }
                         }
+                    } else if let TargetHit::Block(_) = self.current_target {
+                        self.handle_left_click();
                     }
                 }
 
@@ -1624,7 +1853,14 @@ impl ApplicationHandler for App {
                     winit::event::MouseButton::Right => {
                         match state {
                             winit::event::ElementState::Pressed => {
-                                if is_in_game && self.mouse_grabbed {
+                                if is_in_game && !cursor_needed && !self.mouse_grabbed {
+                                    if let Some(w) = &self.window {
+                                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                        w.set_cursor_visible(false);
+                                        self.mouse_grabbed = true;
+                                    }
+                                } else if is_in_game && self.mouse_grabbed {
                                     self.is_right_clicking = true;
                                     self.handle_right_click();
                                 }
@@ -1636,6 +1872,32 @@ impl ApplicationHandler for App {
                         }
                     }
                     _ => {}
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
+                if is_in_game && !cursor_needed && self.mouse_grabbed {
+                    let scroll_dir = match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_x, y) => y,
+                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                    };
+                    if scroll_dir.abs() > 0.01 {
+                        let hotbar_items = [276, 261, 278, 279, 277, 322, 1, 5, 0];
+                        let current_idx = hotbar_items.iter().position(|&id| id == self.held_item_id).unwrap_or(0);
+                        let next_idx = if scroll_dir > 0.0 {
+                            (current_idx + hotbar_items.len() - 1) % hotbar_items.len()
+                        } else {
+                            (current_idx + 1) % hotbar_items.len()
+                        };
+                        self.held_item_id = hotbar_items[next_idx];
+                        if self.item_use_state.active_action != ItemUseAction::None {
+                            self.item_use_state.stop();
+                        }
+                        if self.breaking_block_pos.is_some() {
+                            self.handle_left_release();
+                        }
+                    }
                 }
             }
             WindowEvent::KeyboardInput {
@@ -2046,7 +2308,6 @@ impl ApplicationHandler for App {
                         let (visible_opaque, visible_translucent) =
                             cm.get_visible_sections(&frustum, self.camera.position);
 
-                        // Raycast crosshair target picking (Vanilla 1.8 reach distances)
                         let eye_pos = glam::DVec3::new(
                             self.camera.position.x as f64,
                             self.camera.position.y as f64,

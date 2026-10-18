@@ -56,6 +56,30 @@ impl BlockState {
     }
 }
 
+/// Checks if a block is replaceable when placing blocks into its space (MCP 1.8.9 Material.isReplaceable).
+#[inline]
+pub fn is_replaceable_block(block_id: u16) -> bool {
+    matches!(block_id, 0 | 8 | 9 | 10 | 11 | 31 | 32 | 51 | 78 | 106 | 175)
+}
+
+/// Checks if a block can be activated/interacted with on right-click (MCP 1.8.9 Block.onBlockActivated).
+#[inline]
+pub fn is_interactive_block(block_id: u16) -> bool {
+    matches!(
+        block_id,
+        // Wooden Doors
+        64 | 193..=197
+        // Wooden Trapdoor
+        | 96
+        // Fence gates
+        | 107 | 183..=187
+        // Redstone interaction: Lever, Stone/Wood Buttons
+        | 69 | 77 | 143
+        // Containers & Workstations
+        | 23 | 54 | 58 | 61 | 62 | 84 | 116 | 117 | 138 | 145 | 146 | 149 | 150 | 154 | 158
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,5 +94,28 @@ mod tests {
         let state2 = BlockState::from_raw((123 << 4) | 15);
         assert_eq!(state2.id(), 123);
         assert_eq!(state2.meta(), 15);
+    }
+
+    #[test]
+    fn test_replaceable_blocks() {
+        assert!(is_replaceable_block(0));   // Air
+        assert!(is_replaceable_block(31));  // Tall grass
+        assert!(is_replaceable_block(78));  // Snow layer
+        assert!(is_replaceable_block(106)); // Vine
+        assert!(!is_replaceable_block(1));  // Stone
+        assert!(!is_replaceable_block(4));  // Cobblestone
+    }
+
+    #[test]
+    fn test_interactive_blocks() {
+        assert!(is_interactive_block(64));  // Oak Door
+        assert!(is_interactive_block(96));  // Wooden Trapdoor
+        assert!(is_interactive_block(107)); // Fence Gate
+        assert!(is_interactive_block(69));  // Lever
+        assert!(is_interactive_block(77));  // Stone Button
+        assert!(is_interactive_block(54));  // Chest
+        assert!(is_interactive_block(58));  // Crafting Table
+        assert!(!is_interactive_block(1));  // Stone
+        assert!(!is_interactive_block(71)); // Iron Door (cannot be activated by hand)
     }
 }
