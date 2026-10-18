@@ -1,6 +1,8 @@
-use crate::codec::buf_ext::BufMutExt;
+use crate::codec::buf_ext::{BufExt, BufMutExt};
+use crate::codec::position::Position;
+use crate::codec::slot::{read_slot, write_slot, Slot};
 use crate::error::ProtocolError;
-use bytes::BytesMut;
+use bytes::{Buf, Bytes, BytesMut};
 
 /// Serverbound KeepAlive packet (0x00).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -313,6 +315,290 @@ impl ServerboundConfirmTransactionPacket {
             action_number,
             accepted,
         })
+    }
+}
+
+/// Actions for Serverbound Player Digging packet (0x07).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiggingAction {
+    StartDestroyBlock = 0,
+    AbortDestroyBlock = 1,
+    StopDestroyBlock = 2,
+    DropAllItems = 3,
+    DropItem = 4,
+    ReleaseUseItem = 5,
+}
+
+impl DiggingAction {
+    pub fn from_i32(val: i32) -> Result<Self, ProtocolError> {
+        match val {
+            0 => Ok(Self::StartDestroyBlock),
+            1 => Ok(Self::AbortDestroyBlock),
+            2 => Ok(Self::StopDestroyBlock),
+            3 => Ok(Self::DropAllItems),
+            4 => Ok(Self::DropItem),
+            5 => Ok(Self::ReleaseUseItem),
+            _ => Err(ProtocolError::InvalidEnumValue {
+                enum_name: "DiggingAction",
+                value: val,
+            }),
+        }
+    }
+}
+
+/// Block faces for digging and block placement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlockFace {
+    Down = 0,
+    Up = 1,
+    North = 2,
+    South = 3,
+    West = 4,
+    East = 5,
+}
+
+impl BlockFace {
+    pub fn from_u8(val: u8) -> Result<Self, ProtocolError> {
+        match val {
+            0 => Ok(Self::Down),
+            1 => Ok(Self::Up),
+            2 => Ok(Self::North),
+            3 => Ok(Self::South),
+            4 => Ok(Self::West),
+            5 => Ok(Self::East),
+            _ => Err(ProtocolError::InvalidEnumValue {
+                enum_name: "BlockFace",
+                value: val as i32,
+            }),
+        }
+    }
+
+    #[inline]
+    pub fn normal(&self) -> (i32, i32, i32) {
+        match self {
+            Self::Down => (0, -1, 0),
+            Self::Up => (0, 1, 0),
+            Self::North => (0, 0, -1),
+            Self::South => (0, 0, 1),
+            Self::West => (-1, 0, 0),
+            Self::East => (1, 0, 0),
+        }
+    }
+}
+
+/// Serverbound Player Digging packet (0x07).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundPlayerDiggingPacket {
+    pub status: DiggingAction,
+    pub position: Position,
+    pub facing: BlockFace,
+}
+
+impl ServerboundPlayerDiggingPacket {
+    pub const PACKET_ID: i32 = 0x07;
+
+    pub fn new(status: DiggingAction, position: Position, facing: BlockFace) -> Self {
+        Self {
+            status,
+            position,
+            facing,
+        }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.status as i32);
+        self.position.write(buf);
+        buf.extend_from_slice(&[self.facing as u8]);
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let status = DiggingAction::from_i32(buf.read_varint()?)?;
+        let position = Position::read(buf)?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let facing = BlockFace::from_u8(buf.get_u8())?;
+        Ok(Self {
+            status,
+            position,
+            facing,
+        })
+    }
+}
+
+/// Serverbound Player Block Placement packet (0x08).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerboundPlayerBlockPlacementPacket {
+    pub position: Position,
+    pub placed_block_direction: u8,
+    pub stack: Option<Slot>,
+    pub facing_x: u8,
+    pub facing_y: u8,
+    pub facing_z: u8,
+}
+
+impl ServerboundPlayerBlockPlacementPacket {
+    pub const PACKET_ID: i32 = 0x08;
+
+    pub fn new(
+        position: Position,
+        placed_block_direction: u8,
+        stack: Option<Slot>,
+        facing_x: u8,
+        facing_y: u8,
+        facing_z: u8,
+    ) -> Self {
+        Self {
+            position,
+            placed_block_direction,
+            stack,
+            facing_x,
+            facing_y,
+            facing_z,
+        }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        self.position.write(buf);
+        buf.extend_from_slice(&[self.placed_block_direction]);
+        write_slot(self.stack.as_ref(), buf)?;
+        buf.extend_from_slice(&[self.facing_x, self.facing_y, self.facing_z]);
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let position = Position::read(buf)?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let placed_block_direction = buf.get_u8();
+        let stack = read_slot(buf)?;
+        if buf.remaining() < 3 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 3,
+                available: buf.remaining(),
+            });
+        }
+        let facing_x = buf.get_u8();
+        let facing_y = buf.get_u8();
+        let facing_z = buf.get_u8();
+        Ok(Self {
+            position,
+            placed_block_direction,
+            stack,
+            facing_x,
+            facing_y,
+            facing_z,
+        })
+    }
+}
+
+/// Action types for Serverbound UseEntity packet (0x02).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UseEntityAction {
+    Interact = 0,
+    Attack = 1,
+    InteractAt = 2,
+}
+
+impl UseEntityAction {
+    pub fn from_i32(val: i32) -> Result<Self, ProtocolError> {
+        match val {
+            0 => Ok(Self::Interact),
+            1 => Ok(Self::Attack),
+            2 => Ok(Self::InteractAt),
+            _ => Err(ProtocolError::InvalidEnumValue {
+                enum_name: "UseEntityAction",
+                value: val,
+            }),
+        }
+    }
+}
+
+/// Serverbound Use Entity packet (0x02).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerboundUseEntityPacket {
+    pub entity_id: i32,
+    pub action: UseEntityAction,
+    pub target: Option<(f32, f32, f32)>,
+}
+
+impl ServerboundUseEntityPacket {
+    pub const PACKET_ID: i32 = 0x02;
+
+    pub fn new(entity_id: i32, action: UseEntityAction, target: Option<(f32, f32, f32)>) -> Self {
+        Self {
+            entity_id,
+            action,
+            target,
+        }
+    }
+
+    pub fn attack(entity_id: i32) -> Self {
+        Self {
+            entity_id,
+            action: UseEntityAction::Attack,
+            target: None,
+        }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.entity_id);
+        buf.write_varint(self.action as i32);
+        if self.action == UseEntityAction::InteractAt {
+            if let Some((x, y, z)) = self.target {
+                buf.extend_from_slice(&x.to_be_bytes());
+                buf.extend_from_slice(&y.to_be_bytes());
+                buf.extend_from_slice(&z.to_be_bytes());
+            } else {
+                buf.extend_from_slice(&[0u8; 12]);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let entity_id = buf.read_varint()?;
+        let action = UseEntityAction::from_i32(buf.read_varint()?)?;
+        let target = if action == UseEntityAction::InteractAt {
+            if buf.remaining() < 12 {
+                return Err(ProtocolError::BufferUnderflow {
+                    needed: 12,
+                    available: buf.remaining(),
+                });
+            }
+            Some((buf.get_f32(), buf.get_f32(), buf.get_f32()))
+        } else {
+            None
+        };
+        Ok(Self {
+            entity_id,
+            action,
+            target,
+        })
+    }
+}
+
+/// Serverbound Animation packet (Arm Swing) (0x0A).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ServerboundAnimationPacket;
+
+impl ServerboundAnimationPacket {
+    pub const PACKET_ID: i32 = 0x0A;
+
+    pub fn encode(&self, _buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        Ok(())
+    }
+
+    pub fn decode(_buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        Ok(Self)
     }
 }
 

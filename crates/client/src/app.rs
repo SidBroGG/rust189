@@ -6,12 +6,14 @@ use gui::{
     GuiOutput, Language, NametagInfo, ScaledResolution, ScreenManager,
 };
 use protocol::{
-    connect_offline, ClientboundPlayPacket, OutgoingPlayPacket, PlaySessionHandle,
+    connect_offline, BlockFace, ClientboundPlayPacket, DiggingAction, OutgoingPlayPacket,
+    PlaySessionHandle, Position, Slot, UseEntityAction,
 };
 use render::{
-    Camera, ChunkMeshManager, EntityRenderer, Frustum, GpuContext, TerrainRenderer, TextureAtlas,
+    Camera, ChunkMeshManager, EntityRenderer, Frustum, GpuContext, InteractionRenderer,
+    TerrainRenderer, TextureAtlas,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -24,8 +26,10 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Icon, Window, WindowId};
 use world::{
-    BlockState, CameraController, CameraPerspective, EntityKind, FrameStage, PerformanceProfiler,
-    PlayerInput, PlayerMovement, TrackedEntity, World,
+    get_block_selection_box, get_player_relative_block_hardness, is_critical_hit, is_water_block,
+    pick_target, BlockState, CameraController, CameraPerspective, ClickTracker, EntityKind,
+    EntitySpatialHash, FrameStage, ItemUseAction, ItemUseState, PerformanceProfiler, PlayerInput,
+    PlayerMovement, TargetHit, TrackedEntity, World, AABB,
 };
 
 pub struct App {
@@ -65,6 +69,20 @@ pub struct App {
     pub camera: Camera,
     pub mouse_grabbed: bool,
     pub pressed_keys: HashSet<KeyCode>,
+
+    // Interaction & Combat (Stage 11)
+    pub interaction_renderer: Option<InteractionRenderer>,
+    pub spatial_hash: EntitySpatialHash,
+    pub click_tracker: ClickTracker,
+    pub item_use_state: ItemUseState,
+    pub current_target: TargetHit,
+    pub breaking_block_pos: Option<(i32, i32, i32)>,
+    pub breaking_block_damage: f32,
+    pub breaking_block_face: BlockFace,
+    pub is_left_clicking: bool,
+    pub is_right_clicking: bool,
+    pub server_break_progress: HashMap<(i32, i32, i32), u8>,
+    pub held_item_id: i16,
 }
 
 impl App {
@@ -106,6 +124,19 @@ impl App {
             camera: Camera::default(),
             mouse_grabbed: false,
             pressed_keys: HashSet::new(),
+
+            interaction_renderer: None,
+            spatial_hash: EntitySpatialHash::new(4.0),
+            click_tracker: ClickTracker::new(),
+            item_use_state: ItemUseState::new(),
+            current_target: TargetHit::Miss,
+            breaking_block_pos: None,
+            breaking_block_damage: 0.0,
+            breaking_block_face: BlockFace::Up,
+            is_left_clicking: false,
+            is_right_clicking: false,
+            server_break_progress: HashMap::new(),
+            held_item_id: 276,
         }
     }
 
@@ -128,6 +159,256 @@ impl App {
             }
         }
         None
+    }
+
+    /// Returns the primary block texture key in the texture atlas for block break particles.
+    pub fn block_texture_name(id: u16) -> &'static str {
+        match id {
+            1 => "stone",
+            2 => "grass_top",
+            3 => "dirt",
+            4 => "cobblestone",
+            5 => "planks_oak",
+            7 => "bedrock",
+            12 => "sand",
+            13 => "gravel",
+            14 => "gold_ore",
+            15 => "iron_ore",
+            16 => "coal_ore",
+            17 => "log_oak",
+            18 => "leaves_oak",
+            20 => "glass",
+            24 => "sandstone_normal",
+            35 => "wool_colored_white",
+            45 => "brick",
+            49 => "obsidian",
+            56 => "diamond_ore",
+            57 => "diamond_block",
+            80 => "snow",
+            98 => "stonebrick",
+            _ => "stone",
+        }
+    }
+
+    pub fn handle_left_click(&mut self) {
+        if !self.has_spawned {
+            return;
+        }
+        self.click_tracker.register_left_click();
+
+        // Arm swing packet
+        if let Some(s) = &self.session {
+            s.send(OutgoingPlayPacket::Animation);
+        }
+
+        match self.current_target {
+            TargetHit::Entity(eh) => {
+                let entity_id = eh.entity_id;
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::UseEntity {
+                        entity_id,
+                        action: UseEntityAction::Attack,
+                        target: None,
+                    });
+                }
+
+                let is_crit = is_critical_hit(
+                    self.player.fall_distance,
+                    self.player_on_ground,
+                    false,
+                    false,
+                    false,
+                    false,
+                );
+
+                if let Some(ent) = self.world.entity_tracker.entities.get(&entity_id) {
+                    let pos = glam::Vec3::new(ent.pos.x as f32, (ent.pos.y + 0.8) as f32, ent.pos.z as f32);
+                    if let Some(ir) = &mut self.interaction_renderer {
+                        if is_crit {
+                            ir.spawn_crit_particles(pos, false, 14);
+                        } else if self.player.is_sprinting {
+                            ir.spawn_crit_particles(pos, true, 8);
+                        }
+                    }
+                }
+            }
+            TargetHit::Block(bh) => {
+                let pos = bh.block_pos;
+                let block = self.world.get_block(pos.0, pos.1, pos.2);
+                let in_water = is_water_block(
+                    self.world
+                        .get_block(
+                            self.player.pos.x.floor() as i32,
+                            (self.player.pos.y + 0.6).floor() as i32,
+                            self.player.pos.z.floor() as i32,
+                        )
+                        .id(),
+                );
+
+                let rel_damage = get_player_relative_block_hardness(
+                    block.id(),
+                    self.held_item_id,
+                    0,
+                    0,
+                    0,
+                    in_water,
+                    false,
+                    self.player_on_ground,
+                    self.player.capabilities.is_creative,
+                );
+
+                if rel_damage >= 1.0 {
+                    // Instant destroy (creative or zero-hardness block)
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerDigging {
+                            status: DiggingAction::StartDestroyBlock,
+                            position: Position::new(pos.0, pos.1, pos.2),
+                            facing: bh.face,
+                        });
+                        s.send(OutgoingPlayPacket::PlayerDigging {
+                            status: DiggingAction::StopDestroyBlock,
+                            position: Position::new(pos.0, pos.1, pos.2),
+                            facing: bh.face,
+                        });
+                    }
+                    self.world.set_block(pos.0, pos.1, pos.2, BlockState(0));
+                    let chunk_x = pos.0 >> 4;
+                    let chunk_z = pos.2 >> 4;
+                    let sec_idx = ((pos.1 >> 4) as usize).min(15);
+                    if let Some(cm) = &mut self.chunk_manager {
+                        cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                    }
+                    if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
+                        let tex_name = Self::block_texture_name(block.id());
+                        let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
+                        let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                        ir.spawn_digging_particles(center, region, 16);
+                    }
+                    self.breaking_block_pos = None;
+                    self.breaking_block_damage = 0.0;
+                } else {
+                    self.breaking_block_pos = Some(pos);
+                    self.breaking_block_damage = rel_damage;
+                    self.breaking_block_face = bh.face;
+
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerDigging {
+                            status: DiggingAction::StartDestroyBlock,
+                            position: Position::new(pos.0, pos.1, pos.2),
+                            facing: bh.face,
+                        });
+                    }
+                }
+            }
+            TargetHit::Miss => {}
+        }
+    }
+
+    pub fn handle_left_release(&mut self) {
+        if let Some(pos) = self.breaking_block_pos.take() {
+            self.breaking_block_damage = 0.0;
+            if let Some(s) = &self.session {
+                s.send(OutgoingPlayPacket::PlayerDigging {
+                    status: DiggingAction::AbortDestroyBlock,
+                    position: Position::new(pos.0, pos.1, pos.2),
+                    facing: self.breaking_block_face,
+                });
+            }
+        }
+    }
+
+    pub fn handle_right_click(&mut self) {
+        if !self.has_spawned {
+            return;
+        }
+        self.click_tracker.register_right_click();
+
+        let action = ItemUseState::get_action_for_item(self.held_item_id);
+        if action != ItemUseAction::None {
+            self.item_use_state.start_using(self.held_item_id);
+            return;
+        }
+
+        // Block placement (blocks 1..255)
+        if self.held_item_id > 0 && self.held_item_id < 256 {
+            if let TargetHit::Block(bh) = self.current_target {
+                let (dx, dy, dz) = bh.face.normal();
+                let place_pos = (bh.block_pos.0 + dx, bh.block_pos.1 + dy, bh.block_pos.2 + dz);
+
+                let place_aabb = AABB::new(
+                    place_pos.0 as f64,
+                    place_pos.1 as f64,
+                    place_pos.2 as f64,
+                    place_pos.0 as f64 + 1.0,
+                    place_pos.1 as f64 + 1.0,
+                    place_pos.2 as f64 + 1.0,
+                );
+
+                if !self.player.bounding_box.intersects(&place_aabb) {
+                    if let Some(s) = &self.session {
+                        let cursor_x = (bh.cursor_x * 16.0) as u8;
+                        let cursor_y = (bh.cursor_y * 16.0) as u8;
+                        let cursor_z = (bh.cursor_z * 16.0) as u8;
+
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
+                            direction: bh.face as u8,
+                            item: Some(Slot {
+                                item_id: self.held_item_id,
+                                item_count: 1,
+                                item_damage: 0,
+                                nbt: None,
+                            }),
+                            cursor_x,
+                            cursor_y,
+                            cursor_z,
+                        });
+                        s.send(OutgoingPlayPacket::Animation);
+                    }
+
+                    self.world.set_block(place_pos.0, place_pos.1, place_pos.2, BlockState(self.held_item_id as u16));
+                    let chunk_x = place_pos.0 >> 4;
+                    let chunk_z = place_pos.2 >> 4;
+                    let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
+                    if let Some(cm) = &mut self.chunk_manager {
+                        cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn handle_right_release(&mut self) {
+        if self.item_use_state.is_bow_drawing() {
+            if let Some((_vel, is_crit)) = self.item_use_state.release_bow() {
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::PlayerDigging {
+                        status: DiggingAction::ReleaseUseItem,
+                        position: Position::new(0, 0, 0),
+                        facing: BlockFace::Down,
+                    });
+                }
+                if is_crit {
+                    if let Some(ir) = &mut self.interaction_renderer {
+                        let spawn_pos = glam::Vec3::new(
+                            self.player.pos.x as f32,
+                            (self.player.pos.y as f32) + self.player.get_eye_height(),
+                            self.player.pos.z as f32,
+                        );
+                        ir.spawn_crit_particles(spawn_pos, false, 8);
+                    }
+                }
+            }
+        } else if self.item_use_state.active_action != ItemUseAction::None {
+            self.item_use_state.stop();
+            if let Some(s) = &self.session {
+                s.send(OutgoingPlayPacket::PlayerDigging {
+                    status: DiggingAction::ReleaseUseItem,
+                    position: Position::new(0, 0, 0),
+                    facing: BlockFace::Down,
+                });
+            }
+        }
     }
 
     fn initiate_connection(&mut self, server_ip: &str) {
@@ -869,6 +1150,14 @@ impl App {
                         }
                     }
                 }
+                ClientboundPlayPacket::BlockBreakAnim(bba) => {
+                    let pos = (bba.position.x, bba.position.y, bba.position.z);
+                    if bba.progress >= 0 && bba.progress <= 9 {
+                        self.server_break_progress.insert(pos, bba.progress as u8);
+                    } else {
+                        self.server_break_progress.remove(&pos);
+                    }
+                }
                 ClientboundPlayPacket::Unknown { payload_len, .. } => {
                     self.profiler.on_bytes_received(payload_len);
                 }
@@ -883,6 +1172,15 @@ impl App {
         while self.last_physics_tick.elapsed() >= Duration::from_millis(50) {
             self.last_physics_tick += Duration::from_millis(50);
             self.world.entity_tracker.tick();
+            self.spatial_hash.rebuild(&self.world.entity_tracker);
+
+            if self.is_right_clicking {
+                self.item_use_state.tick();
+            }
+
+            if let Some(ir) = &mut self.interaction_renderer {
+                ir.tick_particles(0.05);
+            }
 
             if self.has_spawned {
                 let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
@@ -897,6 +1195,92 @@ impl App {
                     input.jump = self.pressed_keys.contains(&KeyCode::Space);
                     input.sneak = self.pressed_keys.contains(&KeyCode::ShiftLeft) || self.pressed_keys.contains(&KeyCode::ShiftRight);
                     input.sprint = self.pressed_keys.contains(&KeyCode::ControlLeft) || self.pressed_keys.contains(&KeyCode::ControlRight);
+
+                    let speed_mult = self.item_use_state.movement_speed_multiplier();
+                    input.move_forward *= speed_mult;
+                    input.move_strafe *= speed_mult;
+                }
+
+                // Block destruction continuous tick
+                if self.is_left_clicking {
+                    if let Some(pos) = self.breaking_block_pos {
+                        let is_still_targeting = match self.current_target {
+                            TargetHit::Block(ref b) => b.block_pos == pos,
+                            _ => false,
+                        };
+
+                        if is_still_targeting {
+                            let block = self.world.get_block(pos.0, pos.1, pos.2);
+                            let in_water = is_water_block(
+                                self.world
+                                    .get_block(
+                                        self.player.pos.x.floor() as i32,
+                                        (self.player.pos.y + 0.6).floor() as i32,
+                                        self.player.pos.z.floor() as i32,
+                                    )
+                                    .id(),
+                            );
+
+                            let rel_damage = get_player_relative_block_hardness(
+                                block.id(),
+                                self.held_item_id,
+                                0,
+                                0,
+                                0,
+                                in_water,
+                                false,
+                                self.player_on_ground,
+                                self.player.capabilities.is_creative,
+                            );
+
+                            self.breaking_block_damage += rel_damage;
+
+                            if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
+                                let tex_name = Self::block_texture_name(block.id());
+                                let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
+                                let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                                ir.spawn_digging_particles(center, region, 2);
+                            }
+
+                            if self.breaking_block_damage >= 1.0 {
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::PlayerDigging {
+                                        status: DiggingAction::StopDestroyBlock,
+                                        position: Position::new(pos.0, pos.1, pos.2),
+                                        facing: self.breaking_block_face,
+                                    });
+                                }
+
+                                self.world.set_block(pos.0, pos.1, pos.2, BlockState(0));
+                                let chunk_x = pos.0 >> 4;
+                                let chunk_z = pos.2 >> 4;
+                                let sec_idx = ((pos.1 >> 4) as usize).min(15);
+                                if let Some(cm) = &mut self.chunk_manager {
+                                    cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                                }
+
+                                if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
+                                    let tex_name = Self::block_texture_name(block.id());
+                                    let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
+                                    let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                                    ir.spawn_digging_particles(center, region, 16);
+                                }
+
+                                self.breaking_block_pos = None;
+                                self.breaking_block_damage = 0.0;
+                            }
+                        } else {
+                            if let Some(s) = &self.session {
+                                s.send(OutgoingPlayPacket::PlayerDigging {
+                                    status: DiggingAction::AbortDestroyBlock,
+                                    position: Position::new(pos.0, pos.1, pos.2),
+                                    facing: self.breaking_block_face,
+                                });
+                            }
+                            self.breaking_block_pos = None;
+                            self.breaking_block_damage = 0.0;
+                        }
+                    }
                 }
 
                 let prev_sprint = self.player.is_sprinting;
@@ -1086,10 +1470,19 @@ impl ApplicationHandler for App {
         self.camera.aspect = (gpu.size.width as f32) / (gpu.size.height.max(1) as f32);
         self.camera.fov = self.config.video.fov as f32;
 
+        let interaction_renderer = InteractionRenderer::new(
+            &gpu.device,
+            gpu.surface_config.format,
+            TerrainRenderer::DEPTH_FORMAT,
+            &terrain_renderer.atlas_texture_view,
+            &terrain_renderer.atlas_sampler,
+        );
+
         self.atlas = Some(atlas);
         self.terrain_renderer = Some(terrain_renderer);
         self.chunk_manager = Some(chunk_manager);
         self.entity_renderer = Some(entity_renderer);
+        self.interaction_renderer = Some(interaction_renderer);
 
         self.window = Some(window);
         self.gpu = Some(gpu);
@@ -1199,19 +1592,50 @@ impl ApplicationHandler for App {
                 self.window.as_ref().unwrap().request_redraw();
             }
             WindowEvent::MouseInput {
-                button: winit::event::MouseButton::Left,
-                state: winit::event::ElementState::Pressed,
+                button,
+                state,
                 ..
             } if !consumed => {
                 let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
                 let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
-                if is_in_game && !cursor_needed && !self.mouse_grabbed {
-                    if let Some(w) = &self.window {
-                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
-                        w.set_cursor_visible(false);
-                        self.mouse_grabbed = true;
+
+                match button {
+                    winit::event::MouseButton::Left => {
+                        match state {
+                            winit::event::ElementState::Pressed => {
+                                if is_in_game && !cursor_needed && !self.mouse_grabbed {
+                                    if let Some(w) = &self.window {
+                                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                        w.set_cursor_visible(false);
+                                        self.mouse_grabbed = true;
+                                    }
+                                } else if is_in_game && self.mouse_grabbed {
+                                    self.is_left_clicking = true;
+                                    self.handle_left_click();
+                                }
+                            }
+                            winit::event::ElementState::Released => {
+                                self.is_left_clicking = false;
+                                self.handle_left_release();
+                            }
+                        }
                     }
+                    winit::event::MouseButton::Right => {
+                        match state {
+                            winit::event::ElementState::Pressed => {
+                                if is_in_game && self.mouse_grabbed {
+                                    self.is_right_clicking = true;
+                                    self.handle_right_click();
+                                }
+                            }
+                            winit::event::ElementState::Released => {
+                                self.is_right_clicking = false;
+                                self.handle_right_release();
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             WindowEvent::KeyboardInput {
@@ -1223,6 +1647,11 @@ impl ApplicationHandler for App {
                         winit::event::ElementState::Pressed => {
                             self.pressed_keys.insert(code);
                             if code == KeyCode::Escape && self.mouse_grabbed {
+                                self.is_left_clicking = false;
+                                self.is_right_clicking = false;
+                                self.handle_left_release();
+                                self.handle_right_release();
+
                                 if let Some(w) = &self.window {
                                     let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
                                     w.set_cursor_visible(true);
@@ -1237,6 +1666,32 @@ impl ApplicationHandler for App {
                 }
 
                 if !consumed && key_event.state == winit::event::ElementState::Pressed {
+                    if let PhysicalKey::Code(code) = key_event.physical_key {
+                        let hotbar_item = match code {
+                            KeyCode::Digit1 => Some(276), // Diamond Sword (Sword blocking)
+                            KeyCode::Digit2 => Some(261), // Bow (Pulling & Crit arrow)
+                            KeyCode::Digit3 => Some(278), // Diamond Pickaxe (Digging stone/ores)
+                            KeyCode::Digit4 => Some(279), // Diamond Axe (Digging wood)
+                            KeyCode::Digit5 => Some(277), // Diamond Shovel (Digging dirt/sand)
+                            KeyCode::Digit6 => Some(322), // Golden Apple (Eating)
+                            KeyCode::Digit7 => Some(1),   // Stone (Block placement)
+                            KeyCode::Digit8 => Some(5),   // Oak Wood Planks (Block placement)
+                            KeyCode::Digit9 => Some(0),   // Empty Hand
+                            _ => None,
+                        };
+                        if let Some(item_id) = hotbar_item {
+                            if self.held_item_id != item_id {
+                                self.held_item_id = item_id;
+                                if self.item_use_state.active_action != ItemUseAction::None {
+                                    self.item_use_state.stop();
+                                }
+                                if self.breaking_block_pos.is_some() {
+                                    self.handle_left_release();
+                                }
+                            }
+                        }
+                    }
+
                     let matches_fullscreen = matches_winit_key(
                         &self.config.keybinds.fullscreen_toggle,
                         &key_event.logical_key,
@@ -1591,6 +2046,53 @@ impl ApplicationHandler for App {
                         let (visible_opaque, visible_translucent) =
                             cm.get_visible_sections(&frustum, self.camera.position);
 
+                        // Raycast crosshair target picking (Vanilla 1.8 reach distances)
+                        let eye_pos = glam::DVec3::new(
+                            self.camera.position.x as f64,
+                            self.camera.position.y as f64,
+                            self.camera.position.z as f64,
+                        );
+                        let fwd = self.camera.forward();
+                        let look_dir = glam::DVec3::new(fwd.x as f64, fwd.y as f64, fwd.z as f64);
+                        self.current_target = pick_target(
+                            &self.world,
+                            &self.spatial_hash,
+                            eye_pos,
+                            look_dir,
+                            self.player.capabilities.is_creative,
+                            Some(self.player_entity_id),
+                        );
+
+                        if let Some(ir) = &mut self.interaction_renderer {
+                            ir.update_camera(&gpu.queue, &self.camera);
+
+                            match self.current_target {
+                                TargetHit::Block(bh) => {
+                                    let state = self.world.get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
+                                    let aabb = get_block_selection_box(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2, state);
+                                    ir.update_selection_box(&gpu.device, &aabb);
+                                }
+                                _ => {
+                                    ir.clear_selection_box();
+                                }
+                            }
+
+                            if let Some(pos) = self.breaking_block_pos {
+                                let stage = ((self.breaking_block_damage * 10.0) as usize).min(9);
+                                if let Some(atlas) = &self.atlas {
+                                    ir.update_block_cracks(&gpu.device, pos, stage, atlas);
+                                }
+                            } else if let Some((&pos, &stage)) = self.server_break_progress.iter().next() {
+                                if let Some(atlas) = &self.atlas {
+                                    ir.update_block_cracks(&gpu.device, pos, stage as usize, atlas);
+                                }
+                            } else {
+                                ir.clear_block_cracks();
+                            }
+
+                            ir.update_particle_mesh(&gpu.device, &self.camera);
+                        }
+
                         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("terrain-render-pass"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -1656,6 +2158,10 @@ impl ApplicationHandler for App {
                             };
 
                             er.render(&gpu.device, &gpu.queue, &mut rpass, &self.world.entity_tracker, partial_ticks, local_player_entity.as_ref());
+                        }
+
+                        if let Some(ir) = &self.interaction_renderer {
+                            ir.render(&mut rpass);
                         }
                     }
                 } else {

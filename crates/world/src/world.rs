@@ -53,6 +53,11 @@ impl World {
     }
 
     #[inline]
+    pub fn get_block(&self, x: i32, y: i32, z: i32) -> BlockState {
+        self.block_at(x, y, z)
+    }
+
+    #[inline]
     pub fn set_block(&mut self, x: i32, y: i32, z: i32, state: BlockState) {
         if !(0..=255).contains(&y) {
             return;

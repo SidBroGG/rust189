@@ -1659,5 +1659,41 @@ impl ClientboundConfirmTransactionPacket {
     }
 }
 
+/// Clientbound Block Break Animation packet (0x25).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundBlockBreakAnimPacket {
+    pub entity_id: i32,
+    pub position: Position,
+    pub progress: i8,
+}
+
+impl ClientboundBlockBreakAnimPacket {
+    pub const PACKET_ID: i32 = 0x25;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let entity_id = buf.read_varint()?;
+        let position = Position::read(buf)?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let progress = buf.get_i8();
+        Ok(Self {
+            entity_id,
+            position,
+            progress,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.entity_id);
+        self.position.write(buf);
+        buf.extend_from_slice(&[self.progress as u8]);
+        Ok(())
+    }
+}
+
 
 

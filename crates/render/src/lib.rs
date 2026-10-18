@@ -5,6 +5,7 @@ pub mod chunk_manager;
 pub mod context;
 pub mod entity_renderer;
 pub mod frustum;
+pub mod interaction_renderer;
 pub mod mesher;
 pub mod occlusion;
 pub mod terrain_renderer;
@@ -17,6 +18,7 @@ pub use chunk_manager::{ChunkMeshManager, GpuSectionMesh, NeighborhoodSnapshot, 
 pub use context::GpuContext;
 pub use entity_renderer::{EntityRenderer, EntityUniforms, EntityVertex};
 pub use frustum::{Frustum, Plane};
+pub use interaction_renderer::{InteractionRenderer, LineVertex, Particle, TexturedVertex};
 pub use mesher::{BlockWorldAccessor, ChunkMesher, SectionMeshData};
 pub use occlusion::{SectionVisibility, VisGraph};
 pub use terrain_renderer::{TerrainRenderer, TerrainUniforms};

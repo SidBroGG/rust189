@@ -1,3 +1,5 @@
+use crate::codec::position::Position;
+use crate::codec::slot::Slot;
 use crate::error::ProtocolError;
 use crate::packets::play::*;
 use crate::transport::stream::AsyncPacketStream;
@@ -52,6 +54,25 @@ pub enum OutgoingPlayPacket {
         action_number: i16,
         accepted: bool,
     },
+    PlayerDigging {
+        status: DiggingAction,
+        position: Position,
+        facing: BlockFace,
+    },
+    PlayerBlockPlacement {
+        position: Position,
+        direction: u8,
+        item: Option<Slot>,
+        cursor_x: u8,
+        cursor_y: u8,
+        cursor_z: u8,
+    },
+    UseEntity {
+        entity_id: i32,
+        action: UseEntityAction,
+        target: Option<(f32, f32, f32)>,
+    },
+    Animation,
 }
 
 impl OutgoingPlayPacket {
@@ -144,6 +165,48 @@ impl OutgoingPlayPacket {
                 let pkt = ServerboundConfirmTransactionPacket::new(*window_id, *action_number, *accepted);
                 pkt.encode(buf)?;
                 Ok(ServerboundConfirmTransactionPacket::PACKET_ID)
+            }
+            Self::PlayerDigging {
+                status,
+                position,
+                facing,
+            } => {
+                let pkt = ServerboundPlayerDiggingPacket::new(*status, *position, *facing);
+                pkt.encode(buf)?;
+                Ok(ServerboundPlayerDiggingPacket::PACKET_ID)
+            }
+            Self::PlayerBlockPlacement {
+                position,
+                direction,
+                item,
+                cursor_x,
+                cursor_y,
+                cursor_z,
+            } => {
+                let pkt = ServerboundPlayerBlockPlacementPacket::new(
+                    *position,
+                    *direction,
+                    item.clone(),
+                    *cursor_x,
+                    *cursor_y,
+                    *cursor_z,
+                );
+                pkt.encode(buf)?;
+                Ok(ServerboundPlayerBlockPlacementPacket::PACKET_ID)
+            }
+            Self::UseEntity {
+                entity_id,
+                action,
+                target,
+            } => {
+                let pkt = ServerboundUseEntityPacket::new(*entity_id, *action, *target);
+                pkt.encode(buf)?;
+                Ok(ServerboundUseEntityPacket::PACKET_ID)
+            }
+            Self::Animation => {
+                let pkt = ServerboundAnimationPacket;
+                pkt.encode(buf)?;
+                Ok(ServerboundAnimationPacket::PACKET_ID)
             }
         }
     }

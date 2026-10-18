@@ -43,6 +43,7 @@ pub enum ClientboundPlayPacket {
     Explosion(ClientboundExplosionPacket),
     PlayerAbilities(ClientboundPlayerAbilitiesPacket),
     ConfirmTransaction(ClientboundConfirmTransactionPacket),
+    BlockBreakAnim(ClientboundBlockBreakAnimPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -148,6 +149,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundConfirmTransactionPacket::PACKET_ID => {
                 Ok(Self::ConfirmTransaction(ClientboundConfirmTransactionPacket::decode(payload)?))
+            }
+            ClientboundBlockBreakAnimPacket::PACKET_ID => {
+                Ok(Self::BlockBreakAnim(ClientboundBlockBreakAnimPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,
@@ -416,4 +420,74 @@ mod tests {
         let decoded2 = ServerboundConfirmTransactionPacket::decode(&mut bytes2).unwrap();
         assert_eq!(server_pkt, decoded2);
     }
+
+    #[test]
+    fn test_stage11_packets_roundtrip() {
+        use crate::codec::position::Position;
+        use crate::codec::slot::Slot;
+
+        // 1. Digging
+        let dig = ServerboundPlayerDiggingPacket {
+            status: DiggingAction::StartDestroyBlock,
+            position: Position::new(12, 64, -34),
+            facing: BlockFace::Up,
+        };
+        let mut buf = BytesMut::new();
+        dig.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_dig = ServerboundPlayerDiggingPacket::decode(&mut bytes).unwrap();
+        assert_eq!(dig, decoded_dig);
+
+        // 2. Block placement
+        let place = ServerboundPlayerBlockPlacementPacket {
+            position: Position::new(10, 63, 10),
+            placed_block_direction: 1,
+            stack: Some(Slot::new(1, 64, 0, None)),
+            facing_x: 8,
+            facing_y: 16,
+            facing_z: 8,
+        };
+        let mut buf2 = BytesMut::new();
+        place.encode(&mut buf2).unwrap();
+        let mut bytes2 = buf2.freeze();
+        let decoded_place = ServerboundPlayerBlockPlacementPacket::decode(&mut bytes2).unwrap();
+        assert_eq!(place, decoded_place);
+
+        // 3. Use entity (Attack)
+        let attack = ServerboundUseEntityPacket::attack(42);
+        let mut buf3 = BytesMut::new();
+        attack.encode(&mut buf3).unwrap();
+        let mut bytes3 = buf3.freeze();
+        let decoded_attack = ServerboundUseEntityPacket::decode(&mut bytes3).unwrap();
+        assert_eq!(attack, decoded_attack);
+
+        // 4. Use entity (InteractAt)
+        let interact_at = ServerboundUseEntityPacket::new(42, UseEntityAction::InteractAt, Some((0.5, 1.2, 0.5)));
+        let mut buf4 = BytesMut::new();
+        interact_at.encode(&mut buf4).unwrap();
+        let mut bytes4 = buf4.freeze();
+        let decoded_interact = ServerboundUseEntityPacket::decode(&mut bytes4).unwrap();
+        assert_eq!(interact_at, decoded_interact);
+
+        // 5. Animation (Arm swing)
+        let anim = ServerboundAnimationPacket;
+        let mut buf5 = BytesMut::new();
+        anim.encode(&mut buf5).unwrap();
+        let mut bytes5 = buf5.freeze();
+        let decoded_anim = ServerboundAnimationPacket::decode(&mut bytes5).unwrap();
+        assert_eq!(anim, decoded_anim);
+
+        // 6. Block break animation
+        let break_anim = ClientboundBlockBreakAnimPacket {
+            entity_id: 101,
+            position: Position::new(5, 70, -8),
+            progress: 4,
+        };
+        let mut buf6 = BytesMut::new();
+        break_anim.encode(&mut buf6).unwrap();
+        let mut bytes6 = buf6.freeze();
+        let decoded_break = ClientboundBlockBreakAnimPacket::decode(&mut bytes6).unwrap();
+        assert_eq!(break_anim, decoded_break);
+    }
 }
+

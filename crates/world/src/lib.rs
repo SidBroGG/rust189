@@ -18,9 +18,15 @@ pub use entity::{EntityKind, EntityTracker, TrackedEntity};
 pub use morton::{decode_morton, encode_morton, linear_to_morton, morton_to_linear};
 pub use palette::{PaletteKind, PalettedContainer};
 pub use physics::{
-    get_block_collision_boxes, get_block_slipperiness, is_fluid_block, is_ladder_block,
-    is_lava_block, is_water_block, is_web_block, CameraController, CameraPerspective, CameraPose,
-    MouseFilter, PlayerInput, PlayerMovement, RayTraceResult, AABB,
+    calculate_tool_dig_efficiency, can_harvest_block, get_block_collision_boxes,
+    get_block_hardness, get_block_selection_box, get_block_slipperiness,
+    get_player_relative_block_hardness, get_tool_type, get_weapon_damage, is_critical_hit,
+    is_fluid_block, is_ladder_block, is_lava_block, is_tool_effective, is_water_block,
+    is_web_block, normal_to_face, pick_target, ray_trace_voxels, BlockRayHit,
+    CameraController, CameraPerspective, CameraPose, ClickTracker, EntityRayHit,
+    EntitySpatialHash, ItemUseAction, ItemUseState, MouseFilter, PlayerInput, PlayerMovement,
+    RayTraceResult, TargetHit, ToolMaterial, ToolType, AABB, CREATIVE_BLOCK_REACH,
+    CREATIVE_ENTITY_REACH, SURVIVAL_BLOCK_REACH, SURVIVAL_ENTITY_REACH,
 };
 pub use profiler::{BenchmarkSnapshot, FrameStage, FrameStageTimings, PerformanceProfiler};
 pub use scoreboard::{Scoreboard, ScoreboardObjective, ScoreboardTeam};

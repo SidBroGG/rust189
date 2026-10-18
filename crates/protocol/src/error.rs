@@ -52,4 +52,7 @@ pub enum ProtocolError {
 
     #[error("Encryption error: {0}")]
     EncryptionError(String),
+
+    #[error("Invalid enum value for {enum_name}: {value}")]
+    InvalidEnumValue { enum_name: &'static str, value: i32 },
 }

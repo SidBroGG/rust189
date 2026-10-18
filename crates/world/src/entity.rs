@@ -271,6 +271,43 @@ impl TrackedEntity {
         let swing = self.limb_swing - self.limb_swing_amount * (1.0 - pt);
         (swing, amount.min(1.0))
     }
+
+    /// Returns the AxisAlignedBB for this entity according to vanilla dimensions.
+    pub fn bounding_box(&self) -> crate::physics::aabb::AABB {
+        let (width, height) = match &self.kind {
+            EntityKind::Player { .. } => {
+                if self.is_sneaking {
+                    (0.6, 1.65)
+                } else {
+                    (0.6, 1.8)
+                }
+            }
+            EntityKind::Mob { mob_type } => match *mob_type {
+                54 => (0.6, 1.95), // Zombie
+                51 => (0.6, 1.99), // Skeleton
+                50 => (0.6, 1.7),  // Creeper
+                52 => (1.4, 0.9),  // Spider
+                58 => (0.6, 2.9),  // Enderman
+                100 => (1.4, 2.7), // Iron Golem
+                65 => (0.4, 0.3),  // Bat
+                _ => (0.6, 1.8),
+            },
+            EntityKind::Object { object_type, .. } => match *object_type {
+                60 | 61 | 62 => (0.5, 0.5), // Projectiles
+                2 => (0.25, 0.25),          // Item drop
+                _ => (0.5, 0.5),
+            },
+        };
+        let half_w = width * 0.5;
+        crate::physics::aabb::AABB::new(
+            self.pos.x - half_w,
+            self.pos.y,
+            self.pos.z - half_w,
+            self.pos.x + half_w,
+            self.pos.y + height,
+            self.pos.z + half_w,
+        )
+    }
 }
 
 /// Entity tracker that manages all alive entities in the world.
