@@ -1,7 +1,7 @@
 use crate::physics::aabb::AABB;
 use crate::physics::collision::{
-    get_block_slipperiness, is_any_liquid_in_aabb, is_ladder_block, is_lava_block, is_water_block,
-    is_web_block,
+    get_block_slipperiness, get_water_flow_vector, is_any_liquid_in_aabb, is_ladder_block,
+    is_lava_block, is_water_block, is_web_block, normalize_mcp,
 };
 use crate::world::World;
 use glam::DVec3;
@@ -307,26 +307,49 @@ impl PlayerMovement {
 
     /// Checks environment at current player position.
     fn check_environment(&mut self, world: &World) {
-        let bb = self.get_aabb().contract(0.001, 0.001, 0.001);
-        let min_x = bb.min_x.floor() as i32;
-        let max_x = (bb.max_x + 1.0).floor() as i32;
-        let min_y = (bb.min_y.floor() as i32).max(0);
-        let max_y = ((bb.max_y + 1.0).floor() as i32).min(256);
-        let min_z = bb.min_z.floor() as i32;
-        let max_z = (bb.max_z + 1.0).floor() as i32;
+        // Web check (contract by 0.001)
+        let web_bb = self.get_aabb().contract(0.001, 0.001, 0.001);
+        let min_x = web_bb.min_x.floor() as i32;
+        let max_x = (web_bb.max_x + 1.0).floor() as i32;
+        let min_y = (web_bb.min_y.floor() as i32).max(0);
+        let max_y = ((web_bb.max_y + 1.0).floor() as i32).min(256);
+        let min_z = web_bb.min_z.floor() as i32;
+        let max_z = (web_bb.max_z + 1.0).floor() as i32;
 
         self.is_in_web = false;
-        self.is_in_lava = false;
-
-        for bx in min_x..max_x {
+        'web_loop: for bx in min_x..max_x {
             for bz in min_z..max_z {
                 for by in min_y..max_y {
                     let id = world.block_at(bx, by, bz).id();
                     if is_web_block(id) {
                         self.is_in_web = true;
+                        break 'web_loop;
                     }
+                }
+            }
+        }
+
+        // Lava check matching MCP `Entity.isInLava` (expand by -0.1, -0.4, -0.1)
+        let lava_bb = self.get_aabb().expand(
+            -0.10000000149011612,
+            -0.4000000059604645,
+            -0.10000000149011612,
+        );
+        let l_min_x = lava_bb.min_x.floor() as i32;
+        let l_max_x = (lava_bb.max_x + 1.0).floor() as i32;
+        let l_min_y = (lava_bb.min_y.floor() as i32).max(0);
+        let l_max_y = ((lava_bb.max_y + 1.0).floor() as i32).min(256);
+        let l_min_z = lava_bb.min_z.floor() as i32;
+        let l_max_z = (lava_bb.max_z + 1.0).floor() as i32;
+
+        self.is_in_lava = false;
+        'lava_loop: for bx in l_min_x..l_max_x {
+            for bz in l_min_z..l_max_z {
+                for by in l_min_y..l_max_y {
+                    let id = world.block_at(bx, by, bz).id();
                     if is_lava_block(id) {
                         self.is_in_lava = true;
+                        break 'lava_loop;
                     }
                 }
             }
@@ -344,17 +367,30 @@ impl PlayerMovement {
         let w_min_z = water_bb.min_z.floor() as i32;
         let w_max_z = (water_bb.max_z + 1.0).floor() as i32;
 
+        let mut flow_vec = DVec3::ZERO;
         self.is_in_water = false;
-        'water_loop: for bx in w_min_x..w_max_x {
+
+        for bx in w_min_x..w_max_x {
             for bz in w_min_z..w_max_z {
                 for by in w_min_y..w_max_y {
-                    let id = world.block_at(bx, by, bz).id();
-                    if is_water_block(id) {
-                        self.is_in_water = true;
-                        break 'water_loop;
+                    let state = world.block_at(bx, by, bz);
+                    if is_water_block(state.id()) {
+                        let meta = (state.meta() & 15) as i32;
+                        let decay = if meta >= 8 { 0 } else { meta };
+                        let pct = (decay + 1) as f64 / 9.0;
+                        let surface_y = (by + 1) as f64 - pct;
+                        if (w_max_y as f64) >= surface_y {
+                            self.is_in_water = true;
+                            flow_vec += get_water_flow_vector(world, bx, by, bz);
+                        }
                     }
                 }
             }
+        }
+
+        if flow_vec.length_squared() > 0.0 && !self.capabilities.is_flying {
+            let push = normalize_mcp(flow_vec) * 0.014;
+            self.motion += push;
         }
 
         // Exact MCP `EntityLivingBase.isOnLadder` (lines 1134-1141):
@@ -479,6 +515,10 @@ impl PlayerMovement {
             }
         }
 
+        // Travel input scale matching MCP `EntityLivingBase.onLivingUpdate` lines 2031-2032
+        strafe *= 0.98;
+        forward *= 0.98;
+
         // Move with heading
         if self.capabilities.is_flying {
             let jump_factor = self.capabilities.fly_speed * if self.is_sprinting { 2.0 } else { 1.0 };
@@ -491,9 +531,9 @@ impl PlayerMovement {
             self.move_flying(strafe, forward, 0.02);
             let prev_y = self.pos.y;
             self.move_entity(world, self.motion.x, self.motion.y, self.motion.z);
-            self.motion.x *= 0.8;
-            self.motion.y *= 0.8;
-            self.motion.z *= 0.8;
+            self.motion.x *= 0.80000001192092896;
+            self.motion.y *= 0.800000011920929;
+            self.motion.z *= 0.80000001192092896;
             self.motion.y -= 0.02;
 
             // MCP `EntityLivingBase.java` line 1730:

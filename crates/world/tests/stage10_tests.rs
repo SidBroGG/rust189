@@ -523,4 +523,117 @@ fn test_cobblestone_wall_dimensions() {
     assert_eq!(boxes[0].max_y, 2.5, "Cobblestone wall height must be 1.5 blocks (1.0 + 1.5 = 2.5)");
 }
 
+#[test]
+fn test_water_climbing_onto_shore() {
+    let mut world = World::new();
+    // Deep water: bottom floor at y=50
+    for x in -2..=3 {
+        for z in -2..=3 {
+            world.set_block(x, 50, z, BlockState::new(1, 0));
+        }
+    }
+    // Water from y=51 to y=63 for x <= 0
+    for y in 51..=63 {
+        for x in -2..=0 {
+            for z in -2..=2 {
+                world.set_block(x, y, z, BlockState::new(8, 0)); // Flowing water
+            }
+        }
+    }
+    // Shore block at (1, 63, 0)
+    world.set_block(1, 63, 0, BlockState::new(1, 0)); // Stone shore
+    world.set_block(1, 63, 1, BlockState::new(1, 0));
+    world.set_block(1, 63, -1, BlockState::new(1, 0));
+
+    // Player starts floating near surface at (0.5, 63.0, 0.0), facing +X (yaw = -90.0)
+    let mut player = PlayerMovement::new(0.5, 63.0, 0.0);
+    player.yaw = -90.0;
+
+    let input = PlayerInput {
+        move_forward: 1.0,
+        move_strafe: 0.0,
+        jump: true,
+        sneak: false,
+        sprint: true,
+    };
+
+    println!("\n=== Starting Water Climb Test ===");
+    for tick in 0..40 {
+        player.tick(&world, &input);
+        println!(
+            "Tick {:2}: pos=({:.4}, {:.4}, {:.4}) motion=({:.4}, {:.4}, {:.4}) in_water={} coll_h={} on_ground={}",
+            tick,
+            player.pos.x,
+            player.pos.y,
+            player.pos.z,
+            player.motion.x,
+            player.motion.y,
+            player.motion.z,
+            player.is_in_water,
+            player.collided_horizontally,
+            player.on_ground,
+        );
+    }
+
+    // Verify whether the player successfully climbed onto the shore (pos.x > 1.0, pos.y >= 64.0)
+    println!("Final player pos: {:?}", player.pos);
+}
+
+#[test]
+fn test_water_climbing_natural_bank() {
+    let mut world = World::new();
+    // Deep water: bottom floor at y=50
+    for x in -2..=3 {
+        for z in -2..=3 {
+            world.set_block(x, 50, z, BlockState::new(1, 0));
+        }
+    }
+    // Water from y=51 to y=62 for x <= 0 (surface at 62.888)
+    for y in 51..=62 {
+        for x in -2..=0 {
+            for z in -2..=2 {
+                world.set_block(x, y, z, BlockState::new(8, 0));
+            }
+        }
+    }
+    // Shore blocks at x=1 for y <= 63 (top of bank is at y=64.0)
+    for y in 51..=63 {
+        world.set_block(1, y, 0, BlockState::new(1, 0));
+        world.set_block(1, y, 1, BlockState::new(1, 0));
+        world.set_block(1, y, -1, BlockState::new(1, 0));
+    }
+
+    // Player starts in water near surface at (0.5, 62.0, 0.0), facing +X (yaw = -90.0)
+    let mut player = PlayerMovement::new(0.5, 62.0, 0.0);
+    player.yaw = -90.0;
+
+    let input = PlayerInput {
+        move_forward: 1.0,
+        move_strafe: 0.0,
+        jump: true,
+        sneak: false,
+        sprint: false,
+    };
+
+    println!("\n=== Starting Natural Bank Climb Test ===");
+    for tick in 0..40 {
+        player.tick(&world, &input);
+        println!(
+            "Tick {:2}: pos=({:.4}, {:.4}, {:.4}) motion=({:.4}, {:.4}, {:.4}) in_water={} coll_h={} on_ground={}",
+            tick,
+            player.pos.x,
+            player.pos.y,
+            player.pos.z,
+            player.motion.x,
+            player.motion.y,
+            player.motion.z,
+            player.is_in_water,
+            player.collided_horizontally,
+            player.on_ground,
+        );
+    }
+
+    println!("Final natural bank player pos: {:?}", player.pos);
+}
+
 

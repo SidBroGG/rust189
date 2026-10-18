@@ -44,15 +44,15 @@ pub fn is_lava_block(block_id: u16) -> bool {
 /// Returns true if any liquid (water or lava) intersects the given bounding box (MCP `World.isAnyLiquid`).
 pub fn is_any_liquid_in_aabb(world: &World, bb: &AABB) -> bool {
     let min_x = bb.min_x.floor() as i32;
-    let max_x = (bb.max_x + 1.0).floor() as i32;
+    let max_x = bb.max_x.floor() as i32;
     let min_y = (bb.min_y.floor() as i32).max(0);
-    let max_y = ((bb.max_y + 1.0).floor() as i32).min(256);
+    let max_y = (bb.max_y.floor() as i32).min(255);
     let min_z = bb.min_z.floor() as i32;
-    let max_z = (bb.max_z + 1.0).floor() as i32;
+    let max_z = bb.max_z.floor() as i32;
 
-    for bx in min_x..max_x {
-        for bz in min_z..max_z {
-            for by in min_y..max_y {
+    for bx in min_x..=max_x {
+        for bz in min_z..=max_z {
+            for by in min_y..=max_y {
                 let id = world.block_at(bx, by, bz).id();
                 if is_fluid_block(id) {
                     return true;
@@ -61,6 +61,99 @@ pub fn is_any_liquid_in_aabb(world: &World, bb: &AABB) -> bool {
         }
     }
     false
+}
+
+/// Returns whether a block blocks movement (MCP `Material.blocksMovement`).
+#[inline]
+pub fn block_blocks_movement(id: u16) -> bool {
+    !matches!(
+        id,
+        0 | 6 | 8..=11 | 27 | 28 | 30 | 31 | 32 | 37..=40 | 50 | 51 | 55 | 59 | 63 | 66
+            | 68 | 69 | 70 | 72 | 75 | 76 | 77 | 83 | 90 | 104 | 105 | 115 | 119 | 131 | 132 | 141..=143 | 171 | 175
+    )
+}
+
+/// Returns effective flow decay for water at (x, y, z), or -1 if not water (MCP `BlockLiquid.getEffectiveFlowDecay`).
+#[inline]
+pub fn get_water_decay(world: &World, x: i32, y: i32, z: i32) -> i32 {
+    let state = world.block_at(x, y, z);
+    if is_water_block(state.id()) {
+        let meta = (state.meta() & 15) as i32;
+        if meta >= 8 { 0 } else { meta }
+    } else {
+        -1
+    }
+}
+
+/// Normalizes vector matching MCP `Vec3.normalize` (zero vector if length < 1.0E-4).
+#[inline]
+pub fn normalize_mcp(v: DVec3) -> DVec3 {
+    let len = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt();
+    if len < 1.0e-4 {
+        DVec3::ZERO
+    } else {
+        DVec3::new(v.x / len, v.y / len, v.z / len)
+    }
+}
+
+/// Calculates the flow vector for a water block at (x, y, z) matching MCP `BlockLiquid.getFlowVector`.
+pub fn get_water_flow_vector(world: &World, x: i32, y: i32, z: i32) -> DVec3 {
+    let mut vec = DVec3::ZERO;
+    let decay = get_water_decay(world, x, y, z);
+    if decay < 0 {
+        return DVec3::ZERO;
+    }
+
+    // Horizontal facings in MCP: NORTH (0, 0, -1), EAST (1, 0, 0), SOUTH (0, 0, 1), WEST (-1, 0, 0)
+    const HORIZONTALS: [(i32, i32, i32); 4] = [
+        (0, 0, -1),
+        (1, 0, 0),
+        (0, 0, 1),
+        (-1, 0, 0),
+    ];
+
+    for (dx, dy, dz) in HORIZONTALS {
+        let nx = x + dx;
+        let ny = y + dy;
+        let nz = z + dz;
+        let n_decay = get_water_decay(world, nx, ny, nz);
+
+        if n_decay < 0 {
+            let neighbor_id = world.block_at(nx, ny, nz).id();
+            if !block_blocks_movement(neighbor_id) {
+                let down_decay = get_water_decay(world, nx, ny - 1, nz);
+                if down_decay >= 0 {
+                    let k = down_decay - (decay - 8);
+                    vec.x += (dx * k) as f64;
+                    vec.z += (dz * k) as f64;
+                }
+            }
+        } else {
+            let l = n_decay - decay;
+            vec.x += (dx * l) as f64;
+            vec.z += (dz * l) as f64;
+        }
+    }
+
+    let meta = world.block_at(x, y, z).meta();
+    if meta >= 8 {
+        for (dx, _, dz) in HORIZONTALS {
+            let nx = x + dx;
+            let nz = z + dz;
+            let is_solid = |bx: i32, by: i32, bz: i32| -> bool {
+                let s = world.block_at(bx, by, bz);
+                let id = s.id();
+                !is_water_block(id) && id != 79 && id != 174 && s.is_opaque()
+            };
+            if is_solid(nx, y, nz) || is_solid(nx, y + 1, nz) {
+                let norm = normalize_mcp(vec);
+                vec = DVec3::new(norm.x, norm.y - 6.0, norm.z);
+                break;
+            }
+        }
+    }
+
+    normalize_mcp(vec)
 }
 
 
