@@ -35,7 +35,7 @@ impl NeighborhoodSnapshot {
         let mut block_light = vec![0u8; NEIGHBORHOOD_VOL].into_boxed_slice();
         let mut sky_light = vec![15u8; NEIGHBORHOOD_VOL].into_boxed_slice();
 
-        // Pre-fetch 3x3 surrounding chunk columns (only 9 hash lookups total instead of 17,496)
+        // Pre-fetch 3x3 surrounding chunk columns (only 9 hash lookups total)
         let mut cols: [[Option<&world::ChunkColumn>; 3]; 3] = [[None; 3]; 3];
         for dx in -1..=1 {
             for dz in -1..=1 {
@@ -46,11 +46,12 @@ impl NeighborhoodSnapshot {
 
         for sy in -1..=16 {
             let wy = base_y + sy;
-            let (valid_y, sec_idx, sec_y) = if (0..=255).contains(&wy) {
-                (true, (wy as usize) >> 4, (wy as usize) & 15)
-            } else {
-                (false, 0, 0)
-            };
+            if !(0..=255).contains(&wy) {
+                continue;
+            }
+            let sec_idx = (wy as usize) >> 4;
+            let sec_y = (wy as usize) & 15;
+            let base_sy_idx = (sy + 1) as usize * NEIGHBORHOOD_DIM;
 
             for sz in -1..=16 {
                 let (col_dz, rel_z) = if sz < 0 {
@@ -61,33 +62,66 @@ impl NeighborhoodSnapshot {
                     (1, sz as usize)
                 };
 
-                for sx in -1..=16 {
-                    let (col_dx, rel_x) = if sx < 0 {
-                        (0, 15)
-                    } else if sx >= 16 {
-                        (2, 0)
-                    } else {
-                        (1, sx as usize)
-                    };
+                let base_sz_idx = (base_sy_idx + (sz + 1) as usize) * NEIGHBORHOOD_DIM;
 
-                    let idx = (((sy + 1) as usize * NEIGHBORHOOD_DIM) + (sz + 1) as usize)
-                        * NEIGHBORHOOD_DIM
-                        + (sx + 1) as usize;
+                // 1. Center 16 voxels (sx = 0..15, col_dx = 1, rel_x = 0..15)
+                if let Some(col) = cols[1][col_dz] {
+                    if let Some(sec) = &col.sections[sec_idx] {
+                        if !sec.is_empty() {
+                            let out_idx = base_sz_idx + 1;
+                            let light_base = (sec_y << 8) | (rel_z << 4);
+                            let byte_idx = light_base >> 1;
 
-                    if valid_y {
-                        if let Some(col) = cols[col_dx][col_dz] {
-                            if let Some(sec) = &col.sections[sec_idx] {
-                                blocks[idx] = sec.block_at(rel_x, sec_y, rel_z);
-                                block_light[idx] = sec.block_light_at(rel_x, sec_y, rel_z);
-                                sky_light[idx] = sec.sky_light_at(rel_x, sec_y, rel_z);
-                                continue;
+                            for i in 0..8 {
+                                let b = sec.block_light[byte_idx + i];
+                                block_light[out_idx + i * 2] = b & 0x0F;
+                                block_light[out_idx + i * 2 + 1] = b >> 4;
+                            }
+
+                            if let Some(ref sky) = sec.sky_light {
+                                for i in 0..8 {
+                                    let b = sky[byte_idx + i];
+                                    sky_light[out_idx + i * 2] = b & 0x0F;
+                                    sky_light[out_idx + i * 2 + 1] = b >> 4;
+                                }
+                            }
+
+                            match &sec.blocks {
+                                world::PalettedContainer::SingleValue(s) => {
+                                    blocks[out_idx..out_idx + 16].fill(*s);
+                                }
+                                _ => {
+                                    for rel_x in 0..16 {
+                                        blocks[out_idx + rel_x] = sec.block_at(rel_x, sec_y, rel_z);
+                                    }
+                                }
                             }
                         }
                     }
+                }
 
-                    blocks[idx] = BlockState::AIR;
-                    block_light[idx] = 0;
-                    sky_light[idx] = 15;
+                // 2. West neighbor voxel (sx = -1, col_dx = 0, rel_x = 15)
+                if let Some(col) = cols[0][col_dz] {
+                    if let Some(sec) = &col.sections[sec_idx] {
+                        if !sec.is_empty() {
+                            let out_idx = base_sz_idx;
+                            blocks[out_idx] = sec.block_at(15, sec_y, rel_z);
+                            block_light[out_idx] = sec.block_light_at(15, sec_y, rel_z);
+                            sky_light[out_idx] = sec.sky_light_at(15, sec_y, rel_z);
+                        }
+                    }
+                }
+
+                // 3. East neighbor voxel (sx = 16, col_dx = 2, rel_x = 0)
+                if let Some(col) = cols[2][col_dz] {
+                    if let Some(sec) = &col.sections[sec_idx] {
+                        if !sec.is_empty() {
+                            let out_idx = base_sz_idx + 17;
+                            blocks[out_idx] = sec.block_at(0, sec_y, rel_z);
+                            block_light[out_idx] = sec.block_light_at(0, sec_y, rel_z);
+                            sky_light[out_idx] = sec.sky_light_at(0, sec_y, rel_z);
+                        }
+                    }
                 }
             }
         }
@@ -157,6 +191,7 @@ pub struct RawSectionMesh {
     pub key: SectionKey,
     pub mesh: SectionMeshData,
     pub epoch: u64,
+    pub task_id: u64,
 }
 
 /// GPU-allocated vertex and index buffers for a chunk section.
@@ -181,7 +216,9 @@ pub struct ChunkMeshManager {
     tx: Sender<RawSectionMesh>,
     rx: Receiver<RawSectionMesh>,
     pub gpu_meshes: HashMap<SectionKey, GpuSectionMesh>,
-    pub pending_tasks: HashSet<SectionKey>,
+    task_generations: HashMap<SectionKey, u64>,
+    uploaded_generations: HashMap<SectionKey, u64>,
+    next_task_id: u64,
     pub epoch: u64,
 }
 
@@ -210,9 +247,17 @@ impl ChunkMeshManager {
             tx,
             rx,
             gpu_meshes: HashMap::new(),
-            pending_tasks: HashSet::new(),
+            task_generations: HashMap::new(),
+            uploaded_generations: HashMap::new(),
+            next_task_id: 1,
             epoch: 0,
         }
+    }
+
+    #[inline]
+    pub fn has_mesh_or_pending(&self, chunk_x: i32, chunk_z: i32, section_y: usize) -> bool {
+        let key = (chunk_x, chunk_z, section_y);
+        self.gpu_meshes.contains_key(&key) || self.task_generations.contains_key(&key)
     }
 
     /// Enqueues a chunk section for background meshing.
@@ -230,24 +275,32 @@ impl ChunkMeshManager {
                 Some(sec) => {
                     if sec.is_empty() {
                         self.gpu_meshes.remove(&key);
+                        self.task_generations.remove(&key);
+                        self.uploaded_generations.remove(&key);
                         return;
                     }
                     sec.clone()
                 }
                 None => {
                     self.gpu_meshes.remove(&key);
+                    self.task_generations.remove(&key);
+                    self.uploaded_generations.remove(&key);
                     return;
                 }
             },
             None => {
                 self.gpu_meshes.remove(&key);
+                self.task_generations.remove(&key);
+                self.uploaded_generations.remove(&key);
                 return;
             }
         };
 
         // Capture fast 18x18x18 snapshot
         let snapshot = NeighborhoodSnapshot::capture(world, chunk_x, section_y, chunk_z);
-        self.pending_tasks.insert(key);
+        let task_id = self.next_task_id;
+        self.next_task_id = self.next_task_id.wrapping_add(1);
+        self.task_generations.insert(key, task_id);
 
         let tx = self.tx.clone();
         let epoch = self.epoch;
@@ -260,7 +313,7 @@ impl ChunkMeshManager {
                 &snapshot,
                 &atlas,
             );
-            let _ = tx.send(RawSectionMesh { key, mesh, epoch });
+            let _ = tx.send(RawSectionMesh { key, mesh, epoch, task_id });
         });
     }
 
@@ -286,10 +339,19 @@ impl ChunkMeshManager {
             }
 
             let key = raw.key;
-            if !self.pending_tasks.contains(&key) {
+            // Discard if this section was removed / unloaded
+            if !self.task_generations.contains_key(&key) {
                 continue;
             }
-            self.pending_tasks.remove(&key);
+
+            // Discard if an equal or newer task for this section has already been uploaded
+            if let Some(&uploaded_id) = self.uploaded_generations.get(&key) {
+                if raw.task_id <= uploaded_id {
+                    continue;
+                }
+            }
+
+            self.uploaded_generations.insert(key, raw.task_id);
 
             let base_x = (key.0 * 16) as f32;
             let base_y = (key.2 * 16) as f32;
@@ -340,11 +402,15 @@ impl ChunkMeshManager {
             };
 
             let instance = crate::vertex::SectionInstance::new(key.0, key.2, key.1);
-            let instance_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("section-instance-buf"),
-                contents: bytemuck::bytes_of(&instance),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+            let instance_buf = if opaque_vbuf.is_some() || translucent_vbuf.is_some() {
+                Some(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("section-instance-buf"),
+                    contents: bytemuck::bytes_of(&instance),
+                    usage: wgpu::BufferUsages::VERTEX,
+                }))
+            } else {
+                None
+            };
 
             self.gpu_meshes.insert(
                 key,
@@ -353,7 +419,7 @@ impl ChunkMeshManager {
                     aabb_min,
                     aabb_max,
                     center,
-                    instance_buf: Some(instance_buf),
+                    instance_buf,
                     opaque_vbuf,
                     opaque_ibuf,
                     opaque_index_count: raw.mesh.opaque_indices.len() as u32,
@@ -373,14 +439,16 @@ impl ChunkMeshManager {
     /// Unloads all section meshes belonging to a chunk column.
     pub fn remove_chunk(&mut self, chunk_x: i32, chunk_z: i32) {
         self.gpu_meshes.retain(|&(cx, cz, _), _| cx != chunk_x || cz != chunk_z);
-        self.pending_tasks.retain(|&(cx, cz, _)| cx != chunk_x || cz != chunk_z);
+        self.task_generations.retain(|&(cx, cz, _), _| cx != chunk_x || cz != chunk_z);
+        self.uploaded_generations.retain(|&(cx, cz, _), _| cx != chunk_x || cz != chunk_z);
     }
 
     /// Clears all GPU meshes and pending meshing tasks.
     pub fn clear(&mut self) {
         self.epoch = self.epoch.wrapping_add(1);
         self.gpu_meshes.clear();
-        self.pending_tasks.clear();
+        self.task_generations.clear();
+        self.uploaded_generations.clear();
         while self.rx.try_recv().is_ok() {}
     }
 

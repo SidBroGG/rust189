@@ -398,7 +398,9 @@ impl App {
                                 let nz = cd.chunk_z + dz;
                                 if self.world.chunks.contains_key(&(nx, nz)) {
                                     for sec_idx in 0..16 {
-                                        cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
+                                        if cm.has_mesh_or_pending(nx, nz, sec_idx) {
+                                            cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
+                                        }
                                     }
                                 }
                             }
@@ -419,13 +421,13 @@ impl App {
                                     cm.enqueue_section(&self.world, atlas.clone(), cd.chunk_x, sec_idx, cd.chunk_z);
                                 }
                             }
-                            // Re-enqueue adjacent chunk sections on borders so boundary faces cull and connected textures connect
+                            // Re-enqueue adjacent chunk sections on borders only if they already have meshes
                             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                                 let nx = cd.chunk_x + dx;
                                 let nz = cd.chunk_z + dz;
                                 if self.world.chunks.contains_key(&(nx, nz)) {
                                     for sec_idx in 0..16 {
-                                        if (cd.bit_mask & (1 << sec_idx)) != 0 {
+                                        if (cd.bit_mask & (1 << sec_idx)) != 0 && cm.has_mesh_or_pending(nx, nz, sec_idx) {
                                             cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
                                         }
                                     }
@@ -476,7 +478,7 @@ impl App {
                                     cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z);
                                 }
                             }
-                            // Re-enqueue adjacent outer chunk sections not in this bulk
+                            // Re-enqueue adjacent outer chunk sections not in this bulk that already have meshes
                             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                                 let nx = chunk_x + dx;
                                 let nz = chunk_z + dz;
@@ -484,7 +486,7 @@ impl App {
                                     && self.world.chunks.contains_key(&(nx, nz))
                                 {
                                     for sec_idx in 0..16 {
-                                        if (bit_mask & (1 << sec_idx)) != 0 {
+                                        if (bit_mask & (1 << sec_idx)) != 0 && cm.has_mesh_or_pending(nx, nz, sec_idx) {
                                             cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
                                         }
                                     }
@@ -510,19 +512,19 @@ impl App {
                         let rel_x = bc.position.x & 15;
                         let rel_y = bc.position.y & 15;
                         let rel_z = bc.position.z & 15;
-                        if rel_x == 0 && self.world.chunks.contains_key(&(chunk_x - 1, chunk_z)) {
+                        if rel_x == 0 && cm.has_mesh_or_pending(chunk_x - 1, chunk_z, sec_idx) {
                             cm.enqueue_section(&self.world, atlas.clone(), chunk_x - 1, sec_idx, chunk_z);
-                        } else if rel_x == 15 && self.world.chunks.contains_key(&(chunk_x + 1, chunk_z)) {
+                        } else if rel_x == 15 && cm.has_mesh_or_pending(chunk_x + 1, chunk_z, sec_idx) {
                             cm.enqueue_section(&self.world, atlas.clone(), chunk_x + 1, sec_idx, chunk_z);
                         }
-                        if rel_z == 0 && self.world.chunks.contains_key(&(chunk_x, chunk_z - 1)) {
+                        if rel_z == 0 && cm.has_mesh_or_pending(chunk_x, chunk_z - 1, sec_idx) {
                             cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z - 1);
-                        } else if rel_z == 15 && self.world.chunks.contains_key(&(chunk_x, chunk_z + 1)) {
+                        } else if rel_z == 15 && cm.has_mesh_or_pending(chunk_x, chunk_z + 1, sec_idx) {
                             cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z + 1);
                         }
-                        if rel_y == 0 && sec_idx > 0 {
+                        if rel_y == 0 && sec_idx > 0 && cm.has_mesh_or_pending(chunk_x, chunk_z, sec_idx - 1) {
                             cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx - 1, chunk_z);
-                        } else if rel_y == 15 && sec_idx < 15 {
+                        } else if rel_y == 15 && sec_idx < 15 && cm.has_mesh_or_pending(chunk_x, chunk_z, sec_idx + 1) {
                             cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx + 1, chunk_z);
                         }
                     }
@@ -567,7 +569,7 @@ impl App {
                             cm.enqueue_section(&self.world, atlas.clone(), mbc.chunk_x, sec_y, mbc.chunk_z);
                         }
                         for (nx, ny, nz) in neighbor_sections {
-                            if self.world.chunks.contains_key(&(nx, nz)) {
+                            if self.world.chunks.contains_key(&(nx, nz)) && cm.has_mesh_or_pending(nx, nz, ny) {
                                 cm.enqueue_section(&self.world, atlas.clone(), nx, ny, nz);
                             }
                         }

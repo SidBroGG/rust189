@@ -268,13 +268,23 @@ impl ChunkMesher {
                             if neighbor.is_opaque() {
                                 continue;
                             }
-                            if is_translucent && neighbor.id() == block_id {
-                                if matches!(block_id, 95 | 160) {
-                                    if neighbor.meta() == block.meta() {
+                            if is_translucent {
+                                if Self::is_water(block_id) {
+                                    if Self::is_water(neighbor.id()) {
                                         continue;
                                     }
-                                } else {
-                                    continue;
+                                } else if Self::is_lava(block_id) {
+                                    if Self::is_lava(neighbor.id()) {
+                                        continue;
+                                    }
+                                } else if neighbor.id() == block_id {
+                                    if matches!(block_id, 95 | 160) {
+                                        if neighbor.meta() == block.meta() {
+                                            continue;
+                                        }
+                                    } else {
+                                        continue;
+                                    }
                                 }
                             }
                             if is_leaf && matches!(neighbor.id(), 18 | 161) {
@@ -622,6 +632,16 @@ impl ChunkMesher {
             base_idx + 2,
             base_idx + 3,
         ]);
+    }
+
+    #[inline]
+    pub fn is_water(id: u16) -> bool {
+        matches!(id, 8 | 9)
+    }
+
+    #[inline]
+    pub fn is_lava(id: u16) -> bool {
+        matches!(id, 10 | 11)
     }
 
     #[inline]
@@ -1100,6 +1120,39 @@ mod tests {
         assert_eq!(
             bottom_outer_faces, 0,
             "Slime block bottom faces touching stone must be culled"
+        );
+    }
+
+    #[test]
+    fn test_water_still_and_flowing_culling() {
+        let atlas = TextureAtlas::build(Path::new("assets/minecraft/textures/blocks"));
+
+        // Still water (9) at (2, 2, 2) adjacent to Flowing water (8) at (3, 2, 2)
+        let mut section = ChunkSection::new(true);
+        section.set_block(2, 2, 2, BlockState::new(9, 0));
+        section.set_block(3, 2, 2, BlockState::new(8, 0));
+        let mut world = TestWorld {
+            blocks: hashbrown::HashMap::new(),
+        };
+        world.blocks.insert((2, 2, 2), BlockState::new(9, 0));
+        world.blocks.insert((3, 2, 2), BlockState::new(8, 0));
+
+        let mesh = ChunkMesher::mesh_section(&section, 0, 0, 0, &world, &atlas);
+        assert!(!mesh.translucent_vertices.is_empty());
+
+        // Check that there is NO water face between still water (9) and flowing water (8) at x = 3.0
+        let mut boundary_water_faces = 0;
+        for v in &mesh.translucent_vertices {
+            let u = v.unpack();
+            if (u.local_pos[0] - 3.0).abs() < 1e-3
+                && (u.normal_index == BlockFace::East.index() || u.normal_index == BlockFace::West.index())
+            {
+                boundary_water_faces += 1;
+            }
+        }
+        assert_eq!(
+            boundary_water_faces, 0,
+            "Internal water face between still water (9) and flowing water (8) must be culled"
         );
     }
 }

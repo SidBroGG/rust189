@@ -84,8 +84,8 @@ impl VisGraph {
         let mut opaque_bits = [0u64; 64];
         let opaque_count = section.fill_opaque_bits(&mut opaque_bits);
 
-        // Fast path 1: 0 opaque blocks (empty air or fully non-opaque foliage/glass)
-        if opaque_count == 0 {
+        // Fast path 1: fewer than 256 opaque blocks cannot block line-of-sight between any two faces (MCP VisGraph)
+        if opaque_count < 256 {
             return SectionVisibility::all_visible();
         }
 
