@@ -74,6 +74,7 @@ pub enum OutgoingPlayPacket {
     },
     Animation,
     HeldItemChange(i16),
+    ClientStatus(ClientStatusAction),
 }
 
 impl OutgoingPlayPacket {
@@ -213,6 +214,11 @@ impl OutgoingPlayPacket {
                 let pkt = ServerboundHeldItemChangePacket::new(*slot);
                 pkt.encode(buf)?;
                 Ok(ServerboundHeldItemChangePacket::PACKET_ID)
+            }
+            Self::ClientStatus(action) => {
+                let pkt = ServerboundClientStatusPacket::new(*action);
+                pkt.encode(buf)?;
+                Ok(ServerboundClientStatusPacket::PACKET_ID)
             }
         }
     }

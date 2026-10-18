@@ -141,6 +141,12 @@ fn translate_ru<'a>(key: &'a str) -> &'a str {
         "ingame.hide_fps" => "Скрыть телеметрию HUD (F3)",
         "ingame.show_fps" => "Показать телеметрию HUD (F3)",
 
+        // Death screen
+        "death.title" => "Вы погибли!",
+        "death.score" => "Счёт:",
+        "death.respawn" => "Возродиться",
+        "death.title_screen" => "В главное меню",
+
         // Audio tab
         "settings.audio.master" => "Общая громкость",
         "settings.audio.music" => "Музыка",
@@ -252,6 +258,12 @@ fn translate_en<'a>(key: &'a str) -> &'a str {
         "ingame.disconnect" => "Disconnect",
         "ingame.hide_fps" => "Hide HUD Telemetry (F3)",
         "ingame.show_fps" => "Show HUD Telemetry (F3)",
+
+        // Death screen
+        "death.title" => "You died!",
+        "death.score" => "Score:",
+        "death.respawn" => "Respawn",
+        "death.title_screen" => "Title Screen",
 
         // Audio tab
         "settings.audio.master" => "Master Volume",

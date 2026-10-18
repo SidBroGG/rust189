@@ -16,6 +16,7 @@ pub enum GuiOutput {
     ConnectToServer(String),
     DisconnectFromServer,
     SendChatMessage(String),
+    Respawn,
     Quit,
     NicknameUpdated(String),
     SettingsUpdated {
@@ -87,7 +88,7 @@ impl ScreenManager {
             return true;
         }
         if let Some(ig) = &self.in_game {
-            return ig.escape_menu_opened || ig.chat_opened || ig.hud_editor_opened;
+            return ig.escape_menu_opened || ig.chat_opened || ig.hud_editor_opened || ig.hud_data.health <= 0.0;
         }
         true
     }
@@ -137,6 +138,9 @@ impl ScreenManager {
                 }
                 InGameAction::SendChat(msg) => {
                     return GuiOutput::SendChatMessage(msg);
+                }
+                InGameAction::Respawn => {
+                    return GuiOutput::Respawn;
                 }
                 InGameAction::None => {}
             }

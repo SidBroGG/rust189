@@ -632,4 +632,55 @@ impl ServerboundHeldItemChangePacket {
     }
 }
 
+/// Serverbound Client Status action enum (Protocol 47).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientStatusAction {
+    PerformRespawn = 0,
+    RequestStats = 1,
+    OpenInventoryAchievement = 2,
+}
 
+/// Serverbound Client Status packet (0x16).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundClientStatusPacket {
+    pub action: ClientStatusAction,
+}
+
+impl ServerboundClientStatusPacket {
+    pub const PACKET_ID: i32 = 0x16;
+
+    pub fn new(action: ClientStatusAction) -> Self {
+        Self { action }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.action as i32);
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let val = buf.read_varint()?;
+        let action = match val {
+            0 => ClientStatusAction::PerformRespawn,
+            1 => ClientStatusAction::RequestStats,
+            2 => ClientStatusAction::OpenInventoryAchievement,
+            _ => ClientStatusAction::PerformRespawn,
+        };
+        Ok(Self { action })
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_client_status_packet_roundtrip() {
+        let pkt = ServerboundClientStatusPacket::new(ClientStatusAction::PerformRespawn);
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+
+        let mut bytes = buf.freeze();
+        let decoded = ServerboundClientStatusPacket::decode(&mut bytes).unwrap();
+        assert_eq!(decoded.action, ClientStatusAction::PerformRespawn);
+    }
+}

@@ -379,25 +379,15 @@ fn render_heart_icon(
     is_golden: bool,
     shake: f32,
 ) {
-    let hx = pos.x;
-    let hy = pos.y + shake;
+    let size = Vec2::new(7.0 * scale, 7.0 * scale);
+    let rect = Rect::from_min_size(Pos2::new(pos.x, pos.y + shake), size);
+    let cr = CornerRadius::same(1);
 
-    let bg_col = Color32::from_rgb(32, 10, 10);
-    let l_center = Pos2::new(hx + 2.2 * scale, hy + 2.2 * scale);
-    let r_center = Pos2::new(hx + 5.8 * scale, hy + 2.2 * scale);
-    let r_lobe = 2.4 * scale;
-
-    painter.circle_filled(l_center, r_lobe, bg_col);
-    painter.circle_filled(r_center, r_lobe, bg_col);
-    draw_polygon(
-        painter,
-        vec![
-            Pos2::new(hx + 0.2 * scale, hy + 2.6 * scale),
-            Pos2::new(hx + 4.0 * scale, hy + 7.8 * scale),
-            Pos2::new(hx + 7.8 * scale, hy + 2.6 * scale),
-        ],
-        bg_col,
-    );
+    // Empty container background
+    let bg_col = Color32::from_rgba_unmultiplied(35, 10, 10, 220);
+    let border_col = Color32::from_rgba_unmultiplied(20, 5, 5, 240);
+    painter.rect_filled(rect, cr, bg_col);
+    painter.rect_stroke(rect, cr, Stroke::new((1.0 * scale).max(0.5), border_col), egui::StrokeKind::Inside);
 
     let (fill_col, glint_col) = if is_golden {
         (Color32::from_rgb(255, 215, 0), Color32::from_rgb(255, 248, 180))
@@ -406,37 +396,18 @@ fn render_heart_icon(
     };
 
     if is_full {
-        let fill_r = 1.9 * scale;
-        painter.circle_filled(l_center, fill_r, fill_col);
-        painter.circle_filled(r_center, fill_r, fill_col);
-        draw_polygon(
-            painter,
-            vec![
-                Pos2::new(hx + 0.8 * scale, hy + 2.6 * scale),
-                Pos2::new(hx + 4.0 * scale, hy + 6.8 * scale),
-                Pos2::new(hx + 7.2 * scale, hy + 2.6 * scale),
-            ],
-            fill_col,
-        );
+        painter.rect_filled(rect, cr, fill_col);
         painter.rect_filled(
-            Rect::from_min_size(Pos2::new(hx + 1.8 * scale, hy + 1.2 * scale), Vec2::new(1.2 * scale, 1.2 * scale)),
+            Rect::from_min_size(Pos2::new(rect.left() + 1.2 * scale, rect.top() + 1.2 * scale), Vec2::new(1.5 * scale, 1.5 * scale)),
             CornerRadius::ZERO,
             glint_col,
         );
     } else if is_half {
-        let fill_r = 1.9 * scale;
-        painter.circle_filled(l_center, fill_r, fill_col);
-        draw_polygon(
-            painter,
-            vec![
-                Pos2::new(hx + 0.8 * scale, hy + 2.6 * scale),
-                Pos2::new(hx + 4.0 * scale, hy + 6.8 * scale),
-                Pos2::new(hx + 4.0 * scale, hy + 2.6 * scale),
-            ],
-            fill_col,
-        );
+        let half_w = 3.5 * scale;
+        let half_rect = Rect::from_min_size(rect.min, Vec2::new(half_w, size.y));
+        painter.rect_filled(half_rect, cr, fill_col);
         painter.rect_filled(
-            Rect::from_min_size(Pos2::new(hx + 1.8 * scale, hy + 1.2 * scale), Vec2::new(1.2 * scale, 1.2 * scale)),
+            Rect::from_min_size(Pos2::new(rect.left() + 1.0 * scale, rect.top() + 1.2 * scale), Vec2::new(1.2 * scale, 1.5 * scale)),
             CornerRadius::ZERO,
             glint_col,
         );
@@ -450,71 +421,65 @@ fn render_hunger_icon(
     is_full: bool,
     is_half: bool,
 ) {
-    let fx = pos.x;
-    let fy = pos.y;
+    let size = Vec2::new(7.0 * scale, 7.0 * scale);
+    let rect = Rect::from_min_size(pos, size);
+    let cr = CornerRadius::same(1);
 
-    let bg_col = Color32::from_rgba_unmultiplied(40, 20, 10, 160);
-    let bone_col = Color32::from_rgb(225, 218, 195);
+    // Empty container background
+    let bg_col = Color32::from_rgba_unmultiplied(40, 22, 12, 180);
+    let border_col = Color32::from_rgba_unmultiplied(20, 10, 5, 240);
+    painter.rect_filled(rect, cr, bg_col);
+    painter.rect_stroke(rect, cr, Stroke::new((1.0 * scale).max(0.5), border_col), egui::StrokeKind::Inside);
+
     let meat_col = Color32::from_rgb(188, 86, 26);
-    let meat_shade = Color32::from_rgb(138, 53, 8);
-    let highlight = Color32::from_rgb(232, 150, 61);
-
-    painter.line_segment(
-        [Pos2::new(fx + 1.2 * scale, fy + 6.8 * scale), Pos2::new(fx + 3.8 * scale, fy + 4.2 * scale)],
-        Stroke::new(1.6 * scale, if is_full || is_half { bone_col } else { bg_col }),
-    );
-    painter.circle_filled(
-        Pos2::new(fx + 1.0 * scale, fy + 7.0 * scale),
-        1.1 * scale,
-        if is_full || is_half { bone_col } else { bg_col },
-    );
-    painter.circle_filled(
-        Pos2::new(fx + 2.0 * scale, fy + 7.6 * scale),
-        1.1 * scale,
-        if is_full || is_half { bone_col } else { bg_col },
-    );
-
-    let bulb_center = Pos2::new(fx + 5.2 * scale, fy + 3.2 * scale);
-    let bulb_r = 2.8 * scale;
+    let hi_col = Color32::from_rgb(232, 150, 61);
 
     if is_full {
-        painter.circle_filled(bulb_center, bulb_r, meat_col);
-        painter.circle_stroke(bulb_center, bulb_r, Stroke::new(0.9 * scale, meat_shade));
-        painter.circle_filled(Pos2::new(fx + 4.8 * scale, fy + 2.2 * scale), 0.9 * scale, highlight);
+        painter.rect_filled(rect, cr, meat_col);
+        painter.rect_filled(
+            Rect::from_min_size(Pos2::new(rect.left() + 1.2 * scale, rect.top() + 1.2 * scale), Vec2::new(1.8 * scale, 1.5 * scale)),
+            CornerRadius::ZERO,
+            hi_col,
+        );
     } else if is_half {
-        painter.circle_filled(bulb_center, 1.8 * scale, meat_col);
-        painter.circle_filled(Pos2::new(fx + 4.8 * scale, fy + 2.2 * scale), 0.7 * scale, highlight);
-    } else {
-        painter.circle_filled(bulb_center, bulb_r, bg_col);
+        let half_w = 3.5 * scale;
+        let half_rect = Rect::from_min_size(Pos2::new(rect.left() + half_w, rect.top()), Vec2::new(half_w, size.y));
+        painter.rect_filled(half_rect, cr, meat_col);
+        painter.rect_filled(
+            Rect::from_min_size(Pos2::new(rect.left() + half_w + 0.8 * scale, rect.top() + 1.2 * scale), Vec2::new(1.2 * scale, 1.5 * scale)),
+            CornerRadius::ZERO,
+            hi_col,
+        );
     }
 }
 
 fn render_bubble_icon(painter: &Painter, center: Pos2, scale: f32, is_full: bool, is_popping: bool) {
+    let size = Vec2::new(7.0 * scale, 7.0 * scale);
+    let rect = Rect::from_center_size(center, size);
+    let cr = CornerRadius::same(2);
+
+    let bg_col = Color32::from_rgba_unmultiplied(15, 45, 75, 120);
+    let border_col = Color32::from_rgba_unmultiplied(40, 140, 200, 90);
+    painter.rect_filled(rect, cr, bg_col);
+    painter.rect_stroke(rect, cr, Stroke::new((1.0 * scale).max(0.5), border_col), egui::StrokeKind::Inside);
+
     if is_popping {
-        let drop_col = Color32::from_rgb(120, 210, 255);
-        painter.circle_filled(Pos2::new(center.x - 2.0 * scale, center.y - 2.0 * scale), 0.8 * scale, drop_col);
-        painter.circle_filled(Pos2::new(center.x + 2.0 * scale, center.y - 1.5 * scale), 0.8 * scale, drop_col);
-        painter.circle_filled(Pos2::new(center.x, center.y + 2.0 * scale), 0.8 * scale, drop_col);
+        let pop_col = Color32::from_rgb(120, 210, 255);
+        painter.rect_stroke(rect, cr, Stroke::new((1.0 * scale).max(0.5), pop_col), egui::StrokeKind::Inside);
+        painter.circle_filled(Pos2::new(center.x - 2.5 * scale, center.y - 2.5 * scale), 0.8 * scale, pop_col);
+        painter.circle_filled(Pos2::new(center.x + 2.5 * scale, center.y + 2.5 * scale), 0.8 * scale, pop_col);
     } else if is_full {
-        painter.circle_stroke(
-            center,
-            3.0 * scale,
-            Stroke::new(1.0 * scale, Color32::from_rgb(50, 175, 250)),
+        painter.rect_filled(rect, cr, Color32::from_rgba_unmultiplied(35, 125, 215, 210));
+        painter.rect_stroke(
+            rect,
+            cr,
+            Stroke::new((1.0 * scale).max(0.5), Color32::from_rgb(90, 195, 255)),
+            egui::StrokeKind::Inside,
         );
-        painter.circle_filled(
-            center,
-            2.5 * scale,
-            Color32::from_rgba_unmultiplied(15, 60, 140, 120),
-        );
-        painter.circle_filled(
-            Pos2::new(center.x - 1.0 * scale, center.y - 1.0 * scale),
-            1.0 * scale,
+        painter.rect_filled(
+            Rect::from_min_size(Pos2::new(rect.left() + 1.2 * scale, rect.top() + 1.2 * scale), Vec2::new(1.5 * scale, 1.5 * scale)),
+            CornerRadius::ZERO,
             Color32::WHITE,
-        );
-        painter.circle_filled(
-            Pos2::new(center.x + 1.2 * scale, center.y + 1.2 * scale),
-            0.5 * scale,
-            Color32::from_rgba_unmultiplied(200, 240, 255, 180),
         );
     }
 }
@@ -721,8 +686,8 @@ pub fn render_unified_hotbar(painter: &Painter, rect: Rect, data: &HudData, tick
 
         for i in 0..10 {
             let shake = if is_low_hp {
-                let s = ((tick_counter + i as u64 * 7) % 4) as f32;
-                if s == 1.0 { -1.5 * scale } else if s == 2.0 { 1.5 * scale } else { 0.0 }
+                let s = (tick_counter as f32 * 0.35 + i as f32 * 0.7).sin();
+                s * 0.5 * scale
             } else {
                 0.0
             };
@@ -873,8 +838,8 @@ pub fn render_vitals(painter: &Painter, rect: Rect, data: &HudData, tick_counter
 
     for i in 0..10 {
         let shake = if is_low_hp {
-            let s = ((tick_counter + i as u64 * 7) % 4) as f32;
-            if s == 1.0 { -1.5 * scale } else if s == 2.0 { 1.5 * scale } else { 0.0 }
+            let s = (tick_counter as f32 * 0.35 + i as f32 * 0.7).sin();
+            s * 0.5 * scale
         } else {
             0.0
         };

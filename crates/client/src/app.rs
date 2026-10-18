@@ -8,8 +8,8 @@ use gui::{
     ScaledResolution, ScreenManager,
 };
 use protocol::{
-    connect_offline, BlockFace, ClientboundPlayPacket, DiggingAction, OutgoingPlayPacket,
-    PlaySessionHandle, Position, Slot, UseEntityAction,
+    connect_offline, BlockFace, ClientStatusAction, ClientboundPlayPacket, DiggingAction,
+    OutgoingPlayPacket, PlaySessionHandle, Position, Slot, UseEntityAction,
 };
 use render::{
     Camera, ChunkMeshManager, EntityRenderer, Frustum, GpuContext, InteractionRenderer,
@@ -955,6 +955,8 @@ impl App {
                     info!(dimension = rp.dimension, "Respawned in dimension");
                     self.world.clear();
                     self.world.dimension = rp.dimension as i8;
+                    self.player_health = 20.0;
+                    self.player_air = 300;
                     if let Some(cm) = &mut self.chunk_manager {
                         cm.clear();
                     }
@@ -962,6 +964,8 @@ impl App {
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.dimension = rp.dimension as i8;
+                            ig.hud_data.health = 20.0;
+                            ig.death_ticks = 0;
                         }
                     }
                 }
@@ -2593,6 +2597,20 @@ impl ApplicationHandler for App {
                         if let Some(s) = &self.session {
                             info!(msg = %msg, "Sending chat message");
                             s.send(OutgoingPlayPacket::Chat(msg));
+                        }
+                    }
+                    GuiOutput::Respawn => {
+                        info!("Respawn requested, sending ClientStatus perform respawn packet");
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::ClientStatus(ClientStatusAction::PerformRespawn));
+                        }
+                        self.player_health = 20.0;
+                        self.player_air = 300;
+                        if let Some(sm) = &mut self.screen_manager {
+                            if let Some(ig) = &mut sm.in_game {
+                                ig.hud_data.health = 20.0;
+                                ig.death_ticks = 0;
+                            }
                         }
                     }
                     GuiOutput::NicknameUpdated(new_nick) => {

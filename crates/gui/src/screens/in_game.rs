@@ -26,6 +26,7 @@ pub enum InGameAction {
     Disconnect,
     OpenSettings,
     SendChat(String),
+    Respawn,
 }
 
 /// A timestamped chat line for smooth alpha fading.
@@ -65,6 +66,7 @@ pub struct InGameScreen {
     pub hud_data: HudData,
     pub layout_path: PathBuf,
     pub tick_counter: u64,
+    pub death_ticks: u32,
 
     request_chat_focus: bool,
 }
@@ -101,6 +103,7 @@ impl InGameScreen {
             hud_data: HudData::default(),
             layout_path,
             tick_counter: 0,
+            death_ticks: 0,
             request_chat_focus: false,
         }
     }
@@ -132,6 +135,93 @@ impl InGameScreen {
 
         let screen_rect = ctx.screen_rect();
         let screen_size = screen_rect.size();
+
+        // 1. Death Screen (GuiGameOver) handling when player health <= 0.0
+        if self.hud_data.health <= 0.0 {
+            self.death_ticks = self.death_ticks.saturating_add(1);
+            self.escape_menu_opened = false;
+            self.chat_opened = false;
+            self.hud_editor_opened = false;
+
+            // Fullscreen classic red vignette wash
+            let death_painter = ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("death_overlay")));
+            death_painter.rect_filled(
+                screen_rect,
+                CornerRadius::ZERO,
+                Color32::from_rgba_unmultiplied(110, 15, 15, 175),
+            );
+
+            let can_respawn = self.death_ticks >= 20;
+
+            Window::new("DeathScreenModal")
+                .anchor(Align2::CENTER_CENTER, Vec2::new(0.0, -10.0))
+                .title_bar(false)
+                .resizable(false)
+                .collapsible(false)
+                .frame(
+                    Frame::NONE
+                        .fill(Color32::from_rgba_unmultiplied(20, 10, 12, 235))
+                        .stroke(Stroke::new(1.5_f32, Color32::from_rgb(110, 25, 25)))
+                        .corner_radius(CornerRadius::same(8))
+                        .inner_margin(egui::Margin::symmetric(36, 28)),
+                )
+                .show(ctx, |ui| {
+                    ui.set_width(260.0);
+                    ui.vertical_centered(|ui| {
+                        // Title: "Вы погибли!" / "You died!"
+                        ui.label(
+                            RichText::new(t(self.language, "death.title"))
+                                .size(28.0)
+                                .color(Color32::from_rgb(255, 60, 60))
+                                .strong(),
+                        );
+                        ui.add_space(8.0);
+
+                        // Score: "Счёт: 0" / "Score: 0"
+                        let score = self.hud_data.exp_level;
+                        ui.label(
+                            RichText::new(format!("{} {}", t(self.language, "death.score"), score))
+                                .size(14.0)
+                                .color(Color32::from_rgb(255, 255, 120)),
+                        );
+
+                        ui.add_space(20.0);
+                        ui.separator();
+                        ui.add_space(16.0);
+
+                        let btn_size = Vec2::new(240.0, 34.0);
+
+                        // Respawn button (disabled for first 20 ticks = 1 second)
+                        let respawn_btn = egui::Button::new(
+                            RichText::new(t(self.language, "death.respawn"))
+                                .size(14.0)
+                                .color(if can_respawn { Color32::WHITE } else { Color32::from_rgb(120, 120, 120) })
+                                .strong(),
+                        );
+
+                        if ui.add_enabled(can_respawn, respawn_btn.min_size(btn_size)).clicked() {
+                            action = InGameAction::Respawn;
+                        }
+
+                        ui.add_space(8.0);
+
+                        // Return to title screen / Disconnect button
+                        let title_btn = egui::Button::new(
+                            RichText::new(t(self.language, "death.title_screen"))
+                                .size(14.0)
+                                .color(Color32::from_rgb(230, 230, 240)),
+                        );
+
+                        if ui.add_sized(btn_size, title_btn).clicked() {
+                            action = InGameAction::Disconnect;
+                        }
+                    });
+                });
+
+            return action;
+        } else {
+            self.death_ticks = 0;
+        }
 
         // If HUD editor is open, render editor exclusively
         if self.hud_editor_opened {
