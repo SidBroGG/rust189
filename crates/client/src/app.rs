@@ -346,7 +346,7 @@ impl App {
 
     pub fn handle_left_click(&mut self) {
         let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-        if !self.has_spawned && !is_in_game {
+        if (self.session.is_some() && !self.has_spawned) || !is_in_game {
             return;
         }
         self.recalculate_current_target();
@@ -478,7 +478,7 @@ impl App {
 
     pub fn handle_right_click(&mut self) {
         let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-        if !self.has_spawned && !is_in_game {
+        if (self.session.is_some() && !self.has_spawned) || !is_in_game {
             return;
         }
         self.recalculate_current_target();
@@ -957,7 +957,7 @@ impl App {
 
                     self.last_reported_pos = self.player_pos;
                     self.last_reported_look = self.player_look;
-                    self.position_update_ticks = 20;
+                    self.position_update_ticks = 0;
 
                     // Confirm position back to server and mark spawned (on_ground = false per MCP line 717)
                     self.has_spawned = true;
@@ -1607,7 +1607,8 @@ impl App {
             }
 
             let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-            if self.has_spawned || is_in_game {
+            let can_update_player = self.has_spawned || (self.session.is_none() && is_in_game);
+            if can_update_player {
                 let cursor_needed = self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed());
                 let mut input = PlayerInput::default();
 
@@ -1736,87 +1737,90 @@ impl App {
                     }
                 }
 
-                // Send entity action packets if sprint or sneak state changed (anticheat compliance)
-                if self.player.is_sprinting != prev_sprint {
+                // Send network packets only if player is fully spawned in world
+                if self.has_spawned {
+                    // Send entity action packets if sprint or sneak state changed (anticheat compliance)
+                    if self.player.is_sprinting != prev_sprint {
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::EntityAction {
+                                entity_id: self.player_entity_id,
+                                action: if self.player.is_sprinting {
+                                    protocol::EntityAction::StartSprinting
+                                } else {
+                                    protocol::EntityAction::StopSprinting
+                                },
+                                jump_boost: 0,
+                            });
+                        }
+                    }
+                    if self.player.is_sneaking != prev_sneak {
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::EntityAction {
+                                entity_id: self.player_entity_id,
+                                action: if self.player.is_sneaking {
+                                    protocol::EntityAction::StartSneaking
+                                } else {
+                                    protocol::EntityAction::StopSneaking
+                                },
+                                jump_boost: 0,
+                            });
+                        }
+                    }
+
+                    if self.player.abilities_dirty {
+                        self.player.abilities_dirty = false;
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::PlayerAbilities {
+                                is_flying: self.player.capabilities.is_flying,
+                            });
+                        }
+                    }
+
+                    // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
+                    let d0 = self.player_pos.0 - self.last_reported_pos.0;
+                    let d1 = self.player_pos.1 - self.last_reported_pos.1;
+                    let d2 = self.player_pos.2 - self.last_reported_pos.2;
+                    let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
+                    let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
+                    let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
+                    let flag3 = d3 != 0.0 || d4 != 0.0;
+
                     if let Some(s) = &self.session {
-                        s.send(OutgoingPlayPacket::EntityAction {
-                            entity_id: self.player_entity_id,
-                            action: if self.player.is_sprinting {
-                                protocol::EntityAction::StartSprinting
-                            } else {
-                                protocol::EntityAction::StopSprinting
-                            },
-                            jump_boost: 0,
-                        });
+                        if flag2 && flag3 {
+                            s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                                x: self.player_pos.0,
+                                y: self.player_pos.1,
+                                z: self.player_pos.2,
+                                yaw: self.player_look.0,
+                                pitch: self.player_look.1,
+                                on_ground: self.player_on_ground,
+                            });
+                        } else if flag2 {
+                            s.send(OutgoingPlayPacket::PlayerPosition {
+                                x: self.player_pos.0,
+                                y: self.player_pos.1,
+                                z: self.player_pos.2,
+                                on_ground: self.player_on_ground,
+                            });
+                        } else if flag3 {
+                            s.send(OutgoingPlayPacket::PlayerLook {
+                                yaw: self.player_look.0,
+                                pitch: self.player_look.1,
+                                on_ground: self.player_on_ground,
+                            });
+                        } else {
+                            s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
+                        }
                     }
-                }
-                if self.player.is_sneaking != prev_sneak {
-                    if let Some(s) = &self.session {
-                        s.send(OutgoingPlayPacket::EntityAction {
-                            entity_id: self.player_entity_id,
-                            action: if self.player.is_sneaking {
-                                protocol::EntityAction::StartSneaking
-                            } else {
-                                protocol::EntityAction::StopSneaking
-                            },
-                            jump_boost: 0,
-                        });
+
+                    self.position_update_ticks += 1;
+                    if flag2 {
+                        self.last_reported_pos = self.player_pos;
+                        self.position_update_ticks = 0;
                     }
-                }
-
-                if self.player.abilities_dirty {
-                    self.player.abilities_dirty = false;
-                    if let Some(s) = &self.session {
-                        s.send(OutgoingPlayPacket::PlayerAbilities {
-                            is_flying: self.player.capabilities.is_flying,
-                        });
+                    if flag3 {
+                        self.last_reported_look = self.player_look;
                     }
-                }
-
-                // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
-                let d0 = self.player_pos.0 - self.last_reported_pos.0;
-                let d1 = self.player_pos.1 - self.last_reported_pos.1;
-                let d2 = self.player_pos.2 - self.last_reported_pos.2;
-                let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
-                let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
-                let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
-                let flag3 = d3 != 0.0 || d4 != 0.0;
-
-                if let Some(s) = &self.session {
-                    if flag2 && flag3 {
-                        s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                            x: self.player_pos.0,
-                            y: self.player_pos.1,
-                            z: self.player_pos.2,
-                            yaw: self.player_look.0,
-                            pitch: self.player_look.1,
-                            on_ground: self.player_on_ground,
-                        });
-                    } else if flag2 {
-                        s.send(OutgoingPlayPacket::PlayerPosition {
-                            x: self.player_pos.0,
-                            y: self.player_pos.1,
-                            z: self.player_pos.2,
-                            on_ground: self.player_on_ground,
-                        });
-                    } else if flag3 {
-                        s.send(OutgoingPlayPacket::PlayerLook {
-                            yaw: self.player_look.0,
-                            pitch: self.player_look.1,
-                            on_ground: self.player_on_ground,
-                        });
-                    } else {
-                        s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
-                    }
-                }
-
-                self.position_update_ticks += 1;
-                if flag2 {
-                    self.last_reported_pos = self.player_pos;
-                    self.position_update_ticks = 0;
-                }
-                if flag3 {
-                    self.last_reported_look = self.player_look;
                 }
             }
         }

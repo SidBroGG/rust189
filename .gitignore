@@ -16,6 +16,7 @@
 # Local client runtime data & user configs
 /config.toml
 /servers.dat
+/hud_layout.toml
 /logs/
 *.log
 profile_benchmark.json
