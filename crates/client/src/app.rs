@@ -1651,18 +1651,8 @@ impl App {
                         sm.exit_in_game();
                     }
                 }
-                ClientboundPlayPacket::ConfirmTransaction(ct) => {
-                    // Handled automatically in session.rs Tokio network loop for lowest latency.
-                    // Fallback response here in case it needs application-level acknowledgement.
-                    if !ct.accepted {
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::ConfirmTransaction {
-                                window_id: ct.window_id,
-                                action_number: ct.action_number,
-                                accepted: true,
-                            });
-                        }
-                    }
+                ClientboundPlayPacket::ConfirmTransaction(_ct) => {
+                    // Acknowledged automatically in session.rs Tokio network loop to avoid duplicate responses and minimize jitter.
                 }
                 ClientboundPlayPacket::BlockBreakAnim(bba) => {
                     let pos = (bba.position.x, bba.position.y, bba.position.z);
