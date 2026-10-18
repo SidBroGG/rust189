@@ -85,6 +85,18 @@ pub fn is_stairs_block(id: u16) -> bool {
     )
 }
 
+/// Checks if a block at (x, y, z) is stairs with matching half and facing (MCP `BlockStairs.isSameStair`).
+#[inline]
+pub fn is_same_stair(world: &World, x: i32, y: i32, z: i32, half: u8, facing: u8) -> bool {
+    let state = world.block_at(x, y, z);
+    if is_stairs_block(state.id()) {
+        let meta = state.meta();
+        (meta & 4) == half && (meta & 3) == facing
+    } else {
+        false
+    }
+}
+
 /// Checks if a block is a fence.
 #[inline]
 pub fn is_fence_block(id: u16) -> bool {
@@ -136,8 +148,8 @@ pub fn get_block_collision_boxes(
     // Pass-through blocks with no solid collision
     match id {
         0 | 6 | 8 | 9 | 10 | 11 | 27 | 28 | 30 | 31 | 32 | 37 | 38 | 39 | 40 | 50 | 51 | 55
-        | 59 | 66 | 68 | 69 | 75 | 76 | 77 | 83 | 90 | 104 | 105 | 106 | 115 | 119
-        | 127 | 131 | 132 | 141 | 142 | 143 | 157 | 175 => return,
+        | 59 | 63 | 66 | 68 | 69 | 75 | 76 | 77 | 83 | 90 | 104 | 105 | 106 | 115 | 119
+        | 127 | 131 | 132 | 140 | 141 | 142 | 143 | 157 | 175 | 176 | 177 => return,
         _ => {}
     }
 
@@ -199,6 +211,82 @@ pub fn get_block_collision_boxes(
         return;
     }
 
+    // Soul Sand (88): 0.875 height (player sinks 0.125 blocks)
+    if id == 88 {
+        let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.875, fz + 1.0);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Snow layer (78): height is (layers - 1) * 0.125. 1 layer has no collision.
+    if id == 78 {
+        let layers = (meta & 7) + 1;
+        if layers > 1 {
+            let h = (layers - 1) as f64 * 0.125;
+            let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + h, fz + 1.0);
+            if bb.intersects(mask) {
+                boxes.push(bb);
+            }
+        }
+        return;
+    }
+
+    // Skull (144): small 0.5x0.5x0.5 cube
+    if id == 144 {
+        let bb = AABB::new(fx + 0.25, fy, fz + 0.25, fx + 0.75, fy + 0.5, fz + 0.75);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // End Portal Frame (120): 0.8125 height
+    if id == 120 {
+        let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.8125, fz + 1.0);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Enchantment Table (116): 0.75 height
+    if id == 116 {
+        let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.75, fz + 1.0);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Daylight Detector (151, 178): 0.375 height
+    if id == 151 || id == 178 {
+        let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.375, fz + 1.0);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Redstone Repeater & Comparator (93, 94, 149, 150): 0.125 height
+    if matches!(id, 93 | 94 | 149 | 150) {
+        let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.125, fz + 1.0);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Brewing Stand (117): base 0.125 height
+    if id == 117 {
+        let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.125, fz + 1.0);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
     // Half-Slabs (44, 126, 182)
     if matches!(id, 44 | 126 | 182) {
         let is_top = (meta & 8) != 0;
@@ -214,8 +302,40 @@ pub fn get_block_collision_boxes(
         return;
     }
 
-    // Fences (85, 188..192) & Cobblestone Walls (139): 1.5 blocks high
-    if is_fence_block(id) || id == 139 {
+    // Cobblestone Walls (139): MCP `BlockWall.java`
+    if id == 139 {
+        let north = can_fence_connect_to(world, x, y, z - 1);
+        let south = can_fence_connect_to(world, x, y, z + 1);
+        let west = can_fence_connect_to(world, x - 1, y, z);
+        let east = can_fence_connect_to(world, x + 1, y, z);
+
+        let mut f_west = 0.25;
+        let mut f_east = 0.75;
+        let mut f_north = 0.25;
+        let mut f_south = 0.75;
+
+        if north { f_north = 0.0; }
+        if south { f_south = 1.0; }
+        if west { f_west = 0.0; }
+        if east { f_east = 1.0; }
+
+        if north && south && !west && !east {
+            f_west = 0.3125;
+            f_east = 0.6875;
+        } else if !north && !south && west && east {
+            f_north = 0.3125;
+            f_south = 0.6875;
+        }
+
+        let bb = AABB::new(fx + f_west, fy, fz + f_north, fx + f_east, fy + 1.5, fz + f_south);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Fences (85, 188..192): 1.5 blocks high
+    if is_fence_block(id) {
         let north = can_fence_connect_to(world, x, y, z - 1);
         let south = can_fence_connect_to(world, x, y, z + 1);
         let west = can_fence_connect_to(world, x - 1, y, z);
@@ -348,9 +468,10 @@ pub fn get_block_collision_boxes(
         return;
     }
 
-    // Stairs: base slab + step pieces
+    // Stairs: base slab + step pieces (MCP `BlockStairs.addCollisionBoxesToList`)
     if is_stairs_block(id) {
         let is_top = (meta & 4) != 0;
+        let half = meta & 4;
         let facing = meta & 3; // 0=East(+X), 1=West(-X), 2=South(+Z), 3=North(-Z)
         let (base_y_min, base_y_max, step_y_min, step_y_max) = if is_top {
             (fy + 0.5, fy + 1.0, fy, fy + 0.5)
@@ -358,24 +479,166 @@ pub fn get_block_collision_boxes(
             (fy, fy + 0.5, fy + 0.5, fy + 1.0)
         };
 
-        // 1. Base slab
+        // 1. Base slab (MCP `setBaseCollisionBounds`)
         let base_bb = AABB::new(fx, base_y_min, fz, fx + 1.0, base_y_max, fz + 1.0);
         if base_bb.intersects(mask) {
             boxes.push(base_bb);
         }
 
-        // 2. Step piece
-        let (step_x_min, step_x_max, step_z_min, step_z_max) = match facing {
-            0 => (fx + 0.5, fx + 1.0, fz, fz + 1.0), // East (+X)
-            1 => (fx, fx + 0.5, fz, fz + 1.0),       // West (-X)
-            2 => (fx, fx + 1.0, fz + 0.5, fz + 1.0), // South (+Z)
-            _ => (fx, fx + 1.0, fz, fz + 0.5),       // North (-Z)
-        };
-        let step_bb = AABB::new(
-            step_x_min, step_y_min, step_z_min, step_x_max, step_y_max, step_z_max,
-        );
+        // 2. Step piece (MCP `func_176306_h`)
+        let mut f2 = 0.0;
+        let mut f3 = 1.0;
+        let mut f4 = 0.0;
+        let mut f5;
+        let mut flag1 = true;
+
+        match facing {
+            0 => { // East (+X)
+                f2 = 0.5;
+                f5 = 1.0;
+                let neighbor = world.block_at(x + 1, y, z);
+                if is_stairs_block(neighbor.id()) && (neighbor.meta() & 4) == half {
+                    let nf = neighbor.meta() & 3;
+                    if nf == 3 && !is_same_stair(world, x, y, z + 1, half, facing) {
+                        f5 = 0.5;
+                        flag1 = false;
+                    } else if nf == 2 && !is_same_stair(world, x, y, z - 1, half, facing) {
+                        f4 = 0.5;
+                        flag1 = false;
+                    }
+                }
+            }
+            1 => { // West (-X)
+                f3 = 0.5;
+                f5 = 1.0;
+                let neighbor = world.block_at(x - 1, y, z);
+                if is_stairs_block(neighbor.id()) && (neighbor.meta() & 4) == half {
+                    let nf = neighbor.meta() & 3;
+                    if nf == 3 && !is_same_stair(world, x, y, z + 1, half, facing) {
+                        f5 = 0.5;
+                        flag1 = false;
+                    } else if nf == 2 && !is_same_stair(world, x, y, z - 1, half, facing) {
+                        f4 = 0.5;
+                        flag1 = false;
+                    }
+                }
+            }
+            2 => { // South (+Z)
+                f4 = 0.5;
+                f5 = 1.0;
+                let neighbor = world.block_at(x, y, z + 1);
+                if is_stairs_block(neighbor.id()) && (neighbor.meta() & 4) == half {
+                    let nf = neighbor.meta() & 3;
+                    if nf == 1 && !is_same_stair(world, x + 1, y, z, half, facing) {
+                        f3 = 0.5;
+                        flag1 = false;
+                    } else if nf == 0 && !is_same_stair(world, x - 1, y, z, half, facing) {
+                        f2 = 0.5;
+                        flag1 = false;
+                    }
+                }
+            }
+            _ => { // North (-Z)
+                f4 = 0.0;
+                f5 = 0.5;
+                let neighbor = world.block_at(x, y, z - 1);
+                if is_stairs_block(neighbor.id()) && (neighbor.meta() & 4) == half {
+                    let nf = neighbor.meta() & 3;
+                    if nf == 1 && !is_same_stair(world, x + 1, y, z, half, facing) {
+                        f3 = 0.5;
+                        flag1 = false;
+                    } else if nf == 0 && !is_same_stair(world, x - 1, y, z, half, facing) {
+                        f2 = 0.5;
+                        flag1 = false;
+                    }
+                }
+            }
+        }
+
+        let step_bb = AABB::new(fx + f2, step_y_min, fz + f4, fx + f3, step_y_max, fz + f5);
         if step_bb.intersects(mask) {
             boxes.push(step_bb);
+        }
+
+        // 3. Corner step piece (MCP `func_176304_i`)
+        if flag1 {
+            let mut i_f2 = 0.0;
+            let mut i_f3 = 0.5;
+            let mut i_f4 = 0.5;
+            let mut i_f5 = 1.0;
+            let mut flag_add_second = false;
+
+            match facing {
+                0 => { // East
+                    let neighbor = world.block_at(x - 1, y, z);
+                    if is_stairs_block(neighbor.id()) && (neighbor.meta() & 4) == half {
+                        let nf = neighbor.meta() & 3;
+                        if nf == 3 && !is_same_stair(world, x, y, z - 1, half, facing) {
+                            i_f4 = 0.0;
+                            i_f5 = 0.5;
+                            flag_add_second = true;
+                        } else if nf == 2 && !is_same_stair(world, x, y, z + 1, half, facing) {
+                            i_f4 = 0.5;
+                            i_f5 = 1.0;
+                            flag_add_second = true;
+                        }
+                    }
+                }
+                1 => { // West
+                    let neighbor = world.block_at(x + 1, y, z);
+                    if is_stairs_block(neighbor.id()) && (neighbor.meta() & 4) == half {
+                        let nf = neighbor.meta() & 3;
+                        i_f2 = 0.5;
+                        i_f3 = 1.0;
+                        if nf == 3 && !is_same_stair(world, x, y, z - 1, half, facing) {
+                            i_f4 = 0.0;
+                            i_f5 = 0.5;
+                            flag_add_second = true;
+                        } else if nf == 2 && !is_same_stair(world, x, y, z + 1, half, facing) {
+                            i_f4 = 0.5;
+                            i_f5 = 1.0;
+                            flag_add_second = true;
+                        }
+                    }
+                }
+                2 => { // South
+                    let neighbor = world.block_at(x, y, z - 1);
+                    if is_stairs_block(neighbor.id()) && (neighbor.meta() & 4) == half {
+                        let nf = neighbor.meta() & 3;
+                        i_f4 = 0.0;
+                        i_f5 = 0.5;
+                        if nf == 1 && !is_same_stair(world, x - 1, y, z, half, facing) {
+                            flag_add_second = true;
+                        } else if nf == 0 && !is_same_stair(world, x + 1, y, z, half, facing) {
+                            i_f2 = 0.5;
+                            i_f3 = 1.0;
+                            flag_add_second = true;
+                        }
+                    }
+                }
+                _ => { // North
+                    let neighbor = world.block_at(x, y, z + 1);
+                    if is_stairs_block(neighbor.id()) && (neighbor.meta() & 4) == half {
+                        let nf = neighbor.meta() & 3;
+                        if nf == 1 && !is_same_stair(world, x - 1, y, z, half, facing) {
+                            flag_add_second = true;
+                        } else if nf == 0 && !is_same_stair(world, x + 1, y, z, half, facing) {
+                            i_f2 = 0.5;
+                            i_f3 = 1.0;
+                            flag_add_second = true;
+                        }
+                    }
+                }
+            }
+
+            if flag_add_second {
+                let second_step_bb = AABB::new(
+                    fx + i_f2, step_y_min, fz + i_f4, fx + i_f3, step_y_max, fz + i_f5,
+                );
+                if second_step_bb.intersects(mask) {
+                    boxes.push(second_step_bb);
+                }
+            }
         }
         return;
     }

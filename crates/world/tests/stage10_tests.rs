@@ -462,3 +462,65 @@ fn test_continuous_wall_collision_no_penetration_or_bounce() {
     }
 }
 
+#[test]
+fn test_push_out_of_blocks_ejection() {
+    let mut world = World::new();
+    // Solid block at (5, 1, 5)
+    world.set_block(5, 1, 5, BlockState::new(1, 0));
+    // Air around it at (4, 1, 5), (6, 1, 5), (5, 1, 4), (5, 1, 6)
+
+    let mut player = PlayerMovement::new(0.0, 0.0, 0.0);
+    // Test pushing out from a corner inside (5, 1, 5) close to west face (x = 5.05)
+    let pushed = player.push_out_of_blocks(&world, 5.05, 1.5, 5.5);
+    assert!(pushed, "Should push out of solid block");
+    assert_eq!(player.motion.x, -0.1, "Must push west with -0.1 impulse towards closest open block");
+
+    // Test pushing out close to east face (x = 5.95)
+    player.motion = DVec3::ZERO;
+    let pushed_east = player.push_out_of_blocks(&world, 5.95, 1.5, 5.5);
+    assert!(pushed_east);
+    assert_eq!(player.motion.x, 0.1, "Must push east with 0.1 impulse towards closest open block");
+}
+
+#[test]
+fn test_stairs_straight_and_corner_collision() {
+    let mut world = World::new();
+    let mask = AABB::new(-10.0, -10.0, -10.0, 20.0, 20.0, 20.0);
+
+    // 1. Straight east-facing stair (ID 53, meta 0)
+    let straight_stair = BlockState::new(53, 0);
+    let mut boxes = Vec::new();
+    get_block_collision_boxes(&world, 0, 1, 0, straight_stair, &mask, &mut boxes);
+    // Base slab + 1 step piece
+    assert_eq!(boxes.len(), 2, "Straight stair must produce base slab and step");
+    assert_eq!(boxes[0], AABB::new(0.0, 1.0, 0.0, 1.0, 1.5, 1.0)); // Base slab
+    assert_eq!(boxes[1], AABB::new(0.5, 1.5, 0.0, 1.0, 2.0, 1.0)); // East step (+X)
+
+    // 2. Corner stair: East stair connected to South stair on east (+X) side
+    world.set_block(0, 1, 0, BlockState::new(53, 0)); // East facing
+    world.set_block(1, 1, 0, BlockState::new(53, 2)); // South facing to the east
+    boxes.clear();
+    get_block_collision_boxes(&world, 0, 1, 0, BlockState::new(53, 0), &mask, &mut boxes);
+    // Outer corner stairs produce base slab + quarter step
+    assert_eq!(boxes.len(), 2);
+    assert_eq!(boxes[1], AABB::new(0.5, 1.5, 0.5, 1.0, 2.0, 1.0)); // Outer corner quarter step!
+}
+
+#[test]
+fn test_cobblestone_wall_dimensions() {
+    let world = World::new();
+    let mask = AABB::new(-10.0, -10.0, -10.0, 20.0, 20.0, 20.0);
+
+    // Isolated Cobblestone Wall (id 139)
+    let wall = BlockState::new(139, 0);
+    let mut boxes = Vec::new();
+    get_block_collision_boxes(&world, 0, 1, 0, wall, &mask, &mut boxes);
+    assert_eq!(boxes.len(), 1);
+    assert_eq!(boxes[0].min_x, 0.25);
+    assert_eq!(boxes[0].max_x, 0.75);
+    assert_eq!(boxes[0].min_z, 0.25);
+    assert_eq!(boxes[0].max_z, 0.75);
+    assert_eq!(boxes[0].max_y, 2.5, "Cobblestone wall height must be 1.5 blocks (1.0 + 1.5 = 2.5)");
+}
+
+

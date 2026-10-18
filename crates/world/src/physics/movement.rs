@@ -86,21 +86,36 @@ pub struct PlayerMovement {
 }
 
 impl PlayerMovement {
-    pub const WIDTH: f64 = 0.6;
-    pub const HEIGHT: f64 = 1.8;
-    pub const SNEAK_HEIGHT: f64 = 1.65;
+    pub const WIDTH: f32 = 0.6;
+    pub const HEIGHT: f32 = 1.8;
+    pub const SNEAK_HEIGHT: f32 = 1.65;
+    pub const STEP_HEIGHT: f32 = 0.6;
     pub const EYE_HEIGHT: f32 = 1.62;
     pub const SNEAK_EYE_HEIGHT: f32 = 1.54;
 
+    #[inline]
+    pub fn half_width() -> f64 {
+        (Self::WIDTH / 2.0) as f64
+    }
+
+    #[inline]
+    pub fn current_height(is_sneaking: bool) -> f64 {
+        if is_sneaking {
+            Self::SNEAK_HEIGHT as f64
+        } else {
+            Self::HEIGHT as f64
+        }
+    }
+
     pub fn new(x: f64, y: f64, z: f64) -> Self {
         let pos = DVec3::new(x, y, z);
-        let half_w = Self::WIDTH * 0.5;
+        let half_w = Self::half_width();
         let bounding_box = AABB::new(
             x - half_w,
             y,
             z - half_w,
             x + half_w,
-            y + Self::HEIGHT,
+            y + Self::current_height(false),
             z + half_w,
         );
         Self {
@@ -123,7 +138,7 @@ impl PlayerMovement {
             collided_horizontally: false,
             collided_vertically: false,
 
-            step_height: 0.6,
+            step_height: Self::STEP_HEIGHT,
             jump_boost: 0,
             fall_distance: 0.0,
             food_level: 20.0,
@@ -167,12 +182,8 @@ impl PlayerMovement {
     /// Sets the entity's position and reconstructs bounding box (MCP `Entity.setPosition`).
     pub fn set_position(&mut self, x: f64, y: f64, z: f64) {
         self.pos = DVec3::new(x, y, z);
-        let half_w = Self::WIDTH * 0.5;
-        let h = if self.is_sneaking {
-            Self::SNEAK_HEIGHT
-        } else {
-            Self::HEIGHT
-        };
+        let half_w = Self::half_width();
+        let h = Self::current_height(self.is_sneaking);
         self.bounding_box = AABB::new(
             x - half_w,
             y,
@@ -199,12 +210,8 @@ impl PlayerMovement {
         self.prev_pitch = pitch;
         self.pitch = pitch;
 
-        let half_w = Self::WIDTH * 0.5;
-        let h = if self.is_sneaking {
-            Self::SNEAK_HEIGHT
-        } else {
-            Self::HEIGHT
-        };
+        let half_w = Self::half_width();
+        let h = Self::current_height(self.is_sneaking);
         self.bounding_box = AABB::new(
             x - half_w,
             y,
@@ -213,6 +220,56 @@ impl PlayerMovement {
             y + h,
             z + half_w,
         );
+    }
+
+    /// Pushes the player out of solid full cubes (MCP `EntityPlayerSP.pushOutOfBlocks`).
+    pub fn push_out_of_blocks(&mut self, world: &World, x: f64, y: f64, z: f64) -> bool {
+        let bx = x.floor() as i32;
+        let by = y.floor() as i32;
+        let bz = z.floor() as i32;
+        let d0 = x - bx as f64;
+        let d1 = z - bz as f64;
+
+        let is_open_block_space = |cx: i32, cy: i32, cz: i32| -> bool {
+            !world.block_at(cx, cy, cz).is_opaque() && !world.block_at(cx, cy + 1, cz).is_opaque()
+        };
+
+        if !is_open_block_space(bx, by, bz) {
+            let mut i = -1;
+            let mut d2 = 9999.0;
+
+            if is_open_block_space(bx - 1, by, bz) && d0 < d2 {
+                d2 = d0;
+                i = 0;
+            }
+            if is_open_block_space(bx + 1, by, bz) && 1.0 - d0 < d2 {
+                d2 = 1.0 - d0;
+                i = 1;
+            }
+            if is_open_block_space(bx, by, bz - 1) && d1 < d2 {
+                d2 = d1;
+                i = 4;
+            }
+            if is_open_block_space(bx, by, bz + 1) && 1.0 - d1 < d2 {
+                i = 5;
+            }
+
+            let f = 0.1;
+            if i == 0 {
+                self.motion.x = -f;
+            }
+            if i == 1 {
+                self.motion.x = f;
+            }
+            if i == 4 {
+                self.motion.z = -f;
+            }
+            if i == 5 {
+                self.motion.z = f;
+            }
+            return true;
+        }
+        false
     }
 
     /// Returns eye height above player feet based on sneaking state.
@@ -362,12 +419,19 @@ impl PlayerMovement {
             self.is_sprinting = false;
             if !self.is_sneaking {
                 self.is_sneaking = true;
-                self.bounding_box.max_y = self.bounding_box.min_y + Self::SNEAK_HEIGHT;
+                self.bounding_box.max_y = self.bounding_box.min_y + Self::current_height(true);
             }
         } else if self.is_sneaking {
             self.is_sneaking = false;
-            self.bounding_box.max_y = self.bounding_box.min_y + Self::HEIGHT;
+            self.bounding_box.max_y = self.bounding_box.min_y + Self::current_height(false);
         }
+
+        // Push out of solid full cubes (MCP `EntityPlayerSP` lines 795-798)
+        let offset_w = (Self::WIDTH as f64) * 0.35;
+        self.push_out_of_blocks(world, self.pos.x - offset_w, self.bounding_box.min_y + 0.5, self.pos.z + offset_w);
+        self.push_out_of_blocks(world, self.pos.x - offset_w, self.bounding_box.min_y + 0.5, self.pos.z - offset_w);
+        self.push_out_of_blocks(world, self.pos.x + offset_w, self.bounding_box.min_y + 0.5, self.pos.z - offset_w);
+        self.push_out_of_blocks(world, self.pos.x + offset_w, self.bounding_box.min_y + 0.5, self.pos.z + offset_w);
 
         // Sprinting toggle and state validation
         if input.sprint

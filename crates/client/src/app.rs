@@ -343,7 +343,7 @@ impl App {
 
                     self.last_reported_pos = self.player_pos;
                     self.last_reported_look = self.player_look;
-                    self.position_update_ticks = 0;
+                    self.position_update_ticks = 20;
 
                     // Confirm position back to server and mark spawned (on_ground = false per MCP line 717)
                     self.has_spawned = true;

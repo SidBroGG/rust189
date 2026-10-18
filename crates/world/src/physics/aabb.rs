@@ -135,20 +135,16 @@ impl AABB {
             && other.max_z > self.min_z
             && other.min_z < self.max_z
         {
-            if offset_x > 0.0 && other.max_x <= self.min_x + 1e-9 {
-                let d1 = (self.min_x - other.max_x).max(0.0);
+            if offset_x > 0.0 && other.max_x <= self.min_x {
+                let d1 = self.min_x - other.max_x;
                 if d1 < offset_x {
                     offset_x = d1;
                 }
-            } else if offset_x < 0.0 && other.min_x >= self.max_x - 1e-9 {
-                let d0 = (self.max_x - other.min_x).min(0.0);
+            } else if offset_x < 0.0 && other.min_x >= self.max_x {
+                let d0 = self.max_x - other.min_x;
                 if d0 > offset_x {
                     offset_x = d0;
                 }
-            } else if offset_x > 0.0 && other.min_x < self.min_x && other.max_x < self.max_x {
-                offset_x = 0.0;
-            } else if offset_x < 0.0 && other.max_x > self.max_x && other.min_x > self.min_x {
-                offset_x = 0.0;
             }
         }
         offset_x
@@ -162,20 +158,16 @@ impl AABB {
             && other.max_z > self.min_z
             && other.min_z < self.max_z
         {
-            if offset_y > 0.0 && other.max_y <= self.min_y + 1e-9 {
-                let d1 = (self.min_y - other.max_y).max(0.0);
+            if offset_y > 0.0 && other.max_y <= self.min_y {
+                let d1 = self.min_y - other.max_y;
                 if d1 < offset_y {
                     offset_y = d1;
                 }
-            } else if offset_y < 0.0 && other.min_y >= self.max_y - 1e-9 {
-                let d0 = (self.max_y - other.min_y).min(0.0);
+            } else if offset_y < 0.0 && other.min_y >= self.max_y {
+                let d0 = self.max_y - other.min_y;
                 if d0 > offset_y {
                     offset_y = d0;
                 }
-            } else if offset_y > 0.0 && other.min_y < self.min_y && other.max_y < self.max_y {
-                offset_y = 0.0;
-            } else if offset_y < 0.0 && other.max_y > self.max_y && other.min_y > self.min_y {
-                offset_y = 0.0;
             }
         }
         offset_y
@@ -189,20 +181,16 @@ impl AABB {
             && other.max_y > self.min_y
             && other.min_y < self.max_y
         {
-            if offset_z > 0.0 && other.max_z <= self.min_z + 1e-9 {
-                let d1 = (self.min_z - other.max_z).max(0.0);
+            if offset_z > 0.0 && other.max_z <= self.min_z {
+                let d1 = self.min_z - other.max_z;
                 if d1 < offset_z {
                     offset_z = d1;
                 }
-            } else if offset_z < 0.0 && other.min_z >= self.max_z - 1e-9 {
-                let d0 = (self.max_z - other.min_z).min(0.0);
+            } else if offset_z < 0.0 && other.min_z >= self.max_z {
+                let d0 = self.max_z - other.min_z;
                 if d0 > offset_z {
                     offset_z = d0;
                 }
-            } else if offset_z > 0.0 && other.min_z < self.min_z && other.max_z < self.max_z {
-                offset_z = 0.0;
-            } else if offset_z < 0.0 && other.max_z > self.max_z && other.min_z > self.min_z {
-                offset_z = 0.0;
             }
         }
         offset_z
