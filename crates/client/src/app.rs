@@ -245,11 +245,79 @@ impl App {
             301 => ("Leather Boots", 65),
             322 => ("Golden Apple", 0),
             368 => ("Ender Pearl", 0),
+            373 => ("Potion", 0),
+            260 => ("Apple", 0),
+            262 => ("Arrow", 0),
+            263 => ("Coal", 0),
+            264 => ("Diamond", 0),
+            265 => ("Iron Ingot", 0),
+            266 => ("Gold Ingot", 0),
+            280 => ("Stick", 0),
+            281 => ("Bowl", 0),
+            287 => ("String", 0),
+            288 => ("Feather", 0),
+            289 => ("Gunpowder", 0),
+            296 => ("Wheat", 0),
+            297 => ("Bread", 0),
+            318 => ("Flint", 0),
+            319 => ("Raw Porkchop", 0),
+            320 => ("Cooked Porkchop", 0),
+            325 => ("Bucket", 0),
+            326 => ("Water Bucket", 0),
+            327 => ("Lava Bucket", 0),
+            331 => ("Redstone", 0),
+            332 => ("Snowball", 0),
+            344 => ("Egg", 0),
+            345 => ("Compass", 0),
+            346 => ("Fishing Rod", 64),
+            347 => ("Clock", 0),
+            352 => ("Bone", 0),
+            353 => ("Sugar", 0),
+            364 => ("Steak", 0),
+            367 => ("Rotten Flesh", 0),
+            369 => ("Blaze Rod", 0),
+            381 => ("Eye of Ender", 0),
+            384 => ("Bottle o' Enchanting", 0),
+            388 => ("Emerald", 0),
+            399 => ("Nether Star", 0),
             1 => ("Stone", 0),
+            2 => ("Grass Block", 0),
+            3 => ("Dirt", 0),
+            4 => ("Cobblestone", 0),
             5 => ("Wood Planks", 0),
+            7 => ("Bedrock", 0),
+            12 => ("Sand", 0),
+            13 => ("Gravel", 0),
+            14 => ("Gold Ore", 0),
+            15 => ("Iron Ore", 0),
+            16 => ("Coal Ore", 0),
+            17 => ("Wood Log", 0),
+            18 => ("Leaves", 0),
+            19 => ("Sponge", 0),
+            20 => ("Glass", 0),
+            22 => ("Lapis Block", 0),
+            35 => ("Wool", 0),
+            41 => ("Gold Block", 0),
+            42 => ("Iron Block", 0),
+            45 => ("Bricks", 0),
+            46 => ("TNT", 0),
+            47 => ("Bookshelf", 0),
+            48 => ("Moss Stone", 0),
+            49 => ("Obsidian", 0),
+            50 => ("Torch", 0),
+            54 => ("Chest", 0),
+            56 => ("Diamond Ore", 0),
+            57 => ("Diamond Block", 0),
+            58 => ("Crafting Table", 0),
+            61 => ("Furnace", 0),
+            87 => ("Netherrack", 0),
+            89 => ("Glowstone", 0),
+            133 => ("Emerald Block", 0),
             _ => ("Item", 0),
         };
-        HudItemInfo::new(slot.item_id, slot.item_count, slot.item_damage, max_dur, name)
+        let mut info = HudItemInfo::new(slot.item_id, slot.item_count, slot.item_damage, max_dur, name);
+        info.is_enchanted = slot.is_enchanted();
+        info
     }
 
     /// Converts a Protocol 47 potion effect ID into displayable HUD potion info.
@@ -1466,6 +1534,15 @@ impl App {
                     self.world.entity_tracker.equipment(eq.entity_id, eq.slot, eq.item);
                 }
                 ClientboundPlayPacket::EntityMetadata(em) => {
+                    if em.entity_id == self.player_entity_id {
+                        for meta in &em.metadata {
+                            if meta.index == 1 {
+                                if let protocol::MetadataValue::Short(air_val) = meta.value {
+                                    self.player_air = air_val;
+                                }
+                            }
+                        }
+                    }
                     self.world.entity_tracker.update_metadata(em.entity_id, em.metadata);
                 }
                 ClientboundPlayPacket::Disconnect(dc) => {
@@ -1758,6 +1835,20 @@ impl App {
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                 self.player_look = (self.player.yaw, self.player.pitch);
                 self.player_on_ground = self.player.on_ground;
+
+                // Underwater breathing logic (MCP 1.8.9 EntityLivingBase.onEntityUpdate)
+                let eye_y = self.player.pos.y + self.player.get_eye_height() as f64;
+                let eye_block = self.world.get_block(
+                    self.player.pos.x.floor() as i32,
+                    eye_y.floor() as i32,
+                    self.player.pos.z.floor() as i32,
+                ).id();
+                let is_head_in_water = eye_block == 8 || eye_block == 9;
+                if is_head_in_water {
+                    self.player_air = (self.player_air - 1).max(0);
+                } else {
+                    self.player_air = 300;
+                }
 
                 if let Some(sm) = &mut self.screen_manager {
                     if let Some(ig) = &mut sm.in_game {
@@ -2418,8 +2509,15 @@ impl ApplicationHandler for App {
                         ig.hud_data.absorption = self.player_absorption;
                         ig.hud_data.food = self.player_food;
                         ig.hud_data.saturation = self.player_saturation;
+                        let eye_y = self.player.pos.y + self.player.get_eye_height() as f64;
+                        let eye_block = self.world.get_block(
+                            self.player.pos.x.floor() as i32,
+                            eye_y.floor() as i32,
+                            self.player.pos.z.floor() as i32,
+                        ).id();
+                        let is_head_in_water = eye_block == 8 || eye_block == 9;
                         ig.hud_data.air = self.player_air;
-                        ig.hud_data.is_in_water = self.player.is_in_water;
+                        ig.hud_data.is_in_water = is_head_in_water;
                         ig.hud_data.exp_level = self.player_exp_level;
                         ig.hud_data.exp_progress = self.player_exp_progress;
                         ig.hud_data.selected_hotbar_slot = self.selected_hotbar_slot;

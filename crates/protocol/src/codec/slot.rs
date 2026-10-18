@@ -20,6 +20,15 @@ impl Slot {
             nbt,
         }
     }
+
+    /// Checks if the item in the slot contains enchantment data in its NBT compound.
+    pub fn is_enchanted(&self) -> bool {
+        if let Some(NbtTag::Compound(map)) = &self.nbt {
+            map.contains_key("ench") || map.contains_key("StoredEnchantments")
+        } else {
+            false
+        }
+    }
 }
 
 /// Reads an inventory slot from the buffer.

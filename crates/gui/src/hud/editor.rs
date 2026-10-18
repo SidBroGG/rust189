@@ -242,17 +242,19 @@ pub fn render_hud_editor(
         let is_selected = state.selected_id.as_deref() == Some(id.as_str());
         let is_hovered = rect.contains(mouse_pos) && !pointer_over_ui;
 
-        // Draw element background and border with global opacity
-        if bg_alpha > 0 {
-            elem_painter.rect_filled(rect, CornerRadius::same(4), elem_bg_col);
-        }
-        if border_alpha > 0 {
-            elem_painter.rect_stroke(
-                rect,
-                CornerRadius::same(4),
-                Stroke::new(1.0_f32, elem_border_col),
-                egui::StrokeKind::Inside,
-            );
+        // Draw element background and border with global opacity (unless hotbar)
+        if id != "hotbar" {
+            if bg_alpha > 0 {
+                elem_painter.rect_filled(rect, CornerRadius::same(4), elem_bg_col);
+            }
+            if border_alpha > 0 {
+                elem_painter.rect_stroke(
+                    rect,
+                    CornerRadius::same(4),
+                    Stroke::new(1.0_f32, elem_border_col),
+                    egui::StrokeKind::Inside,
+                );
+            }
         }
 
         // Render actual module contents inside the rect

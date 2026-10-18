@@ -243,8 +243,8 @@ impl InGameScreen {
 
             let rect = elem.screen_rect(screen_size);
 
-            // Draw element background & border if configured (unless crosshair, scoreboard or chat)
-            if id != "crosshair" && id != "scoreboard" && id != "chat" {
+            // Draw element background & border if configured (unless crosshair, hotbar, scoreboard or chat)
+            if id != "crosshair" && id != "hotbar" && id != "scoreboard" && id != "chat" {
                 if bg_alpha > 0 {
                     hud_painter.rect_filled(
                         rect,

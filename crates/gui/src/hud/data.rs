@@ -9,6 +9,7 @@ pub struct HudItemInfo {
     pub damage: i16,
     pub max_damage: i16,
     pub name: String,
+    pub is_enchanted: bool,
 }
 
 impl HudItemInfo {
@@ -19,7 +20,13 @@ impl HudItemInfo {
             damage,
             max_damage,
             name: name.into(),
+            is_enchanted: false,
         }
+    }
+
+    pub fn with_enchanted(mut self, enchanted: bool) -> Self {
+        self.is_enchanted = enchanted;
+        self
     }
 
     /// Remaining durability percentage (1.0 = undamaged, 0.0 = broken).
@@ -199,8 +206,8 @@ impl HudData {
     /// Generates realistic PvP mock data for testing and visual HUD previewing in editor.
     pub fn mock_pvp_data() -> Self {
         let hotbar_items = [
-            Some(HudItemInfo::new(276, 1, 35, 1561, "Diamond Sword")),
-            Some(HudItemInfo::new(261, 1, 12, 384, "Bow")),
+            Some(HudItemInfo::new(276, 1, 35, 1561, "Diamond Sword").with_enchanted(true)),
+            Some(HudItemInfo::new(261, 1, 12, 384, "Bow").with_enchanted(true)),
             Some(HudItemInfo::new(278, 1, 120, 1561, "Diamond Pickaxe")),
             Some(HudItemInfo::new(279, 1, 80, 1561, "Diamond Axe")),
             Some(HudItemInfo::new(277, 1, 10, 1561, "Diamond Shovel")),
