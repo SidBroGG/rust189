@@ -391,8 +391,17 @@ impl App {
                     self.profiler.on_bytes_received(cd.data.len());
                     if cd.ground_up && cd.bit_mask == 0 {
                         self.world.unload_chunk(cd.chunk_x, cd.chunk_z);
-                        if let Some(cm) = &mut self.chunk_manager {
+                        if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
                             cm.remove_chunk(cd.chunk_x, cd.chunk_z);
+                            for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                                let nx = cd.chunk_x + dx;
+                                let nz = cd.chunk_z + dz;
+                                if self.world.chunks.contains_key(&(nx, nz)) {
+                                    for sec_idx in 0..16 {
+                                        cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
+                                    }
+                                }
+                            }
                         }
                     } else {
                         if let Err(e) = self.world.load_chunk_data(
@@ -410,6 +419,18 @@ impl App {
                                     cm.enqueue_section(&self.world, atlas.clone(), cd.chunk_x, sec_idx, cd.chunk_z);
                                 }
                             }
+                            // Re-enqueue adjacent chunk sections on borders so boundary faces cull and connected textures connect
+                            for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                                let nx = cd.chunk_x + dx;
+                                let nz = cd.chunk_z + dz;
+                                if self.world.chunks.contains_key(&(nx, nz)) {
+                                    for sec_idx in 0..16 {
+                                        if (cd.bit_mask & (1 << sec_idx)) != 0 {
+                                            cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     self.profiler.loaded_chunks = self.world.chunk_count();
@@ -417,6 +438,7 @@ impl App {
                 ClientboundPlayPacket::MapChunkBulk(bulk) => {
                     self.profiler.on_bytes_received(bulk.data.len());
                     let mut offset = 0;
+                    let mut loaded_meta = Vec::with_capacity(bulk.meta.len());
                     for meta in &bulk.meta {
                         if offset >= bulk.data.len() {
                             break;
@@ -429,6 +451,7 @@ impl App {
                                 bulk.sky_light_sent,
                             ) {
                                 offset += consumed;
+                                loaded_meta.push((meta.x, meta.z, meta.bit_mask));
                             }
                         } else {
                             let mut chunk =
@@ -441,13 +464,30 @@ impl App {
                             ) {
                                 offset += consumed;
                                 self.world.chunks.insert((meta.x, meta.z), chunk);
+                                loaded_meta.push((meta.x, meta.z, meta.bit_mask));
                             }
                         }
+                    }
 
-                        if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
+                    if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
+                        for &(chunk_x, chunk_z, bit_mask) in &loaded_meta {
                             for sec_idx in 0..16 {
-                                if (meta.bit_mask & (1 << sec_idx)) != 0 {
-                                    cm.enqueue_section(&self.world, atlas.clone(), meta.x, sec_idx, meta.z);
+                                if (bit_mask & (1 << sec_idx)) != 0 {
+                                    cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z);
+                                }
+                            }
+                            // Re-enqueue adjacent outer chunk sections not in this bulk
+                            for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                                let nx = chunk_x + dx;
+                                let nz = chunk_z + dz;
+                                if !loaded_meta.iter().any(|&(x, z, _)| x == nx && z == nz)
+                                    && self.world.chunks.contains_key(&(nx, nz))
+                                {
+                                    for sec_idx in 0..16 {
+                                        if (bit_mask & (1 << sec_idx)) != 0 {
+                                            cm.enqueue_section(&self.world, atlas.clone(), nx, sec_idx, nz);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -466,25 +506,70 @@ impl App {
                     let chunk_z = bc.position.z >> 4;
                     if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
                         cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z);
+
+                        let rel_x = bc.position.x & 15;
+                        let rel_y = bc.position.y & 15;
+                        let rel_z = bc.position.z & 15;
+                        if rel_x == 0 && self.world.chunks.contains_key(&(chunk_x - 1, chunk_z)) {
+                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x - 1, sec_idx, chunk_z);
+                        } else if rel_x == 15 && self.world.chunks.contains_key(&(chunk_x + 1, chunk_z)) {
+                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x + 1, sec_idx, chunk_z);
+                        }
+                        if rel_z == 0 && self.world.chunks.contains_key(&(chunk_x, chunk_z - 1)) {
+                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z - 1);
+                        } else if rel_z == 15 && self.world.chunks.contains_key(&(chunk_x, chunk_z + 1)) {
+                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx, chunk_z + 1);
+                        }
+                        if rel_y == 0 && sec_idx > 0 {
+                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx - 1, chunk_z);
+                        } else if rel_y == 15 && sec_idx < 15 {
+                            cm.enqueue_section(&self.world, atlas.clone(), chunk_x, sec_idx + 1, chunk_z);
+                        }
                     }
                 }
                 ClientboundPlayPacket::MultiBlockChange(mbc) => {
                     let mut affected_sections = HashSet::new();
+                    let mut neighbor_sections: HashSet<(i32, usize, i32)> = HashSet::new();
                     for rec in &mbc.records {
-                        let world_x = (mbc.chunk_x << 4) + (rec.rel_x() as i32);
-                        let world_z = (mbc.chunk_z << 4) + (rec.rel_z() as i32);
+                        let rel_x = rec.rel_x() as i32;
+                        let rel_z = rec.rel_z() as i32;
+                        let world_x = (mbc.chunk_x << 4) + rel_x;
+                        let world_z = (mbc.chunk_z << 4) + rel_z;
+                        let y = rec.y as i32;
                         self.world.set_block(
                             world_x,
-                            rec.y as i32,
+                            y,
                             world_z,
                             BlockState(rec.block_state as u16),
                         );
-                        let sec_y = ((rec.y >> 4) as usize).min(15);
+                        let sec_y = ((y >> 4) as usize).min(15);
                         affected_sections.insert(sec_y);
+
+                        let rel_y = y & 15;
+                        if rel_x == 0 {
+                            neighbor_sections.insert((mbc.chunk_x - 1, sec_y, mbc.chunk_z));
+                        } else if rel_x == 15 {
+                            neighbor_sections.insert((mbc.chunk_x + 1, sec_y, mbc.chunk_z));
+                        }
+                        if rel_z == 0 {
+                            neighbor_sections.insert((mbc.chunk_x, sec_y, mbc.chunk_z - 1));
+                        } else if rel_z == 15 {
+                            neighbor_sections.insert((mbc.chunk_x, sec_y, mbc.chunk_z + 1));
+                        }
+                        if rel_y == 0 && sec_y > 0 {
+                            neighbor_sections.insert((mbc.chunk_x, sec_y - 1, mbc.chunk_z));
+                        } else if rel_y == 15 && sec_y < 15 {
+                            neighbor_sections.insert((mbc.chunk_x, sec_y + 1, mbc.chunk_z));
+                        }
                     }
                     if let (Some(cm), Some(atlas)) = (&mut self.chunk_manager, &self.atlas) {
                         for sec_y in affected_sections {
                             cm.enqueue_section(&self.world, atlas.clone(), mbc.chunk_x, sec_y, mbc.chunk_z);
+                        }
+                        for (nx, ny, nz) in neighbor_sections {
+                            if self.world.chunks.contains_key(&(nx, nz)) {
+                                cm.enqueue_section(&self.world, atlas.clone(), nx, ny, nz);
+                            }
                         }
                     }
                 }

@@ -266,7 +266,7 @@ impl TerrainRenderer {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // Allow viewing back faces of transparent water/ice
+                cull_mode: Some(wgpu::Face::Back),
                 unclipped_depth: false,
                 polygon_mode: wgpu::PolygonMode::Fill,
                 conservative: false,

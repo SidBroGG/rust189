@@ -250,7 +250,14 @@ impl ChunkMesher {
                         }
 
                         // Face culling check
-                        let cull_face = quad.cull_face.or_else(|| if is_leaf { Some(quad.face) } else { None });
+                        let is_outer_translucent = is_translucent && Self::is_outer_face_quad(&quad.positions, quad.face);
+                        let cull_face = quad.cull_face.or_else(|| {
+                            if is_leaf || is_outer_translucent {
+                                Some(quad.face)
+                            } else {
+                                None
+                            }
+                        });
                         if let Some(cull_face) = cull_face {
                             let (dx, dy, dz) = cull_face.offset();
                             let nx = wx + dx;
@@ -262,7 +269,13 @@ impl ChunkMesher {
                                 continue;
                             }
                             if is_translucent && neighbor.id() == block_id {
-                                continue;
+                                if matches!(block_id, 95 | 160) {
+                                    if neighbor.meta() == block.meta() {
+                                        continue;
+                                    }
+                                } else {
+                                    continue;
+                                }
                             }
                             if is_leaf && matches!(neighbor.id(), 18 | 161) {
                                 continue;
@@ -609,6 +622,18 @@ impl ChunkMesher {
             base_idx + 2,
             base_idx + 3,
         ]);
+    }
+
+    #[inline]
+    fn is_outer_face_quad(positions: &[[f32; 3]; 4], face: BlockFace) -> bool {
+        match face {
+            BlockFace::Down => positions.iter().all(|p| p[1].abs() < 1e-3),
+            BlockFace::Up => positions.iter().all(|p| (p[1] - 1.0).abs() < 1e-3),
+            BlockFace::North => positions.iter().all(|p| p[2].abs() < 1e-3),
+            BlockFace::South => positions.iter().all(|p| (p[2] - 1.0).abs() < 1e-3),
+            BlockFace::West => positions.iter().all(|p| p[0].abs() < 1e-3),
+            BlockFace::East => positions.iter().all(|p| (p[0] - 1.0).abs() < 1e-3),
+        }
     }
 
     #[inline]
@@ -1026,6 +1051,56 @@ mod tests {
         world.blocks.insert((4, 5, 4), BlockState::new(1, 0)); // Stone above
         let model_up = atlas.models.get_model(BlockState::new(106, 1), 4, 4, 4, &world);
         assert!(model_up.is_some(), "Vine model with up=true should be resolved");
+    }
+
+    #[test]
+    fn test_translucent_slime_and_glass_culling() {
+        let atlas = TextureAtlas::build(Path::new("assets/minecraft/textures/blocks"));
+
+        // 1. Two adjacent slime blocks along X: (2, 2, 2) and (3, 2, 2)
+        let mut section = ChunkSection::new(true);
+        section.set_block(2, 2, 2, BlockState::new(165, 0));
+        section.set_block(3, 2, 2, BlockState::new(165, 0));
+        let mut world = TestWorld {
+            blocks: hashbrown::HashMap::new(),
+        };
+        world.blocks.insert((2, 2, 2), BlockState::new(165, 0));
+        world.blocks.insert((3, 2, 2), BlockState::new(165, 0));
+
+        let mesh = ChunkMesher::mesh_section(&section, 0, 0, 0, &world, &atlas);
+        assert!(!mesh.translucent_vertices.is_empty());
+
+        // Check that there is NO outer face between x = 2 and x = 3:
+        // No vertex at x = 3.0 with East or West normal facing into the other slime block.
+        let mut boundary_outer_faces = 0;
+        for v in &mesh.translucent_vertices {
+            let u = v.unpack();
+            if (u.local_pos[0] - 3.0).abs() < 1e-3
+                && (u.normal_index == BlockFace::East.index() || u.normal_index == BlockFace::West.index())
+            {
+                boundary_outer_faces += 1;
+            }
+        }
+        assert_eq!(
+            boundary_outer_faces, 0,
+            "Outer faces between adjacent slime blocks must be culled"
+        );
+
+        // 2. Slime block sitting on solid stone at (2, 1, 2) and (3, 1, 2)
+        world.blocks.insert((2, 1, 2), BlockState::new(1, 0));
+        world.blocks.insert((3, 1, 2), BlockState::new(1, 0));
+        let mesh_on_stone = ChunkMesher::mesh_section(&section, 0, 0, 0, &world, &atlas);
+        let mut bottom_outer_faces = 0;
+        for v in &mesh_on_stone.translucent_vertices {
+            let u = v.unpack();
+            if (u.local_pos[1] - 2.0).abs() < 1e-3 && u.normal_index == BlockFace::Down.index() {
+                bottom_outer_faces += 1;
+            }
+        }
+        assert_eq!(
+            bottom_outer_faces, 0,
+            "Slime block bottom faces touching stone must be culled"
+        );
     }
 }
 
