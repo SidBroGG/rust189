@@ -715,6 +715,11 @@ impl App {
                         block_toggled = true;
                     }
 
+                    let (current_count, current_damage) = self.hotbar_items[self.selected_hotbar_slot]
+                        .as_ref()
+                        .map(|i| (i.count, i.damage))
+                        .unwrap_or((1, 0));
+
                     if let Some(s) = &self.session {
                         let cursor_x = (bh.cursor_x * 16.0) as u8;
                         let cursor_y = (bh.cursor_y * 16.0) as u8;
@@ -726,8 +731,8 @@ impl App {
                             item: if self.held_item_id > 0 {
                                 Some(Slot {
                                     item_id: self.held_item_id,
-                                    item_count: 1,
-                                    item_damage: 0,
+                                    item_count: current_count,
+                                    item_damage: current_damage,
                                     nbt: None,
                                 })
                             } else {
@@ -747,14 +752,18 @@ impl App {
                 let action = ItemUseState::get_action_for_item(self.held_item_id);
                 if action != ItemUseAction::None {
                     self.item_use_state.start_using(self.held_item_id);
+                    let (current_count, current_damage) = self.hotbar_items[self.selected_hotbar_slot]
+                        .as_ref()
+                        .map(|i| (i.count, i.damage))
+                        .unwrap_or((1, 0));
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
                             position: Position::new(-1, -1, -1),
                             direction: 255,
                             item: Some(Slot {
                                 item_id: self.held_item_id,
-                                item_count: 1,
-                                item_damage: 0,
+                                item_count: current_count,
+                                item_damage: current_damage,
                                 nbt: None,
                             }),
                             cursor_x: 0,
@@ -784,6 +793,11 @@ impl App {
                     );
 
                     if !self.player.bounding_box.intersects(&place_aabb) {
+                        let (current_count, current_damage) = self.hotbar_items[self.selected_hotbar_slot]
+                            .as_ref()
+                            .map(|i| (i.count, i.damage))
+                            .unwrap_or((1, 0));
+
                         if let Some(s) = &self.session {
                             let cursor_x = (bh.cursor_x * 16.0) as u8;
                             let cursor_y = (bh.cursor_y * 16.0) as u8;
@@ -794,8 +808,8 @@ impl App {
                                 direction: bh.face as u8,
                                 item: Some(Slot {
                                     item_id: self.held_item_id,
-                                    item_count: 1,
-                                    item_damage: 0,
+                                    item_count: current_count,
+                                    item_damage: current_damage,
                                     nbt: None,
                                 }),
                                 cursor_x,
@@ -817,6 +831,19 @@ impl App {
                         if let Some(cm) = &mut self.chunk_manager {
                             cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
                         }
+
+                        // Immediate client-side inventory prediction for zero-latency HUD responsiveness
+                        let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                        if !is_creative {
+                            if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+                                if item.count <= 1 {
+                                    self.hotbar_items[self.selected_hotbar_slot] = None;
+                                    self.held_item_id = 0;
+                                } else {
+                                    item.count -= 1;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -824,14 +851,18 @@ impl App {
                 let action = ItemUseState::get_action_for_item(self.held_item_id);
                 if action != ItemUseAction::None {
                     self.item_use_state.start_using(self.held_item_id);
+                    let (current_count, current_damage) = self.hotbar_items[self.selected_hotbar_slot]
+                        .as_ref()
+                        .map(|i| (i.count, i.damage))
+                        .unwrap_or((1, 0));
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
                             position: Position::new(-1, -1, -1),
                             direction: 255,
                             item: Some(Slot {
                                 item_id: self.held_item_id,
-                                item_count: 1,
-                                item_damage: 0,
+                                item_count: current_count,
+                                item_damage: current_damage,
                                 nbt: None,
                             }),
                             cursor_x: 0,
@@ -1790,7 +1821,11 @@ impl App {
                 }
                 ClientboundPlayPacket::SetSlot(ss) => {
                     if ss.window_id == 0 {
-                        let item_info = ss.item.as_ref().map(Self::get_item_info_from_slot);
+                        let item_info = ss
+                            .item
+                            .as_ref()
+                            .filter(|s| s.item_id > 0 && s.item_count > 0)
+                            .map(Self::get_item_info_from_slot);
                         match ss.slot {
                             5 => self.armor_items[0] = item_info,
                             6 => self.armor_items[1] = item_info,
@@ -1810,7 +1845,10 @@ impl App {
                 ClientboundPlayPacket::WindowItems(wi) => {
                     if wi.window_id == 0 {
                         for (idx, slot_opt) in wi.items.iter().enumerate() {
-                            let item_info = slot_opt.as_ref().map(Self::get_item_info_from_slot);
+                            let item_info = slot_opt
+                                .as_ref()
+                                .filter(|s| s.item_id > 0 && s.item_count > 0)
+                                .map(Self::get_item_info_from_slot);
                             match idx {
                                 5 => self.armor_items[0] = item_info,
                                 6 => self.armor_items[1] = item_info,
@@ -1911,6 +1949,17 @@ impl App {
                                 position: Position::new(0, 0, 0),
                                 facing: BlockFace::Down,
                             });
+                        }
+                        let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                        if !is_creative {
+                            if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+                                if item.count <= 1 {
+                                    self.hotbar_items[self.selected_hotbar_slot] = None;
+                                    self.held_item_id = 0;
+                                } else {
+                                    item.count -= 1;
+                                }
+                            }
                         }
                         self.item_use_state.stop();
                     }
