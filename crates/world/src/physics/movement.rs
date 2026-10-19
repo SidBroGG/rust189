@@ -272,6 +272,13 @@ impl PlayerMovement {
         false
     }
 
+    /// Checks if the player is resting on top of a solid block (MCP parity on teleport/spawn).
+    #[inline]
+    pub fn check_ground_contact(&self, world: &World) -> bool {
+        let test_bb = self.bounding_box.offset(0.0, -0.05, 0.0);
+        !world.get_colliding_bounding_boxes(&test_bb).is_empty()
+    }
+
     /// Returns eye height above player feet based on sneaking state.
     #[inline]
     pub fn get_eye_height(&self) -> f32 {

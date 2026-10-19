@@ -144,6 +144,17 @@ impl World {
     }
 
     #[inline]
+    pub fn is_chunk_loaded(&self, chunk_x: i32, chunk_z: i32) -> bool {
+        self.has_chunk(chunk_x, chunk_z)
+    }
+
+    #[inline]
+    pub fn is_block_loaded(&self, x: i32, z: i32) -> bool {
+        let (cx, cz) = Self::chunk_coords(x, z);
+        self.is_chunk_loaded(cx, cz)
+    }
+
+    #[inline]
     pub fn chunk_count(&self) -> usize {
         self.chunks.len()
     }

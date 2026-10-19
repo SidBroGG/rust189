@@ -989,6 +989,7 @@ impl App {
                         "Joined game world (JoinGame)"
                     );
                     self.world.clear();
+                    self.has_spawned = false;
                     if let Some(cm) = &mut self.chunk_manager {
                         cm.clear();
                     }
@@ -1035,6 +1036,7 @@ impl App {
                 ClientboundPlayPacket::Respawn(rp) => {
                     info!(dimension = rp.dimension, "Respawned in dimension");
                     self.world.clear();
+                    self.has_spawned = false;
                     self.world.dimension = rp.dimension as i8;
                     self.player_gamemode = rp.game_mode;
                     self.player_health = 20.0;
@@ -1120,11 +1122,25 @@ impl App {
 
                     self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                     self.player_look = (self.player.yaw, self.player.pitch);
-                    self.player_on_ground = false;
 
-                    self.last_reported_pos = self.player_pos;
-                    self.last_reported_look = self.player_look;
-                    self.position_update_ticks = 0;
+                    let (chunk_x, chunk_z) = world::World::chunk_coords(
+                        self.player.pos.x.floor() as i32,
+                        self.player.pos.z.floor() as i32,
+                    );
+                    if self.world.is_chunk_loaded(chunk_x, chunk_z)
+                        && self.player.check_ground_contact(&self.world)
+                    {
+                        self.player.on_ground = true;
+                        self.player_on_ground = true;
+                    } else {
+                        self.player.on_ground = false;
+                        self.player_on_ground = false;
+                    }
+
+                    // MCP parity: Do NOT overwrite last_reported_pos with player_pos here.
+                    // Leaving last_reported_pos as previous reported coords ensures flag2 evaluates to true
+                    // on the next physics tick, sending a full position packet to confirm teleport to server.
+                    self.position_update_ticks = 20;
 
                     // Confirm position back to server and mark spawned (on_ground = false per MCP line 717)
                     self.has_spawned = true;
@@ -1219,6 +1235,19 @@ impl App {
                         }
                     }
                     self.profiler.loaded_chunks = self.world.chunk_count();
+
+                    if self.has_spawned && !self.player.on_ground {
+                        let (cx, cz) = world::World::chunk_coords(
+                            self.player.pos.x.floor() as i32,
+                            self.player.pos.z.floor() as i32,
+                        );
+                        if self.world.is_chunk_loaded(cx, cz)
+                            && self.player.check_ground_contact(&self.world)
+                        {
+                            self.player.on_ground = true;
+                            self.player_on_ground = true;
+                        }
+                    }
                 }
                 ClientboundPlayPacket::MapChunkBulk(bulk) => {
                     self.profiler.on_bytes_received(bulk.data.len());
@@ -1275,6 +1304,19 @@ impl App {
                         }
                     }
                     self.profiler.loaded_chunks = self.world.chunk_count();
+
+                    if self.has_spawned && !self.player.on_ground {
+                        let (cx, cz) = world::World::chunk_coords(
+                            self.player.pos.x.floor() as i32,
+                            self.player.pos.z.floor() as i32,
+                        );
+                        if self.world.is_chunk_loaded(cx, cz)
+                            && self.player.check_ground_contact(&self.world)
+                        {
+                            self.player.on_ground = true;
+                            self.player_on_ground = true;
+                        }
+                    }
                 }
                 ClientboundPlayPacket::BlockChange(bc) => {
                     self.world.set_block(
@@ -1810,12 +1852,15 @@ impl App {
         }
 
         // 20 TPS Fixed Physics & Entity Tick
-        if self.last_physics_tick.elapsed() > Duration::from_millis(500) {
+        // Prevent huge lag-spike catchups from flooding movement packets to server (violating anticheat Timer check)
+        if self.last_physics_tick.elapsed() > Duration::from_millis(150) {
             self.last_physics_tick = Instant::now() - Duration::from_millis(50);
         }
 
-        while self.last_physics_tick.elapsed() >= Duration::from_millis(50) {
+        let mut ticks_run = 0;
+        while self.last_physics_tick.elapsed() >= Duration::from_millis(50) && ticks_run < 2 {
             self.last_physics_tick += Duration::from_millis(50);
+            ticks_run += 1;
             self.world.entity_tracker.tick();
             self.spatial_hash.rebuild(&self.world.entity_tracker);
 
@@ -1861,7 +1906,12 @@ impl App {
             }
 
             let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-            let can_update_player = self.has_spawned || (self.session.is_none() && is_in_game);
+            let (player_chunk_x, player_chunk_z) = world::World::chunk_coords(
+                self.player.pos.x.floor() as i32,
+                self.player.pos.z.floor() as i32,
+            );
+            let is_chunk_loaded = self.world.is_chunk_loaded(player_chunk_x, player_chunk_z);
+            let can_update_player = (self.has_spawned && is_chunk_loaded) || (self.session.is_none() && is_in_game);
             if can_update_player {
                 let cursor_needed = self.is_cursor_needed();
                 let mut input = PlayerInput::default();
@@ -2090,6 +2140,9 @@ impl App {
                         self.last_reported_look = self.player_look;
                     }
                 }
+            } else if self.has_spawned {
+                // In multiplayer, freeze motion while waiting for current chunk terrain to load (MCP EntityPlayerSP.java:170 parity)
+                self.player.motion = glam::DVec3::ZERO;
             }
         }
 
