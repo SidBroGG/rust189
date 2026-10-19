@@ -394,7 +394,7 @@ pub fn render_slot(
     }
 
     // Hotbar Swap: 1..9 keys swap hovered slot with hotbar
-    if is_hovered {
+    if is_hovered && container.carried_item.is_none() {
         let num_keys = [
             (Key::Num1, 0),
             (Key::Num2, 1),
@@ -407,7 +407,7 @@ pub fn render_slot(
             (Key::Num9, 8),
         ];
         for (k, hb_idx) in num_keys {
-            if ui.input(|i| i.key_pressed(k)) {
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, k)) {
                 let clicked_item = container.slots.get(slot_idx).cloned().flatten();
                 let action_num = container.next_action_number();
                 container.handle_hotbar_swap(slot_idx as i16, hb_idx);
@@ -1555,6 +1555,38 @@ fn render_creative_hotbar_slot(
         }
     }
 
+    // Hotbar Swap: 1..9 keys swap hovered hotbar slot with target hotbar slot
+    let num_keys = [
+        (Key::Num1, 0),
+        (Key::Num2, 1),
+        (Key::Num3, 2),
+        (Key::Num4, 3),
+        (Key::Num5, 4),
+        (Key::Num6, 5),
+        (Key::Num7, 6),
+        (Key::Num8, 7),
+        (Key::Num9, 8),
+    ];
+    for (k, hb_idx) in num_keys {
+        if is_hovered
+            && container.carried_item.is_none()
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, k))
+        {
+            let target_slot = 36 + hb_idx;
+            if slot_idx != target_slot {
+                let a = container.slots[slot_idx].take();
+                let b = container.slots[target_slot].take();
+                container.slots[slot_idx] = b;
+                container.slots[target_slot] = a.clone();
+                *action = ContainerAction::CreativeSetSlot {
+                    slot: target_slot as i16,
+                    item: a,
+                };
+            }
+            break;
+        }
+    }
+
     let is_shift = ui.input(|i| i.modifiers.shift);
     let is_left = response.clicked_by(egui::PointerButton::Primary);
     let is_right = response.clicked_by(egui::PointerButton::Secondary);
@@ -1881,6 +1913,34 @@ pub fn render_creative_inventory(
                                             let temp_slot = Slot::new(item_id, 1, damage, None);
                                             render_item_tooltip(ui, &temp_slot, &name, max_damage);
                                         });
+                                    }
+
+                                    let num_keys = [
+                                        (Key::Num1, 0),
+                                        (Key::Num2, 1),
+                                        (Key::Num3, 2),
+                                        (Key::Num4, 3),
+                                        (Key::Num5, 4),
+                                        (Key::Num6, 5),
+                                        (Key::Num7, 6),
+                                        (Key::Num8, 7),
+                                        (Key::Num9, 8),
+                                    ];
+                                    for (k, hb_idx) in num_keys {
+                                        if is_hovered
+                                            && container.carried_item.is_none()
+                                            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, k))
+                                        {
+                                            let max_stack = get_item_max_stack(item_id) as i8;
+                                            let target_slot = 36 + hb_idx;
+                                            let new_slot = Slot::new(item_id, max_stack, damage, None);
+                                            container.slots[target_slot] = Some(new_slot.clone());
+                                            action = ContainerAction::CreativeSetSlot {
+                                                slot: target_slot as i16,
+                                                item: Some(new_slot),
+                                            };
+                                            break;
+                                        }
                                     }
 
                                     if is_item_clicked {

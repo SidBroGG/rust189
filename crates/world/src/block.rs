@@ -91,6 +91,60 @@ pub fn is_placeable_block_item(id: u16) -> bool {
         )
 }
 
+/// Returns the picked item (item_id, damage) for a block according to MCP 1.8.9 (Block.getItem and getDamageValue).
+pub fn get_block_pick_item(block_id: u16, meta: u8) -> Option<(i16, i16)> {
+    if block_id == 0 {
+        return None;
+    }
+    match block_id {
+        // Liquids cannot be picked
+        8 | 9 | 10 | 11 => None,
+        // Technical / special blocks
+        26 => Some((355, 0)), // Bed block -> Bed item
+        34 | 36 => None,      // Piston technical blocks
+        51 => None,           // Fire
+        55 => Some((331, 0)), // Redstone wire -> Redstone dust
+        59 => Some((295, 0)), // Wheat crops -> Wheat seeds
+        60 => Some((3, 0)),   // Farmland -> Dirt
+        62 => Some((61, 0)),  // Lit furnace -> Furnace
+        63 | 68 => Some((323, 0)), // Sign -> Sign item
+        64 => Some((324, 0)), // Wooden door -> Wooden door item
+        71 => Some((330, 0)), // Iron door -> Iron door item
+        74 => Some((73, 0)),  // Lit redstone ore -> Redstone ore
+        75 => Some((76, 0)),  // Unlit redstone torch -> Redstone torch
+        83 => Some((338, 0)), // Reeds -> Sugar Canes item
+        92 => Some((354, 0)), // Cake block -> Cake item
+        93 | 94 => Some((356, 0)), // Redstone repeater -> Repeater item
+        104 | 105 => Some((361, 0)), // Pumpkin / Melon stems -> Pumpkin seeds
+        115 => Some((372, 0)), // Nether wart -> Nether wart item
+        117 => Some((379, 0)), // Brewing stand -> Brewing stand item
+        118 => Some((380, 0)), // Cauldron -> Cauldron item
+        119 => None,           // End Portal
+        124 => Some((123, 0)), // Lit redstone lamp -> Redstone lamp
+        140 => Some((390, 0)), // Flower pot -> Flower pot item
+        141 => Some((391, 0)), // Carrots -> Carrot item
+        142 => Some((392, 0)), // Potatoes -> Potato item
+        144 => Some((397, (meta & 7) as i16)), // Skull
+        149 | 150 => Some((404, 0)), // Comparator -> Comparator item
+        151 | 178 => Some((151, 0)), // Daylight detector
+        176 | 177 => Some((425, (meta & 15) as i16)), // Standing / wall banner -> Banner
+        193 => Some((427, 0)), // Spruce door
+        194 => Some((428, 0)), // Birch door
+        195 => Some((429, 0)), // Jungle door
+        196 => Some((430, 0)), // Acacia door
+        197 => Some((431, 0)), // Dark oak door
+        // Double slabs map to single slabs
+        43 => Some((44, (meta & 7) as i16)),
+        125 => Some((126, (meta & 7) as i16)),
+        181 => Some((182, (meta & 7) as i16)),
+        // Subtype blocks (Stone, Dirt, Planks, Sandstone, Wool, Stained Clay, Stained Glass, Logs, Leaves, Stonebrick, etc.)
+        1 | 3 | 5 | 6 | 12 | 17 | 18 | 19 | 24 | 31 | 35 | 38 | 44 | 95 | 97 | 98 | 126 | 155 | 159 | 160 | 161 | 162 | 168 | 171 | 175 | 179 | 182 => {
+            Some((block_id as i16, meta as i16))
+        }
+        _ => Some((block_id as i16, 0)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +182,17 @@ mod tests {
         assert!(is_interactive_block(58));  // Crafting Table
         assert!(!is_interactive_block(1));  // Stone
         assert!(!is_interactive_block(71)); // Iron Door (cannot be activated by hand)
+    }
+
+    #[test]
+    fn test_get_block_pick_item() {
+        assert_eq!(get_block_pick_item(0, 0), None); // Air
+        assert_eq!(get_block_pick_item(8, 0), None); // Water
+        assert_eq!(get_block_pick_item(1, 2), Some((1, 2))); // Granite
+        assert_eq!(get_block_pick_item(35, 14), Some((35, 14))); // Red wool
+        assert_eq!(get_block_pick_item(59, 7), Some((295, 0))); // Wheat -> Seeds
+        assert_eq!(get_block_pick_item(62, 0), Some((61, 0))); // Lit furnace -> Furnace
+        assert_eq!(get_block_pick_item(64, 0), Some((324, 0))); // Wooden door block -> item
+        assert_eq!(get_block_pick_item(43, 0), Some((44, 0))); // Double slab -> single slab
     }
 }

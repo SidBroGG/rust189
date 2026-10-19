@@ -603,11 +603,17 @@ impl InGameScreen {
                                         let edit = TextEdit::singleline(&mut self.chat_input)
                                             .hint_text("Press Enter to send, Tab to autocomplete...")
                                             .font(FontId::proportional(chat_font_size))
+                                            .lock_focus(true)
                                             .desired_width((rect.width() - 8.0).max(60.0));
 
-                                        let response = ui.add(edit);
+                                        let output = edit.show(ui);
+                                        let response = output.response;
                                         if self.request_chat_focus || tab_pressed {
                                             response.request_focus();
+                                            let mut state = TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
+                                            let char_len = self.chat_input.chars().count();
+                                            state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(char_len))));
+                                            state.store(ui.ctx(), response.id);
                                             self.request_chat_focus = false;
                                         }
 

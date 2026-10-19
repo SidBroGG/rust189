@@ -28,7 +28,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Icon, Window, WindowId};
 use world::{
-    get_block_selection_box, get_player_relative_block_hardness, is_critical_hit,
+    block_blocks_movement, get_block_selection_box, get_player_relative_block_hardness, is_critical_hit,
     is_interactive_block, is_placeable_block_item, is_replaceable_block, is_water_block, pick_target, BlockState,
     CameraController, CameraPerspective, ClickTracker, EntityKind, EntitySpatialHash, FrameStage,
     ItemUseAction, ItemUseState, PerformanceProfiler, PlayerInput, PlayerMovement, TargetHit,
@@ -808,46 +808,66 @@ impl App {
                         place_pos.2 as f64 + 1.0,
                     );
 
-                    if !self.player.bounding_box.intersects(&place_aabb) {
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::PlayerBlockPlacement {
-                                position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
-                                direction: bh.face as u8,
-                                item: held_slot.clone(),
-                                cursor_x,
-                                cursor_y,
-                                cursor_z,
-                            });
-                            s.send(OutgoingPlayPacket::Animation);
-                        }
+                    // Strictly prevent solid block placement if intersecting player's feet/head or living entities
+                    let has_solid_collision = block_blocks_movement(self.held_item_id as u16);
+                    if has_solid_collision {
+                        let (px, py, pz) = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
+                        let h = if self.player.is_sneaking { 1.65 } else { 1.8 };
+                        let player_curr_bb = AABB::new(px - 0.3, py, pz - 0.3, px + 0.3, py + h, pz + 0.3);
+                        let collides_player = self.player.bounding_box.intersects(&place_aabb)
+                            || player_curr_bb.intersects(&place_aabb);
 
-                        self.world.set_block(
-                            place_pos.0,
-                            place_pos.1,
-                            place_pos.2,
-                            BlockState::new(self.held_item_id as u16, 0),
-                        );
-                        let chunk_x = place_pos.0 >> 4;
-                        let chunk_z = place_pos.2 >> 4;
-                        let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
-                        if let Some(cm) = &mut self.chunk_manager {
-                            cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
-                        }
+                        let collides_entity = self.world.entity_tracker.entities.values().any(|ent| {
+                            if ent.id == self.player_entity_id || ent.is_armor_stand_marker {
+                                return false;
+                            }
+                            ent.bounding_box().intersects(&place_aabb)
+                        });
 
-                        // Immediate client-side inventory prediction for zero-latency HUD responsiveness
-                        let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
-                        if !is_creative {
-                            if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
-                                if item.count <= 1 {
-                                    self.hotbar_items[self.selected_hotbar_slot] = None;
-                                    self.held_item_id = 0;
-                                } else {
-                                    item.count -= 1;
-                                }
+                        if collides_player || collides_entity {
+                            // Block placement inside player feet/head or entity aborted
+                            return;
+                        }
+                    }
+
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
+                            direction: bh.face as u8,
+                            item: held_slot.clone(),
+                            cursor_x,
+                            cursor_y,
+                            cursor_z,
+                        });
+                        s.send(OutgoingPlayPacket::Animation);
+                    }
+
+                    self.world.set_block(
+                        place_pos.0,
+                        place_pos.1,
+                        place_pos.2,
+                        BlockState::new(self.held_item_id as u16, 0),
+                    );
+                    let chunk_x = place_pos.0 >> 4;
+                    let chunk_z = place_pos.2 >> 4;
+                    let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
+                    if let Some(cm) = &mut self.chunk_manager {
+                        cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                    }
+
+                    // Immediate client-side inventory prediction for zero-latency HUD responsiveness
+                    let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    if !is_creative {
+                        if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+                            if item.count <= 1 {
+                                self.hotbar_items[self.selected_hotbar_slot] = None;
+                                self.held_item_id = 0;
+                            } else {
+                                item.count -= 1;
                             }
                         }
-                        return;
                     }
+                    return;
                 }
 
                 // 3. Right clicking a block with non-placeable item (Compass, Nether Star, Clock, Book, Food, Bow, Sword, etc.)
@@ -931,6 +951,152 @@ impl App {
                     position: Position::new(0, 0, 0),
                     facing: BlockFace::Down,
                 });
+            }
+        }
+    }
+
+    /// Handles Pick Block (Pipette) on mouse wheel / middle click according to MCP 1.8.9 (Minecraft.middleClickMouse).
+    pub fn handle_middle_click(&mut self) {
+        let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+
+        let pick_item = match self.current_target {
+            TargetHit::Block(bh) => {
+                let block = self.world.get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
+                world::get_block_pick_item(block.id(), block.meta())
+            }
+            TargetHit::Entity(eh) => {
+                if let Some(ent) = self.world.entity_tracker.entities.get(&eh.entity_id) {
+                    match &ent.kind {
+                        EntityKind::Object { object_type, .. } => match *object_type {
+                            78 => Some((416, 0)), // Armor Stand
+                            1 => Some((333, 0)),  // Boat
+                            10 => Some((328, 0)), // Minecart
+                            _ => None,
+                        },
+                        EntityKind::Mob { mob_type } => {
+                            Some((383, *mob_type as i16)) // Spawn egg
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            TargetHit::Miss => None,
+        };
+
+        let Some((item_id, item_damage)) = pick_item else {
+            return;
+        };
+
+        // 1. Check if hotbar already contains this item
+        let mut hotbar_found = None;
+        for i in 0..9 {
+            if let Some(item) = &self.hotbar_items[i] {
+                if item.item_id == item_id && (item_damage == 0 || item.damage == item_damage) {
+                    hotbar_found = Some(i);
+                    break;
+                }
+            }
+        }
+
+        if let Some(slot_idx) = hotbar_found {
+            if self.selected_hotbar_slot != slot_idx {
+                self.selected_hotbar_slot = slot_idx;
+                if let Some(item) = &self.hotbar_items[slot_idx] {
+                    self.held_item_id = item.item_id;
+                } else {
+                    self.held_item_id = 0;
+                }
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::HeldItemChange(slot_idx as i16));
+                }
+            }
+            return;
+        }
+
+        // 2. In Creative mode: place item stack in hotbar and sync with server
+        if is_creative {
+            let target_hotbar_idx = if self.hotbar_items[self.selected_hotbar_slot].is_none() {
+                self.selected_hotbar_slot
+            } else {
+                let first_empty = (0..9).find(|&i| self.hotbar_items[i].is_none());
+                first_empty.unwrap_or(self.selected_hotbar_slot)
+            };
+
+            let max_stack = world::get_item_max_stack(item_id) as i8;
+            let slot_obj = Slot::new(item_id, max_stack, item_damage, None);
+            let item_info = Self::get_item_info_from_slot(&slot_obj);
+
+            self.hotbar_items[target_hotbar_idx] = Some(item_info);
+            self.selected_hotbar_slot = target_hotbar_idx;
+            self.held_item_id = item_id;
+
+            let server_slot = (36 + target_hotbar_idx) as i16;
+            if let Some(sm) = &mut self.screen_manager {
+                if let Some(ig) = &mut sm.in_game {
+                    if (server_slot as usize) < ig.player_inventory.slots.len() {
+                        ig.player_inventory.slots[server_slot as usize] = Some(slot_obj.clone());
+                    }
+                }
+            }
+
+            if let Some(s) = &self.session {
+                s.send(OutgoingPlayPacket::HeldItemChange(target_hotbar_idx as i16));
+                s.send(OutgoingPlayPacket::CreativeInventoryAction {
+                    slot: server_slot,
+                    item: Some(slot_obj),
+                });
+            }
+        } else {
+            // In Survival mode: if found in main inventory (slots 9..36), swap into current hotbar slot
+            let mut main_inv_found = None;
+            if let Some(sm) = &self.screen_manager {
+                if let Some(ig) = &sm.in_game {
+                    for slot_idx in 9..36 {
+                        if let Some(slot) = &ig.player_inventory.slots[slot_idx] {
+                            if slot.item_id == item_id && (item_damage == 0 || slot.item_damage == item_damage) {
+                                main_inv_found = Some((slot_idx, slot.clone()));
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some((inv_slot, slot_item)) = main_inv_found {
+                let action_num = if let Some(sm) = &mut self.screen_manager {
+                    if let Some(ig) = &mut sm.in_game {
+                        let num = ig.player_inventory.next_action_number();
+                        ig.player_inventory.handle_hotbar_swap(inv_slot as i16, self.selected_hotbar_slot as u8);
+                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                            let item_info = slot_opt
+                                .as_ref()
+                                .filter(|s| s.item_id > 0 && s.item_count > 0)
+                                .map(Self::get_item_info_from_slot);
+                            self.hotbar_items[idx] = item_info.clone();
+                            if idx == self.selected_hotbar_slot {
+                                self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                            }
+                        }
+                        num
+                    } else {
+                        1
+                    }
+                } else {
+                    1
+                };
+
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::ClickWindow {
+                        window_id: 0,
+                        slot: inv_slot as i16,
+                        button: self.selected_hotbar_slot as i8,
+                        action_number: action_num,
+                        mode: 2,
+                        item: Some(slot_item),
+                    });
+                }
             }
         }
     }
@@ -2742,6 +2908,11 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
+                    winit::event::MouseButton::Middle => {
+                        if state == winit::event::ElementState::Pressed && is_in_game && self.mouse_grabbed && !cursor_needed {
+                            self.handle_middle_click();
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -2824,7 +2995,7 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                if !consumed && key_event.state == winit::event::ElementState::Pressed {
+                if !consumed && !self.is_cursor_needed() && key_event.state == winit::event::ElementState::Pressed {
                     if let PhysicalKey::Code(code) = key_event.physical_key {
                         let slot_opt = match code {
                             KeyCode::Digit1 => Some(0),
@@ -3259,8 +3430,11 @@ impl ApplicationHandler for App {
                                         item,
                                     });
                                 }
-                                if let Some(sm) = &self.screen_manager {
-                                    if let Some(ig) = &sm.in_game {
+                                if let Some(sm) = &mut self.screen_manager {
+                                    if let Some(ig) = &mut sm.in_game {
+                                        if let Some(ref c) = ig.active_container {
+                                            c.sync_player_slots_to(&mut ig.player_inventory);
+                                        }
                                         for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
                                             let item_info = slot_opt
                                                 .as_ref()

@@ -21,14 +21,17 @@ pub use item::{
     get_item_name, get_subtype_name, search_items, CreativeTab, ItemDef, ITEMS,
 };
 
-pub use block::{is_interactive_block, is_placeable_block_item, is_replaceable_block, BlockState};
+pub use block::{
+    get_block_pick_item, is_interactive_block, is_placeable_block_item, is_replaceable_block,
+    BlockState,
+};
 pub use chat::{parse_chat_message, parse_spans, strip_formatting, ChatSpan};
 pub use chunk::{ChunkColumn, WorldError};
 pub use entity::{EntityKind, EntityTracker, TrackedEntity};
 pub use morton::{decode_morton, encode_morton, linear_to_morton, morton_to_linear};
 pub use palette::{PaletteKind, PalettedContainer};
 pub use physics::{
-    calculate_tool_dig_efficiency, can_harvest_block, get_block_collision_boxes,
+    block_blocks_movement, calculate_tool_dig_efficiency, can_harvest_block, get_block_collision_boxes,
     get_block_hardness, get_block_selection_box, get_block_slipperiness,
     get_player_relative_block_hardness, get_tool_type, get_weapon_damage, is_critical_hit,
     is_fluid_block, is_ladder_block, is_lava_block, is_tool_effective, is_water_block,
