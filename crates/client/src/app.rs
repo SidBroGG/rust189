@@ -2327,22 +2327,6 @@ impl App {
                     if flag3 {
                         self.last_reported_look = self.player_look;
                     }
-                } else {
-                    // Pre-spawn limbo / bot check verification phase: send 20 TPS ticking packets
-                    let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
-                    let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
-                    let flag3 = d3 != 0.0 || d4 != 0.0;
-
-                    if flag3 {
-                        s.send(OutgoingPlayPacket::PlayerLook {
-                            yaw: self.player_look.0,
-                            pitch: self.player_look.1,
-                            on_ground: self.player_on_ground,
-                        });
-                        self.last_reported_look = self.player_look;
-                    } else {
-                        s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
-                    }
                 }
             }
         }
