@@ -44,6 +44,16 @@ pub enum ContainerAction {
     },
 }
 
+/// Global dragging state across all container slots.
+#[derive(Clone, Default)]
+pub struct ActiveDragState {
+    pub is_dragging: bool,
+    pub drag_button: u8, // 0 = LMB (even split), 1 = RMB (1 per slot)
+    pub drag_slots: Vec<usize>,
+    pub shift_drag_visited: Vec<usize>,
+    pub rmb_drag_visited: Vec<usize>,
+}
+
 /// Extra state for interactive screens (Anvil, Creative tabs, Sign, Book, Beacon, Villager).
 #[derive(Debug, Clone)]
 pub struct ContainerUiState {
@@ -265,6 +275,10 @@ pub fn render_container(
             if let Some(tex) = get_or_load_item_texture(ctx, carried.item_id, carried.item_damage, max_damage, &name) {
                 painter.image(tex, icon_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
             }
+            if carried.is_enchanted() {
+                let now_ms = (ctx.input(|i| i.time) * 1000.0) as u64;
+                crate::hud::item_textures::render_enchantment_glint(&painter, ctx, icon_rect, now_ms);
+            }
             if carried.item_count > 1 {
                 let count_str = format!("{}", carried.item_count);
                 let text_pos = icon_rect.max + Vec2::new(-2.0, -2.0);
@@ -291,6 +305,15 @@ pub fn render_slot(
 
     let is_hovered = response.hovered();
 
+    let mut drag_state: ActiveDragState = ui.data_mut(|d| {
+        d.get_temp_mut_or_insert_with(egui::Id::new("active_drag_state_v1"), ActiveDragState::default)
+            .clone()
+    });
+
+    let is_lmb_down = ui.input(|i| i.pointer.primary_down());
+    let is_rmb_down = ui.input(|i| i.pointer.secondary_down());
+    let is_shift = ui.input(|i| i.modifiers.shift);
+
     // Slot background & inset border
     let bg_color = if is_hovered {
         Color32::from_rgb(46, 50, 62)
@@ -298,7 +321,22 @@ pub fn render_slot(
         Color32::from_rgb(28, 30, 36)
     };
     painter.rect_filled(rect, CornerRadius::same(3), bg_color);
-    painter.rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.0_f32, Color32::from_rgb(50, 54, 66)), StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(3),
+        Stroke::new(1.0_f32, Color32::from_rgb(50, 54, 66)),
+        StrokeKind::Inside,
+    );
+
+    // Highlight slot border if actively dragged over
+    if drag_state.is_dragging && drag_state.drag_slots.contains(&slot_idx) {
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(3),
+            Stroke::new(2.0_f32, Color32::from_rgb(255, 215, 0)),
+            StrokeKind::Inside,
+        );
+    }
 
     let item_opt = container.slots.get(slot_idx).cloned().flatten();
 
@@ -307,9 +345,15 @@ pub fn render_slot(
         let max_damage = get_item_max_damage(item.item_id);
 
         // 1. Draw 2D texture icon
+        let icon_rect = rect.shrink(3.0);
         if let Some(tex) = get_or_load_item_texture(ui.ctx(), item.item_id, item.item_damage, max_damage, &name) {
-            let icon_rect = rect.shrink(3.0);
             painter.image(tex, icon_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+        }
+
+        // Enchanted glint animation (strictly clipped to item bounds)
+        if item.is_enchanted() {
+            let now_ms = (ui.input(|i| i.time) * 1000.0) as u64;
+            crate::hud::item_textures::render_enchantment_glint(painter, ui.ctx(), icon_rect, now_ms);
         }
 
         // 2. Draw Stack Count badge (if count > 1)
@@ -349,38 +393,197 @@ pub fn render_slot(
         }
     }
 
-    // Handle clicks
-    if response.clicked() || response.secondary_clicked() {
-        let is_shift = ui.input(|i| i.modifiers.shift);
-        let is_right = response.secondary_clicked();
-
-        let clicked_item = container.slots.get(slot_idx).cloned().flatten();
-        let action_num = container.next_action_number();
-
-        if is_shift {
-            // Mode 1: Shift click
-            container.handle_shift_click(slot_idx as i16);
-            *action = ContainerAction::Click {
-                window_id: container.window_id as i8,
-                slot: slot_idx as i16,
-                button: if is_right { 1 } else { 0 },
-                action_number: action_num,
-                mode: 1,
-                item: clicked_item,
-            };
-        } else {
-            // Mode 0: Normal click
-            let _ = container.handle_normal_click(slot_idx as i16, is_right);
-            *action = ContainerAction::Click {
-                window_id: container.window_id as i8,
-                slot: slot_idx as i16,
-                button: if is_right { 1 } else { 0 },
-                action_number: action_num,
-                mode: 0,
-                item: clicked_item,
-            };
+    // Hotbar Swap: 1..9 keys swap hovered slot with hotbar
+    if is_hovered {
+        let num_keys = [
+            (Key::Num1, 0),
+            (Key::Num2, 1),
+            (Key::Num3, 2),
+            (Key::Num4, 3),
+            (Key::Num5, 4),
+            (Key::Num6, 5),
+            (Key::Num7, 6),
+            (Key::Num8, 7),
+            (Key::Num9, 8),
+        ];
+        for (k, hb_idx) in num_keys {
+            if ui.input(|i| i.key_pressed(k)) {
+                let clicked_item = container.slots.get(slot_idx).cloned().flatten();
+                let action_num = container.next_action_number();
+                container.handle_hotbar_swap(slot_idx as i16, hb_idx);
+                *action = ContainerAction::Click {
+                    window_id: container.window_id as i8,
+                    slot: slot_idx as i16,
+                    button: hb_idx as i8,
+                    action_number: action_num,
+                    mode: 2,
+                    item: clicked_item,
+                };
+                break;
+            }
         }
     }
+
+    // Drop Key: Q drops 1 item, Ctrl+Q drops entire stack
+    if is_hovered && ui.input(|i| i.key_pressed(Key::Q)) {
+        let is_ctrl = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        let clicked_item = container.slots.get(slot_idx).cloned().flatten();
+        let action_num = container.next_action_number();
+        let _ = container.handle_drop(slot_idx as i16, is_ctrl);
+        *action = ContainerAction::Click {
+            window_id: container.window_id as i8,
+            slot: slot_idx as i16,
+            button: if is_ctrl { 1 } else { 0 },
+            action_number: action_num,
+            mode: 4,
+            item: clicked_item,
+        };
+    }
+
+    // Double Click: collects all matching items into cursor stack
+    if response.double_clicked() && container.carried_item.is_some() {
+        let clicked_item = container.slots.get(slot_idx).cloned().flatten();
+        let action_num = container.next_action_number();
+        container.handle_double_click(slot_idx as i16);
+        *action = ContainerAction::Click {
+            window_id: container.window_id as i8,
+            slot: slot_idx as i16,
+            button: 0,
+            action_number: action_num,
+            mode: 6,
+            item: clicked_item,
+        };
+    }
+
+    // Mouse Tweaks: Scroll wheel on slot (Up = pull 1 item, Down = push 1 item)
+    if is_hovered {
+        let scroll_y = ui.input(|i| i.raw_scroll_delta.y);
+        if scroll_y.abs() > 0.5 {
+            let is_up = scroll_y > 0.0;
+            if container.handle_wheel_scroll(slot_idx, is_up) {
+                *action = ContainerAction::Click {
+                    window_id: container.window_id as i8,
+                    slot: slot_idx as i16,
+                    button: if is_up { 0 } else { 1 },
+                    action_number: container.next_action_number(),
+                    mode: 0,
+                    item: container.slots.get(slot_idx).cloned().flatten(),
+                };
+            }
+        }
+    }
+
+    // Mouse Tweaks & Vanilla Dragging
+    if !is_lmb_down && !is_rmb_down {
+        if drag_state.is_dragging {
+            if drag_state.drag_slots.len() > 1 {
+                container.handle_drag_finish(drag_state.drag_button, &drag_state.drag_slots);
+                *action = ContainerAction::Click {
+                    window_id: container.window_id as i8,
+                    slot: -999,
+                    button: if drag_state.drag_button == 0 { 2 } else { 6 },
+                    action_number: container.next_action_number(),
+                    mode: 5,
+                    item: None,
+                };
+            }
+            drag_state.is_dragging = false;
+            drag_state.drag_slots.clear();
+        }
+        drag_state.shift_drag_visited.clear();
+        drag_state.rmb_drag_visited.clear();
+    } else if is_hovered {
+        // Mouse Tweaks: Shift + LMB Drag (instant quick-move sweep across slots)
+        if is_shift && is_lmb_down {
+            if !drag_state.shift_drag_visited.contains(&slot_idx) {
+                drag_state.shift_drag_visited.push(slot_idx);
+                if container.slots.get(slot_idx).and_then(|s| s.as_ref()).is_some() {
+                    container.handle_shift_click(slot_idx as i16);
+                    *action = ContainerAction::Click {
+                        window_id: container.window_id as i8,
+                        slot: slot_idx as i16,
+                        button: 0,
+                        action_number: container.next_action_number(),
+                        mode: 1,
+                        item: None,
+                    };
+                }
+            }
+        } else if container.carried_item.is_some() {
+            // Vanilla LMB Drag (even split)
+            if is_lmb_down {
+                drag_state.is_dragging = true;
+                drag_state.drag_button = 0;
+                if !drag_state.drag_slots.contains(&slot_idx) {
+                    drag_state.drag_slots.push(slot_idx);
+                }
+            } else if is_rmb_down {
+                // Vanilla RMB Drag / Mouse Tweaks RMB continuous place
+                drag_state.is_dragging = true;
+                drag_state.drag_button = 1;
+                if !drag_state.drag_slots.contains(&slot_idx) {
+                    drag_state.drag_slots.push(slot_idx);
+                }
+                if !drag_state.rmb_drag_visited.contains(&slot_idx) {
+                    drag_state.rmb_drag_visited.push(slot_idx);
+                    let can_place = match &container.slots.get(slot_idx).and_then(|s| s.as_ref()) {
+                        None => true,
+                        Some(s) => {
+                            let carried = container.carried_item.as_ref().unwrap();
+                            let max_stack = get_item_max_stack(carried.item_id) as i8;
+                            s.item_id == carried.item_id
+                                && s.item_damage == carried.item_damage
+                                && s.item_count < max_stack
+                        }
+                    };
+                    if can_place {
+                        let _ = container.handle_normal_click(slot_idx as i16, true);
+                        *action = ContainerAction::Click {
+                            window_id: container.window_id as i8,
+                            slot: slot_idx as i16,
+                            button: 1,
+                            action_number: container.next_action_number(),
+                            mode: 0,
+                            item: container.slots.get(slot_idx).cloned().flatten(),
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    // Normal Clicks (executed if not in a multi-slot drag)
+    if response.clicked() || response.secondary_clicked() {
+        if !drag_state.is_dragging || drag_state.drag_slots.len() <= 1 {
+            let clicked_item = container.slots.get(slot_idx).cloned().flatten();
+            let action_num = container.next_action_number();
+
+            if is_shift {
+                container.handle_shift_click(slot_idx as i16);
+                *action = ContainerAction::Click {
+                    window_id: container.window_id as i8,
+                    slot: slot_idx as i16,
+                    button: if response.secondary_clicked() { 1 } else { 0 },
+                    action_number: action_num,
+                    mode: 1,
+                    item: clicked_item,
+                };
+            } else {
+                let is_right = response.secondary_clicked();
+                let _ = container.handle_normal_click(slot_idx as i16, is_right);
+                *action = ContainerAction::Click {
+                    window_id: container.window_id as i8,
+                    slot: slot_idx as i16,
+                    button: if is_right { 1 } else { 0 },
+                    action_number: action_num,
+                    mode: 0,
+                    item: clicked_item,
+                };
+            }
+        }
+    }
+
+    ui.data_mut(|d| d.insert_temp(egui::Id::new("active_drag_state_v1"), drag_state));
 }
 
 /// Renders rich Minecraft tooltip with name, enchantments, lore, durability, and stats.

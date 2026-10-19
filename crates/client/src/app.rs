@@ -1063,8 +1063,12 @@ impl App {
                     self.breaking_block_pos = None;
                     self.teleport_confirmed_ticks = 0;
                     self.player.capabilities.is_creative = jg.game_mode == 1;
+                    self.player.is_spectator = jg.game_mode == 3;
                     if jg.game_mode == 1 || jg.game_mode == 3 {
                         self.player.capabilities.allow_flying = true;
+                        if jg.game_mode == 3 {
+                            self.player.capabilities.is_flying = true;
+                        }
                     } else {
                         self.player.capabilities.allow_flying = false;
                         self.player.capabilities.is_flying = false;
@@ -1072,6 +1076,7 @@ impl App {
                     if let Some(sm) = &mut self.screen_manager {
                         sm.reset_modals();
                         if let Some(ig) = &mut sm.in_game {
+                            ig.scoreboard.clear();
                             ig.dimension = jg.dimension;
                             ig.gamemode = jg.game_mode;
                             ig.is_creative = jg.game_mode == 1;
@@ -1109,6 +1114,17 @@ impl App {
                     self.has_spawned = false;
                     self.world.dimension = rp.dimension as i8;
                     self.player_gamemode = rp.game_mode;
+                    self.player.capabilities.is_creative = rp.game_mode == 1;
+                    self.player.is_spectator = rp.game_mode == 3;
+                    if rp.game_mode == 1 || rp.game_mode == 3 {
+                        self.player.capabilities.allow_flying = true;
+                        if rp.game_mode == 3 {
+                            self.player.capabilities.is_flying = true;
+                        }
+                    } else {
+                        self.player.capabilities.allow_flying = false;
+                        self.player.capabilities.is_flying = false;
+                    }
                     self.player_health = 20.0;
                     self.player_air = 300;
                     self.hurt_time = 0;
@@ -1120,7 +1136,10 @@ impl App {
                     if let Some(sm) = &mut self.screen_manager {
                         sm.reset_modals();
                         if let Some(ig) = &mut sm.in_game {
+                            ig.scoreboard.clear();
                             ig.dimension = rp.dimension as i8;
+                            ig.gamemode = rp.game_mode;
+                            ig.is_creative = rp.game_mode == 1;
                             ig.hud_data.health = 20.0;
                             ig.death_ticks = 0;
                         }
@@ -1805,6 +1824,11 @@ impl App {
                         cm.clear();
                     }
                     self.profiler.loaded_chunks = 0;
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            ig.scoreboard.clear();
+                        }
+                    }
                     self.held_item_id = 0;
                     self.hotbar_items = [None, None, None, None, None, None, None, None, None];
                     self.armor_items = [None, None, None, None];
@@ -2120,8 +2144,12 @@ impl App {
                         let gm = cgs.value as u8;
                         self.player_gamemode = gm;
                         self.player.capabilities.is_creative = gm == 1;
+                        self.player.is_spectator = gm == 3;
                         if gm == 1 || gm == 3 {
                             self.player.capabilities.allow_flying = true;
+                            if gm == 3 {
+                                self.player.capabilities.is_flying = true;
+                            }
                         } else {
                             self.player.capabilities.allow_flying = false;
                             self.player.capabilities.is_flying = false;
@@ -2214,7 +2242,7 @@ impl App {
                 let cursor_needed = self.is_cursor_needed();
                 let mut input = PlayerInput::default();
 
-                if is_in_game && !cursor_needed {
+                if is_in_game && !cursor_needed && self.player_health > 0.0 {
                     if self.pressed_keys.contains(&KeyCode::KeyW) { input.move_forward += 1.0; }
                     if self.pressed_keys.contains(&KeyCode::KeyS) { input.move_forward -= 1.0; }
                     if self.pressed_keys.contains(&KeyCode::KeyA) { input.move_strafe += 1.0; }
@@ -3118,6 +3146,11 @@ impl ApplicationHandler for App {
                         self.held_item_id = 0;
                         self.hotbar_items = [None, None, None, None, None, None, None, None, None];
                         self.armor_items = [None, None, None, None];
+                        if let Some(sm) = &mut self.screen_manager {
+                            if let Some(ig) = &mut sm.in_game {
+                                ig.scoreboard.clear();
+                            }
+                        }
                         if let Some(w) = &self.window {
                             let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
                             w.set_cursor_visible(true);

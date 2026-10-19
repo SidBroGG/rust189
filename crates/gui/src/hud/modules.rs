@@ -106,20 +106,10 @@ fn render_item_icon(
         );
     }
 
-    // Enchanted Item Glint: sweeping diagonal purple/magenta shimmer
+    // Enchanted Item Glint: authentic Minecraft 1.8.9 dual-layer glint strictly clipped to icon bounds
     if item.is_enchanted {
-        let anim_phase = (tick_counter as f32 * 0.05) % 1.0;
-        let glint_col = Color32::from_rgba_unmultiplied(190, 80, 255, 110);
-        let glint_hi = Color32::from_rgba_unmultiplied(240, 180, 255, 140);
-
-        for offset in [0.0, 0.45] {
-            let p = (anim_phase + offset) % 1.0;
-            let bx = slot_rect.left() + (p * 2.2 - 0.6) * slot_rect.width();
-            let p0 = Pos2::new(bx - 3.0 * scale, slot_rect.bottom() - 1.0 * scale);
-            let p1 = Pos2::new(bx + 5.0 * scale, slot_rect.top() + 1.0 * scale);
-            painter.line_segment([p0, p1], Stroke::new(2.8 * scale, glint_col));
-            painter.line_segment([Pos2::new(p0.x + 1.0 * scale, p0.y), Pos2::new(p1.x + 1.0 * scale, p1.y)], Stroke::new(1.2 * scale, glint_hi));
-        }
+        let time_ms = tick_counter.saturating_mul(50);
+        crate::hud::item_textures::render_enchantment_glint(painter, painter.ctx(), icon_rect, time_ms);
     }
 }
 

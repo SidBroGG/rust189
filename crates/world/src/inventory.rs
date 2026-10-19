@@ -524,6 +524,174 @@ impl ContainerState {
         }
     }
 
+    /// Handles Drag Finish (Mode 5: 0 = even split, 1 = 1 item per slot).
+    pub fn handle_drag_finish(&mut self, drag_mode: u8, drag_slots: &[usize]) {
+        let Some(ref mut carried) = self.carried_item else {
+            return;
+        };
+        if drag_slots.is_empty() {
+            return;
+        }
+
+        let max_stack = get_item_max_stack(carried.item_id) as i8;
+
+        if drag_mode == 0 {
+            // Even split
+            let count_per_slot = carried.item_count / drag_slots.len() as i8;
+            if count_per_slot > 0 {
+                let mut placed_total = 0;
+                for &idx in drag_slots {
+                    if idx < self.slots.len() {
+                        let space = match &self.slots[idx] {
+                            None => max_stack,
+                            Some(s) if s.item_id == carried.item_id && s.item_damage == carried.item_damage => {
+                                (max_stack - s.item_count).max(0)
+                            }
+                            _ => 0,
+                        };
+                        let to_add = count_per_slot.min(space);
+                        if to_add > 0 {
+                            if let Some(ref mut s) = self.slots[idx] {
+                                s.item_count += to_add;
+                            } else {
+                                self.slots[idx] = Some(Slot::new(
+                                    carried.item_id,
+                                    to_add,
+                                    carried.item_damage,
+                                    carried.nbt.clone(),
+                                ));
+                            }
+                            placed_total += to_add;
+                        }
+                    }
+                }
+                carried.item_count -= placed_total;
+                if carried.item_count <= 0 {
+                    self.carried_item = None;
+                }
+            }
+        } else if drag_mode == 1 {
+            // 1 item per slot
+            for &idx in drag_slots {
+                if carried.item_count <= 0 {
+                    break;
+                }
+                if idx < self.slots.len() {
+                    let can_place = match &self.slots[idx] {
+                        None => true,
+                        Some(s) => {
+                            s.item_id == carried.item_id
+                                && s.item_damage == carried.item_damage
+                                && s.item_count < max_stack
+                        }
+                    };
+                    if can_place {
+                        if let Some(ref mut s) = self.slots[idx] {
+                            s.item_count += 1;
+                        } else {
+                            self.slots[idx] = Some(Slot::new(
+                                carried.item_id,
+                                1,
+                                carried.item_damage,
+                                carried.nbt.clone(),
+                            ));
+                        }
+                        carried.item_count -= 1;
+                    }
+                }
+            }
+            if carried.item_count <= 0 {
+                self.carried_item = None;
+            }
+        }
+
+        if self.kind == ContainerKind::Player || self.kind == ContainerKind::Workbench {
+            self.update_crafting_result();
+        }
+    }
+
+    /// Mouse Tweaks scroll wheel: Up = pull 1 item from other container, Down = push 1 item to other container.
+    pub fn handle_wheel_scroll(&mut self, slot_idx: usize, is_up: bool) -> bool {
+        if slot_idx >= self.slots.len() {
+            return false;
+        }
+        let player_start = self.kind.player_slots_start();
+        let total = self.slots.len();
+
+        if is_up {
+            let target_item = self.slots[slot_idx].clone();
+            let (target_id, target_dmg) = match target_item {
+                Some(ref s) => (s.item_id, s.item_damage),
+                None => {
+                    if let Some(ref c) = self.carried_item {
+                        (c.item_id, c.item_damage)
+                    } else {
+                        return false;
+                    }
+                }
+            };
+
+            let max_stack = get_item_max_stack(target_id) as i8;
+            if let Some(ref s) = self.slots[slot_idx] {
+                if s.item_count >= max_stack {
+                    return false;
+                }
+            }
+
+            let (other_start, other_end) = if slot_idx < player_start {
+                (player_start, total)
+            } else {
+                (0, player_start)
+            };
+
+            for i in other_start..other_end.min(self.slots.len()) {
+                if let Some(ref mut src) = self.slots[i] {
+                    if src.item_id == target_id && src.item_damage == target_dmg && src.item_count > 0 {
+                        src.item_count -= 1;
+                        let src_nbt = src.nbt.clone();
+                        if src.item_count <= 0 {
+                            self.slots[i] = None;
+                        }
+
+                        if let Some(ref mut dst) = self.slots[slot_idx] {
+                            dst.item_count += 1;
+                        } else {
+                            self.slots[slot_idx] = Some(Slot::new(target_id, 1, target_dmg, src_nbt));
+                        }
+                        if self.kind == ContainerKind::Player || self.kind == ContainerKind::Workbench {
+                            self.update_crafting_result();
+                        }
+                        return true;
+                    }
+                }
+            }
+        } else if let Some(ref s) = self.slots[slot_idx] {
+            if s.item_count > 0 {
+                let mut single = Slot::new(s.item_id, 1, s.item_damage, s.nbt.clone());
+                let (other_start, other_end) = if slot_idx < player_start {
+                    (player_start, total)
+                } else {
+                    (0, player_start)
+                };
+
+                let transferred = self.merge_into_range(&mut single, other_start, other_end);
+                if transferred || single.item_count == 0 {
+                    if let Some(ref mut cur) = self.slots[slot_idx] {
+                        cur.item_count -= 1;
+                        if cur.item_count <= 0 {
+                            self.slots[slot_idx] = None;
+                        }
+                    }
+                    if self.kind == ContainerKind::Player || self.kind == ContainerKind::Workbench {
+                        self.update_crafting_result();
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Merges an item into a range of slots [start..end).
     fn merge_into_range(&mut self, item: &mut Slot, start: usize, end: usize) -> bool {
         let max_stack = get_item_max_stack(item.item_id) as i8;

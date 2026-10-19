@@ -298,8 +298,8 @@ impl InGameScreen {
             }
         }
 
-        // 3. Check Tab key for Tab List overlay
-        if !self.escape_menu_opened && ctx.input(|i| i.key_down(Key::Tab)) {
+        // 3. Check Tab key for Tab List overlay (only when chat is closed)
+        if !self.escape_menu_opened && !self.chat_opened && ctx.input(|i| i.key_down(Key::Tab)) {
             self.show_tab_list = true;
         } else {
             self.show_tab_list = false;
@@ -505,15 +505,26 @@ impl InGameScreen {
                 }
             } else if id == "chat" {
                 let now = Instant::now();
+                let has_visible_messages = self.chat_messages.iter().any(|entry| {
+                    now.duration_since(entry.received_at).as_secs_f32() <= 14.0
+                });
+                if !self.chat_opened && !has_visible_messages {
+                    continue;
+                }
                 let chat_font_size = self.hud_layout.chat_font_size.clamp(8.0, 28.0);
                 egui::Area::new(Id::new("chat_area"))
                     .fixed_pos(rect.min)
                     .interactable(self.chat_opened)
                     .show(ctx, |ui| {
                         let chat_bg_alpha = if self.chat_opened { bg_alpha } else { (bg_alpha as f32 * 0.7) as u8 };
+                        let frame_stroke = if self.chat_opened {
+                            Stroke::new(1.0_f32, elem_border_col)
+                        } else {
+                            Stroke::NONE
+                        };
                         Frame::NONE
                             .fill(Color32::from_rgba_unmultiplied(16, 18, 24, chat_bg_alpha))
-                            .stroke(Stroke::new(1.0_f32, elem_border_col))
+                            .stroke(frame_stroke)
                             .corner_radius(CornerRadius::same(3))
                             .inner_margin(egui::Margin::symmetric(2, 2))
                             .show(ui, |ui| {
@@ -565,7 +576,8 @@ impl InGameScreen {
                                     ui.separator();
 
                                     // Tab completion logic
-                                    if ctx.input(|i| i.key_pressed(Key::Tab)) {
+                                    let tab_pressed = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Tab));
+                                    if tab_pressed {
                                         if self.chat_input.starts_with('/') {
                                             let cmds = ["/help", "/ping", "/spawn", "/msg", "/gamemode", "/clear", "/party", "/guild", "/stats"];
                                             let cur = self.chat_input.to_lowercase();
@@ -584,6 +596,7 @@ impl InGameScreen {
                                                 }
                                             }
                                         }
+                                        self.request_chat_focus = true;
                                     }
 
                                     ui.horizontal(|ui| {
@@ -593,7 +606,7 @@ impl InGameScreen {
                                             .desired_width((rect.width() - 8.0).max(60.0));
 
                                         let response = ui.add(edit);
-                                        if self.request_chat_focus {
+                                        if self.request_chat_focus || tab_pressed {
                                             response.request_focus();
                                             self.request_chat_focus = false;
                                         }

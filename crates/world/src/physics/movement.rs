@@ -75,6 +75,7 @@ pub struct PlayerMovement {
     pub fly_toggle_timer: u32,
     pub was_jump_pressed: bool,
     pub abilities_dirty: bool,
+    pub is_spectator: bool,
 
     // Camera and view bobbing state
     pub distance_walked_modified: f32,
@@ -149,6 +150,7 @@ impl PlayerMovement {
             fly_toggle_timer: 0,
             was_jump_pressed: false,
             abilities_dirty: false,
+            is_spectator: false,
 
             distance_walked_modified: 0.0,
             prev_distance_walked_modified: 0.0,
@@ -429,13 +431,20 @@ impl PlayerMovement {
         let fresh_jump = input.jump && !self.was_jump_pressed;
         self.was_jump_pressed = input.jump;
 
-        if self.capabilities.allow_flying && fresh_jump {
-            if self.fly_toggle_timer == 0 {
-                self.fly_toggle_timer = 7;
-            } else {
-                self.capabilities.is_flying = !self.capabilities.is_flying;
-                self.abilities_dirty = true;
-                self.fly_toggle_timer = 0;
+        if self.capabilities.allow_flying {
+            if self.is_spectator {
+                if !self.capabilities.is_flying {
+                    self.capabilities.is_flying = true;
+                    self.abilities_dirty = true;
+                }
+            } else if fresh_jump {
+                if self.fly_toggle_timer == 0 {
+                    self.fly_toggle_timer = 7;
+                } else {
+                    self.capabilities.is_flying = !self.capabilities.is_flying;
+                    self.abilities_dirty = true;
+                    self.fly_toggle_timer = 0;
+                }
             }
         }
 
@@ -668,8 +677,8 @@ impl PlayerMovement {
         }
         self.camera_pitch += (f1_pitch - self.camera_pitch) * 0.8;
 
-        // Landing disables flying in creative mode (MCP `EntityPlayerSP` line 904)
-        if self.on_ground && self.capabilities.is_flying && self.capabilities.is_creative {
+        // Landing disables flying in creative/survival mode, but NEVER in spectator mode (MCP `EntityPlayerSP` line 904)
+        if self.on_ground && self.capabilities.is_flying && !self.is_spectator {
             self.capabilities.is_flying = false;
             self.abilities_dirty = true;
         }

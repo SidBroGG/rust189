@@ -1,4 +1,7 @@
-use egui::{ColorImage, Context, TextureHandle, TextureId, TextureOptions};
+use egui::{
+    Color32, ColorImage, Context, Mesh, Painter, Pos2, Rect, Shape, Stroke, TextureHandle,
+    TextureId, TextureOptions,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -645,4 +648,129 @@ pub fn get_or_load_item_texture(
     let mut guard = cache.lock().unwrap();
     guard.insert(key, handle_opt);
     id_opt
+}
+
+/// Loads and caches the vanilla enchanted item glint texture (`minecraft/textures/misc/enchanted_item_glint.png`).
+pub fn get_or_load_glint_texture(ctx: &Context) -> Option<TextureId> {
+    let cache: Arc<Mutex<Option<TextureHandle>>> = ctx.data_mut(|d| {
+        d.get_temp_mut_or_insert_with(
+            egui::Id::new("glint_texture_cache_v1"),
+            || Arc::new(Mutex::new(None)),
+        )
+        .clone()
+    });
+
+    {
+        let guard = cache.lock().unwrap();
+        if let Some(ref handle) = *guard {
+            return Some(handle.id());
+        }
+    }
+
+    let assets_dir = find_assets_dir();
+    let full_path = assets_dir.join("minecraft/textures/misc/enchanted_item_glint.png");
+
+    let handle_opt = if full_path.exists() {
+        match std::fs::read(&full_path) {
+            Ok(bytes) => match image::load_from_memory(&bytes) {
+                Ok(img) => {
+                    let rgba = img.to_rgba8();
+                    let (w, h) = rgba.dimensions();
+                    let color_image = ColorImage::from_rgba_unmultiplied(
+                        [w as usize, h as usize],
+                        &rgba.into_raw(),
+                    );
+                    let handle = ctx.load_texture("enchanted_item_glint", color_image, TextureOptions::LINEAR);
+                    Some(handle)
+                }
+                Err(e) => {
+                    tracing::warn!(path = ?full_path, error = %e, "Failed to decode glint texture");
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::warn!(path = ?full_path, error = %e, "Failed to read glint texture file");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let id_opt = handle_opt.as_ref().map(|h| h.id());
+    let mut guard = cache.lock().unwrap();
+    *guard = handle_opt;
+    id_opt
+}
+
+/// Renders authentic Minecraft 1.8.9 dual-layer enchanted glint animation,
+/// strictly clipped to `icon_rect` so it never spills outside the item bounds.
+pub fn render_enchantment_glint(
+    painter: &Painter,
+    ctx: &Context,
+    icon_rect: Rect,
+    time_ms: u64,
+) {
+    if icon_rect.width() <= 1.0 || icon_rect.height() <= 1.0 {
+        return;
+    }
+
+    let clipped = painter.with_clip_rect(icon_rect);
+    let glint_tex = get_or_load_glint_texture(ctx);
+
+    if let Some(tex_id) = glint_tex {
+        // Vanilla MCP 1.8.9 RenderItem.renderEffect:
+        // Pass 1: scale 8.0, f = (time % 3000) / 3000.0 / 8.0, rotate -50 deg, color 0x8040CC (-8372020)
+        // Pass 2: scale 8.0, f1 = (time % 4873) / 4873.0 / 8.0, rotate +10 deg, color 0x8040CC (-8372020)
+        let t1 = (time_ms % 3000) as f32 / 3000.0;
+        let t2 = (time_ms % 4873) as f32 / 4873.0;
+
+        let col1 = Color32::from_rgba_unmultiplied(128, 64, 204, 155);
+        let col2 = Color32::from_rgba_unmultiplied(180, 100, 255, 125);
+
+        let render_glint_pass = |angle_deg: f32, u_offset: f32, tint: Color32| {
+            let rad = angle_deg.to_radians();
+            let cos = rad.cos();
+            let sin = rad.sin();
+
+            let transform_uv = |u: f32, v: f32| -> Pos2 {
+                let su = (u + u_offset) * 4.0;
+                let sv = v * 4.0;
+                let rx = su * cos - sv * sin;
+                let ry = su * sin + sv * cos;
+                Pos2::new(rx.rem_euclid(1.0), ry.rem_euclid(1.0))
+            };
+
+            let uv0 = transform_uv(0.0, 0.0);
+            let uv1 = transform_uv(1.0, 0.0);
+            let uv2 = transform_uv(1.0, 1.0);
+            let uv3 = transform_uv(0.0, 1.0);
+
+            let mut mesh = Mesh::with_texture(tex_id);
+            let p0 = icon_rect.min;
+            let p1 = Pos2::new(icon_rect.max.x, icon_rect.min.y);
+            let p2 = icon_rect.max;
+            let p3 = Pos2::new(icon_rect.min.x, icon_rect.max.y);
+
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            mesh.vertices.push(egui::epaint::Vertex { pos: p0, uv: uv0, color: tint });
+            mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: uv1, color: tint });
+            mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: uv2, color: tint });
+            mesh.vertices.push(egui::epaint::Vertex { pos: p3, uv: uv3, color: tint });
+
+            clipped.add(Shape::mesh(mesh));
+        };
+
+        render_glint_pass(-50.0, t1, col1);
+        render_glint_pass(10.0, -t2, col2);
+    } else {
+        // Fallback: strictly clipped diagonal sweeping sheen
+        let phase = ((time_ms % 2500) as f32 / 2500.0) * 2.5 - 0.75;
+        let stroke_w = icon_rect.width() * 0.45;
+        let center_x = icon_rect.left() + phase * icon_rect.width();
+        let p0 = Pos2::new(center_x - icon_rect.height() * 0.5, icon_rect.bottom());
+        let p1 = Pos2::new(center_x + icon_rect.height() * 0.5, icon_rect.top());
+        clipped.line_segment([p0, p1], Stroke::new(stroke_w, Color32::from_rgba_unmultiplied(160, 80, 240, 95)));
+    }
 }
