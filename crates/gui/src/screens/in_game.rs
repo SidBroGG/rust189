@@ -20,7 +20,7 @@ pub struct NametagInfo {
     pub is_sneaking: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum InGameAction {
     None,
     Disconnect,
@@ -28,6 +28,7 @@ pub enum InGameAction {
     SendChat(String),
     Respawn,
     DropItem { drop_all: bool },
+    Container(crate::screens::container::ContainerAction),
 }
 
 /// A timestamped chat line for smooth alpha fading.
@@ -60,6 +61,13 @@ pub struct InGameScreen {
     pub nametags: Vec<NametagInfo>,
     pub gamemode: u8,
     pub is_creative: bool,
+
+    // Container & Inventory state
+    pub player_inventory: world::ContainerState,
+    pub active_container: Option<world::ContainerState>,
+    pub container_ui_state: crate::screens::container::ContainerUiState,
+    pub inventory_opened: bool,
+    pub inventory_key: String,
 
     // Modular HUD Layout and Editor
     pub hud_layout: HudLayoutConfig,
@@ -99,6 +107,11 @@ impl InGameScreen {
             nametags: Vec::new(),
             gamemode: 0,
             is_creative: false,
+            player_inventory: world::ContainerState::new_player_inventory(),
+            active_container: None,
+            container_ui_state: crate::screens::container::ContainerUiState::default(),
+            inventory_opened: false,
+            inventory_key: "E".to_string(),
             hud_layout,
             hud_editor: HudEditorState::default(),
             hud_data: HudData::default(),
@@ -246,13 +259,43 @@ impl InGameScreen {
             return InGameAction::None;
         }
 
-        // 2. Check Escape key: closes chat if open, otherwise toggles Escape menu
+        // 2. Check Escape key: closes modal screens in hierarchical order
         if !self.is_modal_open && ctx.input(|i| i.key_pressed(Key::Escape)) {
-            if self.chat_opened {
+            if self.container_ui_state.sign_pos.is_some() {
+                self.container_ui_state.sign_pos = None;
+                return InGameAction::None;
+            } else if self.container_ui_state.book_open {
+                self.container_ui_state.book_open = false;
+                return InGameAction::None;
+            } else if let Some(container) = self.active_container.take() {
+                return InGameAction::Container(crate::screens::container::ContainerAction::Close(container.window_id as i8));
+            } else if self.inventory_opened {
+                self.inventory_opened = false;
+                return InGameAction::Container(crate::screens::container::ContainerAction::Close(0));
+            } else if self.chat_opened {
                 self.chat_opened = false;
                 self.chat_input.clear();
             } else {
                 self.escape_menu_opened = !self.escape_menu_opened;
+            }
+        }
+
+        // 2.5 Check Inventory Key (e.g. E) to open/close player/creative inventory or active container
+        let inv_key = standard_token_to_egui_key(&self.inventory_key).unwrap_or(Key::E);
+        if !self.escape_menu_opened
+            && !self.chat_opened
+            && !ctx.wants_keyboard_input()
+            && ctx.input(|i| i.key_pressed(inv_key))
+        {
+            if self.container_ui_state.sign_pos.is_none() && !self.container_ui_state.book_open {
+                if let Some(container) = self.active_container.take() {
+                    return InGameAction::Container(crate::screens::container::ContainerAction::Close(container.window_id as i8));
+                } else if self.inventory_opened {
+                    self.inventory_opened = false;
+                    return InGameAction::Container(crate::screens::container::ContainerAction::Close(0));
+                } else {
+                    self.inventory_opened = true;
+                }
             }
         }
 
@@ -272,7 +315,7 @@ impl InGameScreen {
         }
 
         // 5. Check T or Enter or Slash (/) to open chat
-        if !self.chat_opened && !self.escape_menu_opened {
+        if !self.chat_opened && !self.escape_menu_opened && !self.inventory_opened && self.active_container.is_none() {
             if ctx.input(|i| i.key_pressed(Key::T) || i.key_pressed(Key::Enter)) {
                 self.chat_opened = true;
                 self.request_chat_focus = true;
@@ -286,8 +329,13 @@ impl InGameScreen {
         // 6. RENDER MODULAR HUD ELEMENTS (Driven by HudLayoutConfig)
         let hud_painter = ctx.layer_painter(LayerId::new(Order::Middle, Id::new("hud_modular_layer")));
 
-        // Rigid center crosshair (always at exact screen center when escape menu is not open)
-        if !self.escape_menu_opened {
+        // Rigid center crosshair (always at exact screen center when menus/containers are not open)
+        if !self.escape_menu_opened
+            && !self.inventory_opened
+            && self.active_container.is_none()
+            && self.container_ui_state.sign_pos.is_none()
+            && !self.container_ui_state.book_open
+        {
             let center = Pos2::new(screen_size.x * 0.5, screen_size.y * 0.5);
             let crosshair_rect = Rect::from_center_size(center, Vec2::splat(16.0));
             crate::hud::render_crosshair(&hud_painter, crosshair_rect);
@@ -620,6 +668,60 @@ impl InGameScreen {
                     galley,
                     Color32::WHITE,
                 );
+            }
+        }
+
+        // 8.5 CONTAINER & INVENTORY SCREENS
+        if self.container_ui_state.sign_pos.is_some() || self.container_ui_state.book_open {
+            ctx.layer_painter(LayerId::new(Order::Middle, Id::new("container_backdrop")))
+                .rect_filled(screen_rect, 0.0, Color32::from_black_alpha(140));
+            let mut dummy = world::ContainerState::new_player_inventory();
+            let c_act = crate::screens::container::render_container(
+                ctx,
+                &mut dummy,
+                &mut self.container_ui_state,
+                self.hud_data.exp_level,
+            );
+            if c_act != crate::screens::container::ContainerAction::None {
+                return InGameAction::Container(c_act);
+            }
+        } else if let Some(ref mut c) = self.active_container {
+            ctx.layer_painter(LayerId::new(Order::Middle, Id::new("container_backdrop")))
+                .rect_filled(screen_rect, 0.0, Color32::from_black_alpha(140));
+            let c_act = crate::screens::container::render_container(
+                ctx,
+                c,
+                &mut self.container_ui_state,
+                self.hud_data.exp_level,
+            );
+            if let crate::screens::container::ContainerAction::Close(_) = c_act {
+                self.active_container = None;
+            }
+            if c_act != crate::screens::container::ContainerAction::None {
+                return InGameAction::Container(c_act);
+            }
+        } else if self.inventory_opened {
+            ctx.layer_painter(LayerId::new(Order::Middle, Id::new("container_backdrop")))
+                .rect_filled(screen_rect, 0.0, Color32::from_black_alpha(140));
+            let c_act = if self.hud_data.is_creative {
+                crate::screens::container::render_creative_inventory(
+                    ctx,
+                    &mut self.container_ui_state,
+                    &mut self.player_inventory,
+                )
+            } else {
+                crate::screens::container::render_container(
+                    ctx,
+                    &mut self.player_inventory,
+                    &mut self.container_ui_state,
+                    self.hud_data.exp_level,
+                )
+            };
+            if let crate::screens::container::ContainerAction::Close(_) = c_act {
+                self.inventory_opened = false;
+            }
+            if c_act != crate::screens::container::ContainerAction::None {
+                return InGameAction::Container(c_act);
             }
         }
 

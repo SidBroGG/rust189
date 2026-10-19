@@ -75,6 +75,27 @@ pub enum OutgoingPlayPacket {
     Animation,
     HeldItemChange(i16),
     ClientStatus(ClientStatusAction),
+    ClickWindow {
+        window_id: i8,
+        slot: i16,
+        button: i8,
+        action_number: i16,
+        mode: i8,
+        item: Option<Slot>,
+    },
+    CloseWindow(i8),
+    CreativeInventoryAction {
+        slot: i16,
+        item: Option<Slot>,
+    },
+    EnchantItem {
+        window_id: i8,
+        button: i8,
+    },
+    UpdateSign {
+        position: Position,
+        lines: [String; 4],
+    },
     CustomPayload {
         channel: String,
         data: Vec<u8>,
@@ -224,6 +245,45 @@ impl OutgoingPlayPacket {
                 let pkt = ServerboundClientStatusPacket::new(*action);
                 pkt.encode(buf)?;
                 Ok(ServerboundClientStatusPacket::PACKET_ID)
+            }
+            Self::ClickWindow {
+                window_id,
+                slot,
+                button,
+                action_number,
+                mode,
+                item,
+            } => {
+                let pkt = ServerboundClickWindowPacket::new(
+                    *window_id,
+                    *slot,
+                    *button,
+                    *action_number,
+                    *mode,
+                    item.clone(),
+                );
+                pkt.encode(buf)?;
+                Ok(ServerboundClickWindowPacket::PACKET_ID)
+            }
+            Self::CloseWindow(window_id) => {
+                let pkt = ServerboundCloseWindowPacket::new(*window_id);
+                pkt.encode(buf)?;
+                Ok(ServerboundCloseWindowPacket::PACKET_ID)
+            }
+            Self::CreativeInventoryAction { slot, item } => {
+                let pkt = ServerboundCreativeInventoryActionPacket::new(*slot, item.clone());
+                pkt.encode(buf)?;
+                Ok(ServerboundCreativeInventoryActionPacket::PACKET_ID)
+            }
+            Self::EnchantItem { window_id, button } => {
+                let pkt = ServerboundEnchantItemPacket::new(*window_id, *button);
+                pkt.encode(buf)?;
+                Ok(ServerboundEnchantItemPacket::PACKET_ID)
+            }
+            Self::UpdateSign { position, lines } => {
+                let pkt = ServerboundUpdateSignPacket::new(*position, lines.clone());
+                pkt.encode(buf)?;
+                Ok(ServerboundUpdateSignPacket::PACKET_ID)
             }
             Self::CustomPayload { channel, data } => {
                 let pkt = ServerboundCustomPayloadPacket::new(channel.as_str(), data.clone());

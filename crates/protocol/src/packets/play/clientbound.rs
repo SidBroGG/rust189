@@ -2040,3 +2040,152 @@ impl ClientboundCustomPayloadPacket {
         Ok(())
     }
 }
+
+/// Clientbound Open Window packet (0x2D).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundOpenWindowPacket {
+    pub window_id: u8,
+    pub inventory_type: String,
+    pub window_title: String,
+    pub slot_count: u8,
+    pub entity_id: Option<i32>,
+}
+
+impl ClientboundOpenWindowPacket {
+    pub const PACKET_ID: i32 = 0x2D;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 2 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 2,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_u8();
+        let inventory_type = buf.read_string(32)?;
+        let window_title = buf.read_string(32767)?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let slot_count = buf.get_u8();
+        let entity_id = if inventory_type == "EntityHorse" {
+            if buf.remaining() < 4 {
+                return Err(ProtocolError::BufferUnderflow {
+                    needed: 4,
+                    available: buf.remaining(),
+                });
+            }
+            Some(buf.get_i32())
+        } else {
+            None
+        };
+        Ok(Self {
+            window_id,
+            inventory_type,
+            window_title,
+            slot_count,
+            entity_id,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id]);
+        buf.write_string(&self.inventory_type)?;
+        buf.write_string(&self.window_title)?;
+        buf.extend_from_slice(&[self.slot_count]);
+        if self.inventory_type == "EntityHorse" {
+            if let Some(eid) = self.entity_id {
+                buf.extend_from_slice(&eid.to_be_bytes());
+            } else {
+                buf.extend_from_slice(&0i32.to_be_bytes());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Clientbound Close Window packet (0x2E).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundCloseWindowPacket {
+    pub window_id: u8,
+}
+
+impl ClientboundCloseWindowPacket {
+    pub const PACKET_ID: i32 = 0x2E;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_u8();
+        Ok(Self { window_id })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id]);
+        Ok(())
+    }
+}
+
+/// Clientbound Window Property packet (0x31).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundWindowPropertyPacket {
+    pub window_id: u8,
+    pub property: i16,
+    pub value: i16,
+}
+
+impl ClientboundWindowPropertyPacket {
+    pub const PACKET_ID: i32 = 0x31;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 5 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 5,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_u8();
+        let property = buf.get_i16();
+        let value = buf.get_i16();
+        Ok(Self {
+            window_id,
+            property,
+            value,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id]);
+        buf.extend_from_slice(&self.property.to_be_bytes());
+        buf.extend_from_slice(&self.value.to_be_bytes());
+        Ok(())
+    }
+}
+
+/// Clientbound Sign Editor Open packet (0x36).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundSignEditorOpenPacket {
+    pub position: Position,
+}
+
+impl ClientboundSignEditorOpenPacket {
+    pub const PACKET_ID: i32 = 0x36;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let position = Position::read(buf)?;
+        Ok(Self { position })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        self.position.write(buf);
+        Ok(())
+    }
+}
+

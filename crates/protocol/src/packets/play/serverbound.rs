@@ -712,6 +712,209 @@ impl ServerboundCustomPayloadPacket {
     }
 }
 
+/// Serverbound Click Window packet (0x0E).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerboundClickWindowPacket {
+    pub window_id: i8,
+    pub slot: i16,
+    pub button: i8,
+    pub action_number: i16,
+    pub mode: i8,
+    pub clicked_item: Option<Slot>,
+}
+
+impl ServerboundClickWindowPacket {
+    pub const PACKET_ID: i32 = 0x0E;
+
+    pub fn new(
+        window_id: i8,
+        slot: i16,
+        button: i8,
+        action_number: i16,
+        mode: i8,
+        clicked_item: Option<Slot>,
+    ) -> Self {
+        Self {
+            window_id,
+            slot,
+            button,
+            action_number,
+            mode,
+            clicked_item,
+        }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id as u8]);
+        buf.extend_from_slice(&self.slot.to_be_bytes());
+        buf.extend_from_slice(&[self.button as u8]);
+        buf.extend_from_slice(&self.action_number.to_be_bytes());
+        buf.extend_from_slice(&[self.mode as u8]);
+        write_slot(self.clicked_item.as_ref(), buf)?;
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 7 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 7,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_i8();
+        let slot = buf.get_i16();
+        let button = buf.get_i8();
+        let action_number = buf.get_i16();
+        let mode = buf.get_i8();
+        let clicked_item = read_slot(buf)?;
+        Ok(Self {
+            window_id,
+            slot,
+            button,
+            action_number,
+            mode,
+            clicked_item,
+        })
+    }
+}
+
+/// Serverbound Close Window packet (0x0D).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundCloseWindowPacket {
+    pub window_id: i8,
+}
+
+impl ServerboundCloseWindowPacket {
+    pub const PACKET_ID: i32 = 0x0D;
+
+    pub fn new(window_id: i8) -> Self {
+        Self { window_id }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id as u8]);
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_i8();
+        Ok(Self { window_id })
+    }
+}
+
+/// Serverbound Creative Inventory Action packet (0x10).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerboundCreativeInventoryActionPacket {
+    pub slot: i16,
+    pub clicked_item: Option<Slot>,
+}
+
+impl ServerboundCreativeInventoryActionPacket {
+    pub const PACKET_ID: i32 = 0x10;
+
+    pub fn new(slot: i16, clicked_item: Option<Slot>) -> Self {
+        Self { slot, clicked_item }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&self.slot.to_be_bytes());
+        write_slot(self.clicked_item.as_ref(), buf)?;
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 2 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 2,
+                available: buf.remaining(),
+            });
+        }
+        let slot = buf.get_i16();
+        let clicked_item = read_slot(buf)?;
+        Ok(Self { slot, clicked_item })
+    }
+}
+
+/// Serverbound Enchant Item packet (0x11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundEnchantItemPacket {
+    pub window_id: i8,
+    pub button: i8,
+}
+
+impl ServerboundEnchantItemPacket {
+    pub const PACKET_ID: i32 = 0x11;
+
+    pub fn new(window_id: i8, button: i8) -> Self {
+        Self { window_id, button }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&[self.window_id as u8, self.button as u8]);
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 2 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 2,
+                available: buf.remaining(),
+            });
+        }
+        let window_id = buf.get_i8();
+        let button = buf.get_i8();
+        Ok(Self { window_id, button })
+    }
+}
+
+/// Serverbound Update Sign packet (0x12).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundUpdateSignPacket {
+    pub position: Position,
+    pub lines: [String; 4],
+}
+
+impl ServerboundUpdateSignPacket {
+    pub const PACKET_ID: i32 = 0x12;
+
+    pub fn new(position: Position, lines: [String; 4]) -> Self {
+        Self { position, lines }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        self.position.write(buf);
+        for line in &self.lines {
+            let json = if line.starts_with('{') {
+                line.clone()
+            } else {
+                format!("\"{}\"", line.replace('\\', "\\\\").replace('"', "\\\""))
+            };
+            buf.write_string(&json)?;
+        }
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let position = Position::read(buf)?;
+        let mut lines = [String::new(), String::new(), String::new(), String::new()];
+        for line in lines.iter_mut() {
+            let s = buf.read_string(384)?;
+            *line = if s.starts_with('"') && s.ends_with('"') && s.len() >= 2 {
+                s[1..s.len() - 1].replace("\\\"", "\"").replace("\\\\", "\\")
+            } else {
+                s
+            };
+        }
+        Ok(Self { position, lines })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

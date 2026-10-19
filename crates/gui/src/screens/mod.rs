@@ -1,9 +1,11 @@
+pub mod container;
 pub mod in_game;
 pub mod main_menu;
 pub mod multiplayer;
 pub mod server_dialog;
 pub mod settings;
 
+pub use container::{render_container, render_creative_inventory, ContainerAction, ContainerUiState};
 pub use in_game::{InGameAction, InGameScreen, NametagInfo};
 pub use main_menu::{MainMenuAction, MainMenuScreen};
 pub use multiplayer::{MultiplayerAction, MultiplayerScreen};
@@ -18,6 +20,7 @@ pub enum GuiOutput {
     SendChatMessage(String),
     Respawn,
     DropItem { drop_all: bool },
+    ContainerAction(ContainerAction),
     Quit,
     NicknameUpdated(String),
     SettingsUpdated {
@@ -63,6 +66,7 @@ impl ScreenManager {
         let mut screen = InGameScreen::new(server_ip, player_name);
         screen.language = self.main_menu.language;
         screen.toggle_fps_key = self.main_menu.settings_screen.keybinds.toggle_fps.clone();
+        screen.inventory_key = self.main_menu.settings_screen.keybinds.inventory.clone();
         self.in_game = Some(screen);
     }
 
@@ -89,7 +93,14 @@ impl ScreenManager {
             return true;
         }
         if let Some(ig) = &self.in_game {
-            return ig.escape_menu_opened || ig.chat_opened || ig.hud_editor_opened || ig.hud_data.health <= 0.0;
+            return ig.escape_menu_opened
+                || ig.chat_opened
+                || ig.hud_editor_opened
+                || ig.hud_data.health <= 0.0
+                || ig.active_container.is_some()
+                || ig.inventory_opened
+                || ig.container_ui_state.sign_pos.is_some()
+                || ig.container_ui_state.book_open;
         }
         true
     }
@@ -113,6 +124,7 @@ impl ScreenManager {
                     let keybinds = self.main_menu.settings_screen.keybinds.clone();
                     in_game.language = language;
                     in_game.toggle_fps_key = keybinds.toggle_fps.clone();
+                    in_game.inventory_key = keybinds.inventory.clone();
                     in_game.escape_menu_opened = true;
                     in_game.is_modal_open = false;
                     self.main_menu.modal_mode = main_menu::ModalMode::None;
@@ -145,6 +157,9 @@ impl ScreenManager {
                 }
                 InGameAction::DropItem { drop_all } => {
                     return GuiOutput::DropItem { drop_all };
+                }
+                InGameAction::Container(action) => {
+                    return GuiOutput::ContainerAction(action);
                 }
                 InGameAction::None => {}
             }

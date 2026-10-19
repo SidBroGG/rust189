@@ -2,6 +2,8 @@ pub mod block;
 pub mod chat;
 pub mod chunk;
 pub mod entity;
+pub mod inventory;
+pub mod item;
 pub mod morton;
 pub mod palette;
 pub mod physics;
@@ -10,6 +12,14 @@ pub mod scoreboard;
 pub mod section;
 pub mod tab_list;
 pub mod world;
+
+pub use inventory::{
+    match_crafting_2x2, match_crafting_3x3, ContainerKind, ContainerState,
+};
+pub use item::{
+    get_creative_tab_items, get_item_def, get_item_max_damage, get_item_max_stack,
+    get_item_name, get_subtype_name, search_items, CreativeTab, ItemDef, ITEMS,
+};
 
 pub use block::{is_interactive_block, is_replaceable_block, BlockState};
 pub use chat::{parse_chat_message, parse_spans, strip_formatting, ChatSpan};

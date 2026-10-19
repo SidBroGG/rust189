@@ -50,6 +50,10 @@ pub enum ClientboundPlayPacket {
     HeldItemChange(ClientboundHeldItemChangePacket),
     SetSlot(ClientboundSetSlotPacket),
     WindowItems(ClientboundWindowItemsPacket),
+    OpenWindow(ClientboundOpenWindowPacket),
+    CloseWindow(ClientboundCloseWindowPacket),
+    WindowProperty(ClientboundWindowPropertyPacket),
+    SignEditorOpen(ClientboundSignEditorOpenPacket),
     EntityEffect(ClientboundEntityEffectPacket),
     RemoveEntityEffect(ClientboundRemoveEntityEffectPacket),
     ChangeGameState(ClientboundChangeGameStatePacket),
@@ -180,6 +184,18 @@ impl ClientboundPlayPacket {
             }
             ClientboundWindowItemsPacket::PACKET_ID => {
                 Ok(Self::WindowItems(ClientboundWindowItemsPacket::decode(payload)?))
+            }
+            ClientboundOpenWindowPacket::PACKET_ID => {
+                Ok(Self::OpenWindow(ClientboundOpenWindowPacket::decode(payload)?))
+            }
+            ClientboundCloseWindowPacket::PACKET_ID => {
+                Ok(Self::CloseWindow(ClientboundCloseWindowPacket::decode(payload)?))
+            }
+            ClientboundWindowPropertyPacket::PACKET_ID => {
+                Ok(Self::WindowProperty(ClientboundWindowPropertyPacket::decode(payload)?))
+            }
+            ClientboundSignEditorOpenPacket::PACKET_ID => {
+                Ok(Self::SignEditorOpen(ClientboundSignEditorOpenPacket::decode(payload)?))
             }
             ClientboundEntityEffectPacket::PACKET_ID => {
                 Ok(Self::EntityEffect(ClientboundEntityEffectPacket::decode(payload)?))
@@ -628,5 +644,99 @@ mod tests {
         let decoded = ClientboundCustomPayloadPacket::decode(&mut bytes).unwrap();
         assert_eq!(pkt, decoded);
     }
+
+    #[test]
+    fn test_window_packets_roundtrip() {
+        use crate::codec::position::Position;
+        use crate::codec::slot::Slot;
+
+        // Open Window
+        let open_win = ClientboundOpenWindowPacket {
+            window_id: 1,
+            inventory_type: "minecraft:chest".into(),
+            window_title: "{\"text\":\"Chest\"}".into(),
+            slot_count: 27,
+            entity_id: None,
+        };
+        let mut buf = BytesMut::new();
+        open_win.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_open = ClientboundOpenWindowPacket::decode(&mut bytes).unwrap();
+        assert_eq!(open_win, decoded_open);
+
+        // Close Window (Clientbound & Serverbound)
+        let close_cb = ClientboundCloseWindowPacket { window_id: 1 };
+        let mut buf = BytesMut::new();
+        close_cb.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_close_cb = ClientboundCloseWindowPacket::decode(&mut bytes).unwrap();
+        assert_eq!(close_cb, decoded_close_cb);
+
+        let close_sb = ServerboundCloseWindowPacket::new(1);
+        let mut buf = BytesMut::new();
+        close_sb.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_close_sb = ServerboundCloseWindowPacket::decode(&mut bytes).unwrap();
+        assert_eq!(close_sb, decoded_close_sb);
+
+        // Window Property
+        let win_prop = ClientboundWindowPropertyPacket {
+            window_id: 1,
+            property: 0,
+            value: 150,
+        };
+        let mut buf = BytesMut::new();
+        win_prop.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_prop = ClientboundWindowPropertyPacket::decode(&mut bytes).unwrap();
+        assert_eq!(win_prop, decoded_prop);
+
+        // Click Window
+        let click_win = ServerboundClickWindowPacket::new(
+            0,
+            36,
+            0,
+            1,
+            0,
+            Some(Slot::new(276, 1, 0, None)),
+        );
+        let mut buf = BytesMut::new();
+        click_win.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_click = ServerboundClickWindowPacket::decode(&mut bytes).unwrap();
+        assert_eq!(click_win, decoded_click);
+
+        // Creative Inventory Action
+        let creative_act = ServerboundCreativeInventoryActionPacket::new(
+            36,
+            Some(Slot::new(1, 64, 0, None)),
+        );
+        let mut buf = BytesMut::new();
+        creative_act.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_creative = ServerboundCreativeInventoryActionPacket::decode(&mut bytes).unwrap();
+        assert_eq!(creative_act, decoded_creative);
+
+        // Enchant Item
+        let enchant = ServerboundEnchantItemPacket::new(1, 2);
+        let mut buf = BytesMut::new();
+        enchant.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_enchant = ServerboundEnchantItemPacket::decode(&mut bytes).unwrap();
+        assert_eq!(enchant, decoded_enchant);
+
+        // Update Sign
+        let sign = ServerboundUpdateSignPacket::new(
+            Position::new(10, 64, 20),
+            ["Line 1".into(), "Line 2".into(), "".into(), "Done".into()],
+        );
+        let mut buf = BytesMut::new();
+        sign.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded_sign = ServerboundUpdateSignPacket::decode(&mut bytes).unwrap();
+        assert_eq!(sign.position, decoded_sign.position);
+        assert_eq!(sign.lines, decoded_sign.lines);
+    }
 }
+
 

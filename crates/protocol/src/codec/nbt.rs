@@ -83,6 +83,46 @@ impl NbtTag {
             _ => None,
         }
     }
+
+    pub fn get_compound(&self, key: &str) -> Option<&NbtTag> {
+        self.as_compound().and_then(|m| m.get(key)).filter(|t| matches!(t, NbtTag::Compound(_)))
+    }
+
+    pub fn get_list(&self, key: &str) -> Option<&[NbtTag]> {
+        if let Some(NbtTag::List { elements, .. }) = self.as_compound().and_then(|m| m.get(key)) {
+            Some(elements.as_slice())
+        } else {
+            None
+        }
+    }
+
+    pub fn get_short(&self, key: &str) -> Option<i16> {
+        match self.as_compound().and_then(|m| m.get(key)) {
+            Some(NbtTag::Short(v)) => Some(*v),
+            Some(NbtTag::Byte(v)) => Some(*v as i16),
+            Some(NbtTag::Int(v)) => Some(*v as i16),
+            _ => None,
+        }
+    }
+
+    pub fn get_string(&self, key: &str) -> Option<&str> {
+        self.as_compound().and_then(|m| m.get(key)).and_then(|t| t.as_string())
+    }
+
+    pub fn insert(&mut self, key: impl Into<String>, tag: NbtTag) {
+        if let NbtTag::Compound(map) = self {
+            map.insert(key.into(), tag);
+        }
+    }
+
+    pub fn set_string(&mut self, key: impl Into<String>, val: impl Into<String>) {
+        self.insert(key, NbtTag::String(val.into()));
+    }
+
+    pub fn set_list(&mut self, key: impl Into<String>, list: Vec<NbtTag>) {
+        let element_type = list.first().map(|t| t.tag_id()).unwrap_or(0);
+        self.insert(key, NbtTag::List { element_type, elements: list });
+    }
 }
 
 const MAX_NBT_DEPTH: usize = 512;

@@ -1820,12 +1820,18 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::SetSlot(ss) => {
+                    let item_info = ss
+                        .item
+                        .as_ref()
+                        .filter(|s| s.item_id > 0 && s.item_count > 0)
+                        .map(Self::get_item_info_from_slot);
+
                     if ss.window_id == 0 {
-                        let item_info = ss
-                            .item
-                            .as_ref()
-                            .filter(|s| s.item_id > 0 && s.item_count > 0)
-                            .map(Self::get_item_info_from_slot);
+                        if let Some(sm) = &mut self.screen_manager {
+                            if let Some(ig) = &mut sm.in_game {
+                                ig.player_inventory.set_slot(ss.slot as usize, ss.item.clone());
+                            }
+                        }
                         match ss.slot {
                             5 => self.armor_items[0] = item_info,
                             6 => self.armor_items[1] = item_info,
@@ -1840,10 +1846,47 @@ impl App {
                             }
                             _ => {}
                         }
+                    } else if ss.window_id == -1 {
+                        if let Some(sm) = &mut self.screen_manager {
+                            if let Some(ig) = &mut sm.in_game {
+                                ig.player_inventory.carried_item = ss.item.clone();
+                                if let Some(ref mut c) = ig.active_container {
+                                    c.carried_item = ss.item.clone();
+                                }
+                            }
+                        }
+                    } else if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            if let Some(ref mut c) = ig.active_container {
+                                if c.window_id == ss.window_id as u8 {
+                                    c.set_slot(ss.slot as usize, ss.item.clone());
+                                    c.sync_player_slots_to(&mut ig.player_inventory);
+                                    for (h_idx, slot) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                        let h_info = slot
+                                            .as_ref()
+                                            .filter(|s| s.item_id > 0 && s.item_count > 0)
+                                            .map(Self::get_item_info_from_slot);
+                                        self.hotbar_items[h_idx] = h_info.clone();
+                                        if h_idx == self.selected_hotbar_slot {
+                                            self.held_item_id = h_info.map(|i| i.item_id).unwrap_or(0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 ClientboundPlayPacket::WindowItems(wi) => {
                     if wi.window_id == 0 {
+                        if let Some(sm) = &mut self.screen_manager {
+                            if let Some(ig) = &mut sm.in_game {
+                                for (idx, slot_opt) in wi.items.iter().enumerate() {
+                                    if idx < ig.player_inventory.slots.len() {
+                                        ig.player_inventory.slots[idx] = slot_opt.clone();
+                                    }
+                                }
+                            }
+                        }
                         for (idx, slot_opt) in wi.items.iter().enumerate() {
                             let item_info = slot_opt
                                 .as_ref()
@@ -1864,6 +1907,84 @@ impl App {
                                 _ => {}
                             }
                         }
+                    } else if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            if let Some(ref mut c) = ig.active_container {
+                                if c.window_id == wi.window_id as u8 {
+                                    for (idx, slot_opt) in wi.items.iter().enumerate() {
+                                        if idx < c.slots.len() {
+                                            c.slots[idx] = slot_opt.clone();
+                                        }
+                                    }
+                                    c.sync_player_slots_to(&mut ig.player_inventory);
+                                    for (h_idx, slot) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                        let h_info = slot
+                                            .as_ref()
+                                            .filter(|s| s.item_id > 0 && s.item_count > 0)
+                                            .map(Self::get_item_info_from_slot);
+                                        self.hotbar_items[h_idx] = h_info.clone();
+                                        if h_idx == self.selected_hotbar_slot {
+                                            self.held_item_id = h_info.map(|i| i.item_id).unwrap_or(0);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                ClientboundPlayPacket::OpenWindow(ow) => {
+                    info!(window_id = ow.window_id, kind = %ow.inventory_type, title = %ow.window_title, slots = ow.slot_count, "Opening container window");
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            let mut container = world::ContainerState::from_open_window(
+                                ow.window_id,
+                                &ow.inventory_type,
+                                ow.window_title,
+                                ow.slot_count,
+                            );
+                            container.sync_player_slots_from(&ig.player_inventory);
+                            ig.active_container = Some(container);
+                        }
+                    }
+                    if let Some(w) = &self.window {
+                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                        w.set_cursor_visible(true);
+                        self.mouse_grabbed = false;
+                    }
+                }
+                ClientboundPlayPacket::CloseWindow(cw) => {
+                    info!(window_id = cw.window_id, "Closing container window from server");
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            if ig.active_container.as_ref().map_or(false, |c| c.window_id == cw.window_id as u8) {
+                                ig.active_container = None;
+                            }
+                        }
+                    }
+                }
+                ClientboundPlayPacket::WindowProperty(wp) => {
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            if let Some(ref mut c) = ig.active_container {
+                                if c.window_id == wp.window_id as u8 {
+                                    c.properties.insert(wp.property, wp.value);
+                                }
+                            }
+                        }
+                    }
+                }
+                ClientboundPlayPacket::SignEditorOpen(seo) => {
+                    info!(pos = ?seo.position, "Opening sign editor from server");
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            ig.container_ui_state.sign_pos = Some(seo.position);
+                            ig.container_ui_state.sign_lines = [String::new(), String::new(), String::new(), String::new()];
+                        }
+                    }
+                    if let Some(w) = &self.window {
+                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                        w.set_cursor_visible(true);
+                        self.mouse_grabbed = false;
                     }
                 }
                 ClientboundPlayPacket::EntityEffect(ee) => {
@@ -2971,6 +3092,92 @@ impl ApplicationHandler for App {
                             warn!(error = %e, "Failed to save config.toml");
                         } else {
                             info!("Settings successfully updated and saved to config.toml");
+                        }
+                    }
+                    GuiOutput::ContainerAction(action) => {
+                        match action {
+                            gui::ContainerAction::None => {}
+                            gui::ContainerAction::Click {
+                                window_id,
+                                slot,
+                                button,
+                                action_number,
+                                mode,
+                                item,
+                            } => {
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::ClickWindow {
+                                        window_id,
+                                        slot,
+                                        button,
+                                        action_number,
+                                        mode,
+                                        item,
+                                    });
+                                }
+                                if let Some(sm) = &self.screen_manager {
+                                    if let Some(ig) = &sm.in_game {
+                                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                            let item_info = slot_opt
+                                                .as_ref()
+                                                .filter(|s| s.item_id > 0 && s.item_count > 0)
+                                                .map(Self::get_item_info_from_slot);
+                                            self.hotbar_items[idx] = item_info.clone();
+                                            if idx == self.selected_hotbar_slot {
+                                                self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                            }
+                                        }
+                                        for (idx, slot_opt) in ig.player_inventory.slots[5..9].iter().enumerate() {
+                                            self.armor_items[idx] = slot_opt
+                                                .as_ref()
+                                                .filter(|s| s.item_id > 0 && s.item_count > 0)
+                                                .map(Self::get_item_info_from_slot);
+                                        }
+                                    }
+                                }
+                            }
+                            gui::ContainerAction::Close(win_id) => {
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::CloseWindow(win_id));
+                                }
+                                if let Some(sm) = &mut self.screen_manager {
+                                    if let Some(ig) = &mut sm.in_game {
+                                        if let Some(ref c) = ig.active_container {
+                                            c.sync_player_slots_to(&mut ig.player_inventory);
+                                        }
+                                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                            let item_info = slot_opt
+                                                .as_ref()
+                                                .filter(|s| s.item_id > 0 && s.item_count > 0)
+                                                .map(Self::get_item_info_from_slot);
+                                            self.hotbar_items[idx] = item_info.clone();
+                                            if idx == self.selected_hotbar_slot {
+                                                self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            gui::ContainerAction::CreativeSetSlot { slot, item } => {
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::CreativeInventoryAction { slot, item });
+                                }
+                            }
+                            gui::ContainerAction::Enchant { window_id, button } => {
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::EnchantItem { window_id, button });
+                                }
+                            }
+                            gui::ContainerAction::UpdateSign { position, lines } => {
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::UpdateSign { position, lines });
+                                }
+                            }
+                            gui::ContainerAction::CustomPayload { channel, data } => {
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::CustomPayload { channel, data });
+                                }
+                            }
                         }
                     }
                     GuiOutput::None => {}
