@@ -73,11 +73,22 @@ pub fn is_interactive_block(block_id: u16) -> bool {
         | 96
         // Fence gates
         | 107 | 183..=187
-        // Redstone interaction: Lever, Stone/Wood Buttons
-        | 69 | 77 | 143
-        // Containers & Workstations
-        | 23 | 54 | 58 | 61 | 62 | 84 | 116 | 117 | 138 | 145 | 146 | 149 | 150 | 154 | 158
+        // Redstone interaction: Lever, Stone/Wood Buttons, Repeater, Daylight Sensor
+        | 69 | 77 | 93 | 94 | 143 | 151 | 178
+        // Containers & Workstations: Dispenser, Note Block, Bed, Chest, Crafting Table, Furnace, Burning Furnace, Jukebox, Cake, Enchanting Table, Brewing Stand, Ender Chest, Command Block, Beacon, Anvil, Trapped Chest, Comparator, Powered Comparator, Hopper, Dropper
+        | 23 | 25 | 26 | 54 | 58 | 61 | 62 | 84 | 92 | 116 | 117 | 130 | 137 | 138 | 145 | 146 | 149 | 150 | 154 | 158
     )
+}
+
+/// Checks if an item ID represents a placeable block (IDs 1..255 except non-placeable technical blocks).
+#[inline]
+pub fn is_placeable_block_item(id: u16) -> bool {
+    id > 0
+        && id < 256
+        && !matches!(
+            id,
+            0 | 8 | 9 | 10 | 11 | 26 | 34 | 51 | 55 | 59 | 60 | 62 | 64 | 68 | 71 | 74 | 75 | 83 | 90 | 92 | 93 | 94 | 104 | 105 | 115 | 117 | 118 | 119 | 124 | 132 | 140 | 141 | 142 | 144 | 149 | 150 | 178 | 193..=197
+        )
 }
 
 #[cfg(test)]

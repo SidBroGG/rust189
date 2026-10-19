@@ -21,7 +21,7 @@ pub use item::{
     get_item_name, get_subtype_name, search_items, CreativeTab, ItemDef, ITEMS,
 };
 
-pub use block::{is_interactive_block, is_replaceable_block, BlockState};
+pub use block::{is_interactive_block, is_placeable_block_item, is_replaceable_block, BlockState};
 pub use chat::{parse_chat_message, parse_spans, strip_formatting, ChatSpan};
 pub use chunk::{ChunkColumn, WorldError};
 pub use entity::{EntityKind, EntityTracker, TrackedEntity};

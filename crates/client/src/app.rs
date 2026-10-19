@@ -29,7 +29,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Icon, Window, WindowId};
 use world::{
     get_block_selection_box, get_player_relative_block_hardness, is_critical_hit,
-    is_interactive_block, is_replaceable_block, is_water_block, pick_target, BlockState,
+    is_interactive_block, is_placeable_block_item, is_replaceable_block, is_water_block, pick_target, BlockState,
     CameraController, CameraPerspective, ClickTracker, EntityKind, EntitySpatialHash, FrameStage,
     ItemUseAction, ItemUseState, PerformanceProfiler, PlayerInput, PlayerMovement, TargetHit,
     TrackedEntity, World, AABB,
@@ -205,6 +205,43 @@ impl App {
                 }
             }
         }
+        None
+    }
+
+    /// Returns the exact currently held slot from the player's hotbar, preserving NBT and count.
+    pub fn get_current_held_slot(&self) -> Option<Slot> {
+        let inv_slot = self
+            .screen_manager
+            .as_ref()
+            .and_then(|sm| sm.in_game.as_ref())
+            .and_then(|ig| {
+                let slot_idx = 36 + self.selected_hotbar_slot;
+                if slot_idx < ig.player_inventory.slots.len() {
+                    ig.player_inventory.slots[slot_idx].clone()
+                } else {
+                    None
+                }
+            });
+
+        if let Some(slot) = inv_slot {
+            if slot.item_id > 0 && slot.item_count > 0 {
+                return Some(slot);
+            }
+        }
+
+        if self.held_item_id > 0 {
+            let (count, damage) = self.hotbar_items[self.selected_hotbar_slot]
+                .as_ref()
+                .map(|i| (i.count, i.damage))
+                .unwrap_or((1, 0));
+            return Some(Slot {
+                item_id: self.held_item_id,
+                item_count: count,
+                item_damage: damage,
+                nbt: None,
+            });
+        }
+
         None
     }
 
@@ -618,6 +655,9 @@ impl App {
         self.click_tracker.register_right_click();
         self.right_click_delay_timer = 4;
 
+        let held_slot = self.get_current_held_slot();
+        let is_custom_server_item = held_slot.as_ref().map_or(false, |s| s.nbt.is_some());
+
         match self.current_target {
             TargetHit::Entity(eh) => {
                 let entity_id = eh.entity_id;
@@ -642,12 +682,32 @@ impl App {
                         action: UseEntityAction::Interact,
                         target: None,
                     });
-                    // 3. Play arm swing animation
-                    s.send(OutgoingPlayPacket::Animation);
+                    // 3. In vanilla MCP 1.8.9 (Minecraft.java:1628-1636), if right clicking an entity
+                    // that does not locally consume the action (e.g. EntityOtherPlayerMP, Citizens NPC),
+                    // sendUseItem is called so server menus can open from right-clicking NPCs with items.
+                    if held_slot.is_some() {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(-1, -1, -1),
+                            direction: 255,
+                            item: held_slot.clone(),
+                            cursor_x: 0,
+                            cursor_y: 0,
+                            cursor_z: 0,
+                        });
+                    }
+                }
+
+                // If holding usable item (food, sword blocking, bow), start using it
+                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                if action != ItemUseAction::None {
+                    self.item_use_state.start_using(self.held_item_id);
                 }
             }
             TargetHit::Block(bh) => {
                 let block = self.world.get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
+                let cursor_x = (bh.cursor_x * 16.0) as u8;
+                let cursor_y = (bh.cursor_y * 16.0) as u8;
+                let cursor_z = (bh.cursor_z * 16.0) as u8;
 
                 // 1. Interactive block activation (Doors, Trapdoors, Fence Gates, Levers, Buttons, Containers)
                 if (!self.player.is_sneaking || self.held_item_id <= 0) && is_interactive_block(block.id()) {
@@ -715,29 +775,11 @@ impl App {
                         block_toggled = true;
                     }
 
-                    let (current_count, current_damage) = self.hotbar_items[self.selected_hotbar_slot]
-                        .as_ref()
-                        .map(|i| (i.count, i.damage))
-                        .unwrap_or((1, 0));
-
                     if let Some(s) = &self.session {
-                        let cursor_x = (bh.cursor_x * 16.0) as u8;
-                        let cursor_y = (bh.cursor_y * 16.0) as u8;
-                        let cursor_z = (bh.cursor_z * 16.0) as u8;
-
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
                             position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
                             direction: bh.face as u8,
-                            item: if self.held_item_id > 0 {
-                                Some(Slot {
-                                    item_id: self.held_item_id,
-                                    item_count: current_count,
-                                    item_damage: current_damage,
-                                    nbt: None,
-                                })
-                            } else {
-                                None
-                            },
+                            item: held_slot,
                             cursor_x,
                             cursor_y,
                             cursor_z,
@@ -748,34 +790,9 @@ impl App {
                     return;
                 }
 
-                // 2. Item use (Bow, Sword blocking, Food, Potion)
-                let action = ItemUseState::get_action_for_item(self.held_item_id);
-                if action != ItemUseAction::None {
-                    self.item_use_state.start_using(self.held_item_id);
-                    let (current_count, current_damage) = self.hotbar_items[self.selected_hotbar_slot]
-                        .as_ref()
-                        .map(|i| (i.count, i.damage))
-                        .unwrap_or((1, 0));
-                    if let Some(s) = &self.session {
-                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
-                            position: Position::new(-1, -1, -1),
-                            direction: 255,
-                            item: Some(Slot {
-                                item_id: self.held_item_id,
-                                item_count: current_count,
-                                item_damage: current_damage,
-                                nbt: None,
-                            }),
-                            cursor_x: 0,
-                            cursor_y: 0,
-                            cursor_z: 0,
-                        });
-                    }
-                    return;
-                }
-
-                // 3. Block placement (blocks 1..255)
-                if self.held_item_id > 0 && self.held_item_id < 256 {
+                // 2. Block placement (blocks 1..255, except non-placeable technical blocks and custom server items)
+                let is_placeable_block = is_placeable_block_item(self.held_item_id as u16) && !is_custom_server_item;
+                if is_placeable_block {
                     let place_pos = if is_replaceable_block(block.id()) {
                         bh.block_pos
                     } else {
@@ -793,25 +810,11 @@ impl App {
                     );
 
                     if !self.player.bounding_box.intersects(&place_aabb) {
-                        let (current_count, current_damage) = self.hotbar_items[self.selected_hotbar_slot]
-                            .as_ref()
-                            .map(|i| (i.count, i.damage))
-                            .unwrap_or((1, 0));
-
                         if let Some(s) = &self.session {
-                            let cursor_x = (bh.cursor_x * 16.0) as u8;
-                            let cursor_y = (bh.cursor_y * 16.0) as u8;
-                            let cursor_z = (bh.cursor_z * 16.0) as u8;
-
                             s.send(OutgoingPlayPacket::PlayerBlockPlacement {
                                 position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
                                 direction: bh.face as u8,
-                                item: Some(Slot {
-                                    item_id: self.held_item_id,
-                                    item_count: current_count,
-                                    item_damage: current_damage,
-                                    nbt: None,
-                                }),
+                                item: held_slot.clone(),
                                 cursor_x,
                                 cursor_y,
                                 cursor_z,
@@ -844,32 +847,57 @@ impl App {
                                 }
                             }
                         }
+                        return;
                     }
                 }
-            }
-            TargetHit::Miss => {
+
+                // 3. Right clicking a block with non-placeable item (Compass, Nether Star, Clock, Book, Food, Bow, Sword, etc.)
+                // In vanilla MCP 1.8.9 (PlayerControllerMP.onPlayerRightClick & sendUseItem):
+                // Send PlayerBlockPlacement targeting the block face, and send PlayerBlockPlacement(-1, -1, -1, 255)
+                // so server plugins (e.g. ChestCommands, DeluxeMenus, lobby selectors) trigger their GUIs!
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                        position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
+                        direction: bh.face as u8,
+                        item: held_slot.clone(),
+                        cursor_x,
+                        cursor_y,
+                        cursor_z,
+                    });
+                    s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                        position: Position::new(-1, -1, -1),
+                        direction: 255,
+                        item: held_slot.clone(),
+                        cursor_x: 0,
+                        cursor_y: 0,
+                        cursor_z: 0,
+                    });
+                    s.send(OutgoingPlayPacket::Animation);
+                }
+
                 let action = ItemUseState::get_action_for_item(self.held_item_id);
                 if action != ItemUseAction::None {
                     self.item_use_state.start_using(self.held_item_id);
-                    let (current_count, current_damage) = self.hotbar_items[self.selected_hotbar_slot]
-                        .as_ref()
-                        .map(|i| (i.count, i.damage))
-                        .unwrap_or((1, 0));
-                    if let Some(s) = &self.session {
-                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
-                            position: Position::new(-1, -1, -1),
-                            direction: 255,
-                            item: Some(Slot {
-                                item_id: self.held_item_id,
-                                item_count: current_count,
-                                item_damage: current_damage,
-                                nbt: None,
-                            }),
-                            cursor_x: 0,
-                            cursor_y: 0,
-                            cursor_z: 0,
-                        });
-                    }
+                }
+            }
+            TargetHit::Miss => {
+                // In vanilla MCP 1.8.9 (Minecraft.java:1628-1636 & PlayerControllerMP.sendUseItem):
+                // Always sends C08PacketPlayerBlockPlacement(-1, -1, -1, 255) with the held item when right clicking in air!
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                        position: Position::new(-1, -1, -1),
+                        direction: 255,
+                        item: held_slot.clone(),
+                        cursor_x: 0,
+                        cursor_y: 0,
+                        cursor_z: 0,
+                    });
+                    s.send(OutgoingPlayPacket::Animation);
+                }
+
+                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                if action != ItemUseAction::None {
+                    self.item_use_state.start_using(self.held_item_id);
                 }
             }
         }
