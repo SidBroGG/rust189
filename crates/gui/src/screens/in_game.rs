@@ -3,10 +3,9 @@ use crate::hud::{
 };
 use crate::i18n::{t, Language};
 use crate::keybinds::standard_token_to_egui_key;
-use crate::theme::parse_minecraft_text;
 use egui::{
-    Align, Align2, Color32, CornerRadius, Frame, Id, Key, LayerId, Layout, Order, Pos2, Rect,
-    RichText, ScrollArea, Stroke, TextEdit, Vec2, Window,
+    Align2, Color32, CornerRadius, FontId, Frame, Id, Key, LayerId, Order, Pos2, Rect,
+    RichText, ScrollArea, Stroke, StrokeKind, TextEdit, Vec2, Window,
 };
 use std::path::PathBuf;
 use std::time::Instant;
@@ -346,7 +345,15 @@ impl InGameScreen {
         let elem_bg_col = Color32::from_rgba_unmultiplied(16, 18, 24, bg_alpha);
         let elem_border_col = Color32::from_rgba_unmultiplied(65, 72, 88, border_alpha);
 
-        for (id, elem) in self.hud_layout.active_elements() {
+        let active_elements: Vec<(String, crate::hud::HudElementConfig)> = self
+            .hud_layout
+            .active_elements()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        let mut chat_font_delta = 0.0_f32;
+
+        for (id, elem) in &active_elements {
             if !elem.visible {
                 continue;
             }
@@ -404,48 +411,117 @@ impl InGameScreen {
             // Special cases: Scoreboard & Chat are interactive or multi-line egui Areas
             if id == "scoreboard" {
                 if let Some((title, lines)) = self.scoreboard.get_sidebar_lines() {
-                    egui::Area::new(Id::new("scoreboard_sidebar_area"))
-                        .fixed_pos(rect.min)
-                        .show(ctx, |ui| {
-                            Frame::NONE
-                                .fill(elem_bg_col)
-                                .stroke(Stroke::new(1.0_f32, elem_border_col))
-                                .corner_radius(CornerRadius::same(4))
-                                .inner_margin(egui::Margin::symmetric(8, 6))
-                                .show(ui, |ui| {
-                                    ui.set_width(rect.width());
-                                    ui.vertical(|ui| {
-                                        // Title
-                                        ui.horizontal(|ui| {
-                                            for (color, text) in parse_minecraft_text(&title) {
-                                                ui.label(RichText::new(text).color(color).strong());
-                                            }
-                                        });
+                    let pad_x = 6.0_f32;
+                    let pad_y = 5.0_f32;
+                    let content_w = (rect.width() - pad_x * 2.0).max(10.0);
+                    let line_count = lines.len();
+                    let title_h = 16.0_f32;
+                    let sep_h = 4.0_f32;
+                    let remaining_h = (rect.height() - pad_y * 2.0 - title_h - sep_h).max(16.0);
+                    let row_h = if line_count > 0 {
+                        (remaining_h / line_count as f32).clamp(11.0, 18.0)
+                    } else {
+                        16.0
+                    };
+                    let base_font_size = (row_h * 0.85).clamp(8.0, 15.0);
+                    let total_needed_h = pad_y * 2.0 + title_h + sep_h + line_count as f32 * row_h;
+                    let total_h = rect.height().max(total_needed_h.min(rect.height()));
+                    let scoreboard_rect = Rect::from_min_size(rect.min, Vec2::new(rect.width(), total_h));
 
-                                        ui.separator();
+                    // Background and border strictly matching configured element dimensions
+                    hud_painter.rect_filled(scoreboard_rect, CornerRadius::same(4), elem_bg_col);
+                    hud_painter.rect_stroke(
+                        scoreboard_rect,
+                        CornerRadius::same(4),
+                        Stroke::new(1.0_f32, elem_border_col),
+                        StrokeKind::Inside,
+                    );
 
-                                        for (entry, val) in lines {
-                                            ui.horizontal(|ui| {
-                                                for (color, text) in parse_minecraft_text(&entry) {
-                                                    ui.label(RichText::new(text).color(color));
-                                                }
-                                                ui.with_layout(
-                                                    Layout::right_to_left(Align::Center),
-                                                    |ui| {
-                                                        ui.label(
-                                                            RichText::new(format!("{}", val))
-                                                                .color(Color32::from_rgb(255, 85, 85)),
-                                                        );
-                                                    },
-                                                );
-                                            });
-                                        }
-                                    });
-                                });
-                        });
+                    // Render Title (centered, auto-compressing if longer than content_w)
+                    let title_y = rect.top() + pad_y;
+                    let title_font_size = (base_font_size * 1.08).clamp(9.0, 16.0);
+                    let title_job = crate::theme::build_layout_job_styled(&title, title_font_size, false, None);
+                    let title_galley = ctx.fonts(|f| f.layout_job(title_job));
+                    let title_w = title_galley.size().x;
+
+                    let final_title_galley = if title_w > content_w && content_w > 10.0 {
+                        let scale = (content_w / title_w).clamp(0.35, 1.0);
+                        let scaled_fs = (title_font_size * scale).max(5.5);
+                        let job = crate::theme::build_layout_job_styled(&title, scaled_fs, false, None);
+                        ctx.fonts(|f| f.layout_job(job))
+                    } else {
+                        title_galley
+                    };
+
+                    let title_x = rect.left() + pad_x + (content_w - final_title_galley.size().x).max(0.0) * 0.5;
+                    hud_painter.galley(
+                        Pos2::new(title_x + 1.0, title_y + 1.0),
+                        final_title_galley.clone(),
+                        Color32::from_black_alpha(180),
+                    );
+                    hud_painter.galley(Pos2::new(title_x, title_y), final_title_galley, Color32::WHITE);
+
+                    // Horizontal separator line underneath title
+                    let sep_y = title_y + title_h;
+                    hud_painter.line_segment(
+                        [Pos2::new(rect.left() + pad_x, sep_y), Pos2::new(rect.right() - pad_x, sep_y)],
+                        Stroke::new(1.0_f32, Color32::from_white_alpha(45)),
+                    );
+
+                    // Render Scoreboard lines with compressed text
+                    let mut cur_y = sep_y + 4.0;
+                    for (entry, val) in lines {
+                        if cur_y + row_h > scoreboard_rect.bottom() - pad_y {
+                            break;
+                        }
+
+                        // Score number on right side
+                        let val_str = format!("{}", val);
+                        let val_job = crate::theme::build_layout_job_styled(&val_str, base_font_size, false, None);
+                        let val_galley = ctx.fonts(|f| f.layout_job(val_job));
+                        let val_w = val_galley.size().x;
+                        let val_x = rect.right() - pad_x - val_w;
+
+                        hud_painter.galley(
+                            Pos2::new(val_x + 1.0, cur_y + 1.0),
+                            val_galley.clone(),
+                            Color32::from_black_alpha(180),
+                        );
+                        hud_painter.galley(
+                            Pos2::new(val_x, cur_y),
+                            val_galley,
+                            Color32::from_rgb(255, 85, 85),
+                        );
+
+                        // Entry name on left side, compressed to fit within available width
+                        let entry_max_w = (content_w - val_w - 6.0).max(10.0);
+                        let entry_job = crate::theme::build_layout_job_styled(&entry, base_font_size, false, None);
+                        let entry_galley = ctx.fonts(|f| f.layout_job(entry_job));
+                        let entry_w = entry_galley.size().x;
+
+                        let final_entry_galley = if entry_w > entry_max_w && entry_max_w > 10.0 {
+                            let scale = (entry_max_w / entry_w).clamp(0.25, 1.0);
+                            let scaled_fs = (base_font_size * scale).max(5.0);
+                            let job = crate::theme::build_layout_job_styled(&entry, scaled_fs, false, None);
+                            ctx.fonts(|f| f.layout_job(job))
+                        } else {
+                            entry_galley
+                        };
+
+                        let entry_x = rect.left() + pad_x;
+                        hud_painter.galley(
+                            Pos2::new(entry_x + 1.0, cur_y + 1.0),
+                            final_entry_galley.clone(),
+                            Color32::from_black_alpha(180),
+                        );
+                        hud_painter.galley(Pos2::new(entry_x, cur_y), final_entry_galley, Color32::WHITE);
+
+                        cur_y += row_h;
+                    }
                 }
             } else if id == "chat" {
                 let now = Instant::now();
+                let chat_font_size = self.hud_layout.chat_font_size.clamp(8.0, 28.0);
                 egui::Area::new(Id::new("chat_area"))
                     .fixed_pos(rect.min)
                     .show(ctx, |ui| {
@@ -459,7 +535,7 @@ impl InGameScreen {
                                 ui.set_width(rect.width());
 
                                 ScrollArea::vertical()
-                                    .max_height(rect.height() - if self.chat_opened { 36.0 } else { 0.0 })
+                                    .max_height((rect.height() - if self.chat_opened { 42.0 } else { 0.0 }).max(20.0))
                                     .stick_to_bottom(true)
                                     .show(ui, |ui| {
                                         for entry in &self.chat_messages {
@@ -481,14 +557,14 @@ impl InGameScreen {
                                                 for word in entry.text.split_whitespace() {
                                                     if word.starts_with("http://") || word.starts_with("https://") {
                                                         // Clickable URL Link
-                                                        if ui.link(RichText::new(word).color(Color32::from_rgba_unmultiplied(85, 255, 255, alpha)).underline()).clicked() {
+                                                        if ui.link(RichText::new(word).color(Color32::from_rgba_unmultiplied(85, 255, 255, alpha)).size(chat_font_size).underline()).clicked() {
                                                             ctx.open_url(egui::OpenUrl::new_tab(word));
                                                         }
                                                     } else {
                                                         for seg in crate::theme::parse_formatted_segments(word) {
                                                             let mut col = seg.style.color;
                                                             col = Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), alpha);
-                                                            let mut rt = RichText::new(seg.text).color(col);
+                                                            let mut rt = RichText::new(seg.text).color(col).size(chat_font_size);
                                                             if seg.style.bold { rt = rt.strong(); }
                                                             if seg.style.italic { rt = rt.italics(); }
                                                             ui.label(rt);
@@ -499,7 +575,7 @@ impl InGameScreen {
                                         }
                                     });
 
-                                // Chat Input Box with Tab Autocompletion
+                                // Chat Input Box with Tab Autocompletion and Font Size Controls
                                 if self.chat_opened {
                                     ui.separator();
 
@@ -528,12 +604,22 @@ impl InGameScreen {
                                     ui.horizontal(|ui| {
                                         let edit = TextEdit::singleline(&mut self.chat_input)
                                             .hint_text("Press Enter to send, Tab to autocomplete...")
-                                            .desired_width(rect.width() - 60.0);
+                                            .font(FontId::proportional(chat_font_size))
+                                            .desired_width((rect.width() - 150.0).max(60.0));
 
                                         let response = ui.add(edit);
                                         if self.request_chat_focus {
                                             response.request_focus();
                                             self.request_chat_focus = false;
+                                        }
+
+                                        // Chat font size buttons [A- 13px A+]
+                                        if ui.button("A-").on_hover_text("Decrease chat font size").clicked() {
+                                            chat_font_delta -= 1.0;
+                                        }
+                                        ui.label(RichText::new(format!("{:.0}", chat_font_size)).size(11.0).strong());
+                                        if ui.button("A+").on_hover_text("Increase chat font size").clicked() {
+                                            chat_font_delta += 1.0;
                                         }
 
                                         if (response.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)))
@@ -554,6 +640,12 @@ impl InGameScreen {
                 // All visual modules: Crosshair, Hotbar, Vitals, Exp Bar, Boss Bar, Keystrokes, FPS/Ping, Armor Status, Potions, Coords
                 render_module_by_id(&hud_painter, id, rect, &self.hud_data, self.tick_counter);
             }
+        }
+
+        if chat_font_delta != 0.0 {
+            self.hud_layout.chat_font_size =
+                (self.hud_layout.chat_font_size + chat_font_delta).clamp(8.0, 28.0);
+            let _ = self.hud_layout.save_to_file(&self.layout_path);
         }
 
         // 7. Tab List Overlay (when holding Tab key)

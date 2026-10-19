@@ -7,7 +7,7 @@ pub mod settings;
 
 pub use container::{render_container, render_creative_inventory, ContainerAction, ContainerUiState};
 pub use in_game::{InGameAction, InGameScreen, NametagInfo};
-pub use main_menu::{MainMenuAction, MainMenuScreen};
+pub use main_menu::{MainMenuAction, MainMenuScreen, ModalMode};
 pub use multiplayer::{MultiplayerAction, MultiplayerScreen};
 pub use settings::{AudioSettings, KeybindsSettings, SettingsAction, SettingsScreen, VideoSettings};
 
@@ -68,11 +68,27 @@ impl ScreenManager {
         screen.toggle_fps_key = self.main_menu.settings_screen.keybinds.toggle_fps.clone();
         screen.inventory_key = self.main_menu.settings_screen.keybinds.inventory.clone();
         self.in_game = Some(screen);
+        self.main_menu.modal_mode = main_menu::ModalMode::None;
     }
 
     pub fn exit_in_game(&mut self) {
         self.in_game = None;
         self.main_menu.modal_mode = main_menu::ModalMode::None;
+    }
+
+    /// Resets all open screens, containers, modals, and input captures (used on teleport, respawn, and join)
+    pub fn reset_modals(&mut self) {
+        self.main_menu.modal_mode = main_menu::ModalMode::None;
+        if let Some(ig) = &mut self.in_game {
+            ig.active_container = None;
+            ig.inventory_opened = false;
+            ig.escape_menu_opened = false;
+            ig.chat_opened = false;
+            ig.hud_editor_opened = false;
+            ig.container_ui_state.villager_trades.clear();
+            ig.container_ui_state.sign_pos = None;
+            ig.container_ui_state.book_open = false;
+        }
     }
 
     /// Syncs fullscreen state with window if the settings modal is not open.

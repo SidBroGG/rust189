@@ -108,8 +108,14 @@ impl HudElementConfig {
         }
     }
 
+    /// Whether this element stretches in both directions independently rather than maintaining locked aspect ratio.
+    #[inline]
+    pub fn is_free_2d(&self) -> bool {
+        self.id == "scoreboard" || self.id == "chat"
+    }
+
     /// Computes the element bounding box on screen based on relative coordinates and viewport size,
-    /// enforcing strict aspect-ratio locking so elements never stretch in only one dimension.
+    /// enforcing strict aspect-ratio locking for fixed modules while allowing free 2D stretching for scoreboard and chat.
     #[inline]
     pub fn screen_rect(&self, screen_size: Vec2) -> Rect {
         self.screen_rect_with_grid(screen_size, 16.0)
@@ -118,16 +124,37 @@ impl HudElementConfig {
     /// Computes the element bounding box on screen snapped to a specific grid step.
     #[inline]
     pub fn screen_rect_with_grid(&self, screen_size: Vec2, grid_step: f32) -> Rect {
-        let base = get_module_base_size(&self.id);
-        let aspect = (base.x / base.y.max(1.0)).max(0.1);
-
-        let raw_w = (self.rel_w * screen_size.x).clamp(base.x * 0.4, screen_size.x * 0.95);
-        let w = if grid_step > 0.0 {
-            snap_val_f32(raw_w, grid_step).max(base.x * 0.4)
+        let (w, h) = if self.is_free_2d() {
+            let min_size = if self.id == "scoreboard" {
+                Vec2::new(80.0, 40.0)
+            } else {
+                Vec2::new(120.0, 40.0)
+            };
+            let raw_w = (self.rel_w * screen_size.x).clamp(min_size.x, screen_size.x * 0.98);
+            let w = if grid_step > 0.0 {
+                snap_val_f32(raw_w, grid_step).max(min_size.x)
+            } else {
+                raw_w
+            };
+            let raw_h = (self.rel_h * screen_size.y).clamp(min_size.y, screen_size.y * 0.98);
+            let h = if grid_step > 0.0 {
+                snap_val_f32(raw_h, grid_step).max(min_size.y)
+            } else {
+                raw_h
+            };
+            (w, h)
         } else {
-            raw_w
+            let base = get_module_base_size(&self.id);
+            let aspect = (base.x / base.y.max(1.0)).max(0.1);
+            let raw_w = (self.rel_w * screen_size.x).clamp(base.x * 0.4, screen_size.x * 0.95);
+            let w = if grid_step > 0.0 {
+                snap_val_f32(raw_w, grid_step).max(base.x * 0.4)
+            } else {
+                raw_w
+            };
+            let h = w / aspect;
+            (w, h)
         };
-        let h = w / aspect;
 
         let max_x = (screen_size.x - w).max(0.0);
         let max_y = (screen_size.y - h).max(0.0);
@@ -160,10 +187,22 @@ impl HudElementConfig {
             return;
         }
 
-        let base = get_module_base_size(&self.id);
-        let aspect = (base.x / base.y.max(1.0)).max(0.1);
-        let w = (self.rel_w * screen_size.x).clamp(base.x * 0.4, screen_size.x * 0.95);
-        let h = w / aspect;
+        let (w, h) = if self.is_free_2d() {
+            let min_size = if self.id == "scoreboard" {
+                Vec2::new(80.0, 40.0)
+            } else {
+                Vec2::new(120.0, 40.0)
+            };
+            let w = (self.rel_w * screen_size.x).clamp(min_size.x, screen_size.x * 0.98);
+            let h = (self.rel_h * screen_size.y).clamp(min_size.y, screen_size.y * 0.98);
+            (w, h)
+        } else {
+            let base = get_module_base_size(&self.id);
+            let aspect = (base.x / base.y.max(1.0)).max(0.1);
+            let w = (self.rel_w * screen_size.x).clamp(base.x * 0.4, screen_size.x * 0.95);
+            let h = w / aspect;
+            (w, h)
+        };
 
         let snapped_x = snap_val_f32(target_min.x, grid_step);
         let snapped_y = snap_val_f32(target_min.y, grid_step);
@@ -178,7 +217,7 @@ impl HudElementConfig {
         self.rel_y = (clamped_y / screen_size.y).clamp(0.0, 1.0);
     }
 
-    /// Updates dimensions from resized screen bounds, scaling width and height together proportionally.
+    /// Updates dimensions from resized screen bounds, allowing independent 2D stretching for scoreboard and chat.
     pub fn set_from_screen_size(
         &mut self,
         target_size: Vec2,
@@ -186,6 +225,23 @@ impl HudElementConfig {
         grid_step: f32,
     ) {
         if screen_size.x <= 0.0 || screen_size.y <= 0.0 {
+            return;
+        }
+
+        if self.is_free_2d() {
+            let min_size = if self.id == "scoreboard" {
+                Vec2::new(80.0, 40.0)
+            } else {
+                Vec2::new(120.0, 40.0)
+            };
+            let max_w = (screen_size.x - self.rel_x * screen_size.x).max(min_size.x);
+            let snapped_w = snap_val_f32(target_size.x, grid_step).clamp(min_size.x, max_w);
+
+            let max_h = (screen_size.y - self.rel_y * screen_size.y).max(min_size.y);
+            let snapped_h = snap_val_f32(target_size.y, grid_step).clamp(min_size.y, max_h);
+
+            self.rel_w = (snapped_w / screen_size.x).clamp(0.01, 1.0);
+            self.rel_h = (snapped_h / screen_size.y).clamp(0.01, 1.0);
             return;
         }
 

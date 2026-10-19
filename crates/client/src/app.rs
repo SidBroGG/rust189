@@ -109,6 +109,7 @@ pub struct App {
     pub max_hurt_time: u32,
     pub attacked_at_yaw: f32,
     pub death_time: u32,
+    pub teleport_confirmed_ticks: u32,
 }
 
 impl App {
@@ -140,6 +141,7 @@ impl App {
             last_reported_pos: (0.0, 64.0, 0.0),
             last_reported_look: (0.0, 0.0),
             position_update_ticks: 0,
+            teleport_confirmed_ticks: 0,
             pending_connection: None,
             connecting_server_ip: None,
 
@@ -1053,6 +1055,16 @@ impl App {
                     self.player_entity_id = jg.entity_id;
                     self.world.dimension = jg.dimension;
                     self.player_gamemode = jg.game_mode;
+                    self.player_health = 20.0;
+                    self.player_air = 300;
+                    self.hurt_time = 0;
+                    self.death_time = 0;
+                    self.pressed_keys.clear();
+                    self.is_left_clicking = false;
+                    self.is_right_clicking = false;
+                    self.item_use_state.stop();
+                    self.breaking_block_pos = None;
+                    self.teleport_confirmed_ticks = 0;
                     self.player.capabilities.is_creative = jg.game_mode == 1;
                     if jg.game_mode == 1 || jg.game_mode == 3 {
                         self.player.capabilities.allow_flying = true;
@@ -1061,10 +1073,13 @@ impl App {
                         self.player.capabilities.is_flying = false;
                     }
                     if let Some(sm) = &mut self.screen_manager {
+                        sm.reset_modals();
                         if let Some(ig) = &mut sm.in_game {
                             ig.dimension = jg.dimension;
                             ig.gamemode = jg.game_mode;
                             ig.is_creative = jg.game_mode == 1;
+                            ig.hud_data.health = 20.0;
+                            ig.death_ticks = 0;
                             ig.add_chat_message("§aSuccessfully connected to world!".into());
                         }
                     }
@@ -1106,18 +1121,11 @@ impl App {
                     }
                     self.profiler.loaded_chunks = 0;
                     if let Some(sm) = &mut self.screen_manager {
+                        sm.reset_modals();
                         if let Some(ig) = &mut sm.in_game {
                             ig.dimension = rp.dimension as i8;
                             ig.hud_data.health = 20.0;
                             ig.death_ticks = 0;
-                            ig.active_container = None;
-                            ig.inventory_opened = false;
-                            ig.escape_menu_opened = false;
-                            ig.chat_opened = false;
-                            ig.hud_editor_opened = false;
-                            ig.container_ui_state.villager_trades.clear();
-                            ig.container_ui_state.sign_pos = None;
-                            ig.container_ui_state.book_open = false;
                         }
                     }
                     self.pressed_keys.clear();
@@ -1125,6 +1133,7 @@ impl App {
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
                     self.breaking_block_pos = None;
+                    self.teleport_confirmed_ticks = 0;
                     if let Some(w) = &self.window {
                         let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
                             .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
@@ -1209,17 +1218,20 @@ impl App {
                     }
 
                     if let Some(sm) = &mut self.screen_manager {
+                        // MCP parity: Close all open screens on teleport (NetHandlerPlayClient line 725 displayGuiScreen(null))
+                        sm.reset_modals();
                         if let Some(ig) = &mut sm.in_game {
-                            // MCP parity: Close open screens on teleport (NetHandlerPlayClient line 725)
-                            ig.active_container = None;
-                            ig.inventory_opened = false;
-                            ig.container_ui_state.villager_trades.clear();
-                            ig.container_ui_state.sign_pos = None;
-                            ig.container_ui_state.book_open = false;
                             ig.pos = self.player_pos;
                             ig.look = self.player_look;
                         }
                     }
+
+                    // Reset movement keys and mining states on teleport to avoid walking into anticheat setbacks
+                    self.pressed_keys.clear();
+                    self.is_left_clicking = false;
+                    self.is_right_clicking = false;
+                    self.item_use_state.stop();
+                    self.breaking_block_pos = None;
 
                     // MCP parity: teleport confirmed immediately to server with C06.
                     // Sync last_reported_pos and last_reported_look with the confirmed position
@@ -1227,6 +1239,7 @@ impl App {
                     self.last_reported_pos = (self.player.pos.x, self.player.bounding_box.min_y, self.player.pos.z);
                     self.last_reported_look = (self.player.yaw, self.player.pitch);
                     self.position_update_ticks = 0;
+                    self.teleport_confirmed_ticks = 3;
 
                     // Confirm position back to server and mark spawned (on_ground = false per MCP line 717)
                     self.has_spawned = true;
@@ -1250,8 +1263,8 @@ impl App {
                     self.camera.yaw = self.player.yaw;
                     self.camera.pitch = self.player.pitch;
 
-                    // Ensure mouse is captured on spawn only if alive and cursor is not needed
-                    if !self.mouse_grabbed && !self.is_cursor_needed() {
+                    // Ensure mouse is captured on spawn/teleport (MCP setIngameFocus parity)
+                    if !self.is_cursor_needed() {
                         if let Some(w) = &self.window {
                             let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
                                 .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
@@ -2366,7 +2379,24 @@ impl App {
                         let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
                         let flag3 = d3 != 0.0 || d4 != 0.0;
 
-                        if flag2 && flag3 {
+                        if self.teleport_confirmed_ticks > 0 {
+                            self.teleport_confirmed_ticks -= 1;
+                            // Crucial Anticheat/Spigot Teleport Confirmation parity:
+                            // For the first ticks following a teleport/setback, always transmit full PlayerPositionAndLook
+                            // to avoid sending empty PlayerMovement (0x03) before the server's teleportPos queue clears,
+                            // which prevents the infinite setback loop and anticheat bans.
+                            s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                                x: self.player_pos.0,
+                                y: self.player_pos.1,
+                                z: self.player_pos.2,
+                                yaw: self.player_look.0,
+                                pitch: self.player_look.1,
+                                on_ground: self.player_on_ground,
+                            });
+                            self.last_reported_pos = self.player_pos;
+                            self.last_reported_look = self.player_look;
+                            self.position_update_ticks = 0;
+                        } else if flag2 && flag3 {
                             s.send(OutgoingPlayPacket::PlayerPositionAndLook {
                                 x: self.player_pos.0,
                                 y: self.player_pos.1,

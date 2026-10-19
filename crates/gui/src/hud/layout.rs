@@ -12,6 +12,10 @@ fn default_global_opacity() -> f32 {
     0.85
 }
 
+fn default_chat_font_size() -> f32 {
+    13.0
+}
+
 /// Configuration storing HUD element relative grid positions and styling across multiple profiles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HudLayoutConfig {
@@ -19,6 +23,8 @@ pub struct HudLayoutConfig {
     pub grid_snap_size: u32, // 0 = Free, 8, 16, 24, 32
     #[serde(default = "default_global_opacity")]
     pub global_opacity: f32, // 0.0 .. 1.0, master opacity slider for all HUD backgrounds & borders
+    #[serde(default = "default_chat_font_size")]
+    pub chat_font_size: f32, // Chat text and input font size in pixels (e.g. 8.0 .. 24.0)
     pub profiles: BTreeMap<String, BTreeMap<String, HudElementConfig>>,
 }
 
@@ -36,6 +42,7 @@ impl Default for HudLayoutConfig {
             active_profile: DEFAULT_PROFILE_NAME.to_string(),
             grid_snap_size: 16,
             global_opacity: default_global_opacity(),
+            chat_font_size: default_chat_font_size(),
             profiles,
         }
     }
