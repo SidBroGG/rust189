@@ -163,7 +163,7 @@ impl App {
             is_left_clicking: false,
             is_right_clicking: false,
             server_break_progress: HashMap::new(),
-            held_item_id: 276,
+            held_item_id: 0,
             right_click_delay_timer: 0,
 
             player_health: 20.0,
@@ -175,23 +175,8 @@ impl App {
             player_exp_level: 0,
             player_exp_progress: 0.0,
             selected_hotbar_slot: 0,
-            hotbar_items: [
-                Some(HudItemInfo::new(276, 1, 0, 1561, "Diamond Sword")),
-                Some(HudItemInfo::new(261, 1, 0, 384, "Bow")),
-                Some(HudItemInfo::new(278, 1, 0, 1561, "Diamond Pickaxe")),
-                Some(HudItemInfo::new(279, 1, 0, 1561, "Diamond Axe")),
-                Some(HudItemInfo::new(277, 1, 0, 1561, "Diamond Shovel")),
-                Some(HudItemInfo::new(322, 64, 0, 0, "Golden Apple")),
-                Some(HudItemInfo::new(1, 64, 0, 0, "Stone")),
-                Some(HudItemInfo::new(5, 64, 0, 0, "Wood Planks")),
-                None,
-            ],
-            armor_items: [
-                Some(HudItemInfo::new(310, 1, 0, 363, "Diamond Helmet")),
-                Some(HudItemInfo::new(311, 1, 0, 528, "Diamond Chestplate")),
-                Some(HudItemInfo::new(312, 1, 0, 495, "Diamond Leggings")),
-                Some(HudItemInfo::new(313, 1, 0, 429, "Diamond Boots")),
-            ],
+            hotbar_items: [None, None, None, None, None, None, None, None, None],
+            armor_items: [None, None, None, None],
             active_potions: Vec::new(),
             active_boss_bars: Vec::new(),
 
@@ -960,6 +945,18 @@ impl App {
             self.session = None;
             self.has_spawned = false;
             self.world.clear();
+            if let Some(cm) = &mut self.chunk_manager {
+                cm.clear();
+            }
+            self.profiler.loaded_chunks = 0;
+            self.held_item_id = 0;
+            self.hotbar_items = [None, None, None, None, None, None, None, None, None];
+            self.armor_items = [None, None, None, None];
+            if let Some(w) = &self.window {
+                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                w.set_cursor_visible(true);
+                self.mouse_grabbed = false;
+            }
             if let Some(sm) = &mut self.screen_manager {
                 sm.exit_in_game();
             }
@@ -1022,7 +1019,8 @@ impl App {
                     }
 
                     // According to MCP NetHandlerPlayClient.handleJoinGame:
-                    // ClientSettings (0x15) is sent only after JoinGame (0x01) has been received.
+                    // ClientSettings (0x15) is sent only after JoinGame (0x01) has been received,
+                    // followed immediately by C17PacketCustomPayload("MC|Brand", "vanilla").
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::ClientSettings {
                             locale: "en_US".into(),
@@ -1031,6 +1029,7 @@ impl App {
                             chat_colors: true,
                             skin_parts: 0xFF,
                         });
+                        s.send(OutgoingPlayPacket::Brand("vanilla".into()));
                     }
                 }
                 ClientboundPlayPacket::Respawn(rp) => {
@@ -1684,13 +1683,30 @@ impl App {
                 ClientboundPlayPacket::Disconnect(dc) => {
                     warn!(reason = %dc.reason, "Disconnected from server");
                     self.session = None;
+                    self.has_spawned = false;
                     self.world.clear();
                     if let Some(cm) = &mut self.chunk_manager {
                         cm.clear();
                     }
                     self.profiler.loaded_chunks = 0;
+                    self.held_item_id = 0;
+                    self.hotbar_items = [None, None, None, None, None, None, None, None, None];
+                    self.armor_items = [None, None, None, None];
+                    if let Some(w) = &self.window {
+                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                        w.set_cursor_visible(true);
+                        self.mouse_grabbed = false;
+                    }
                     if let Some(sm) = &mut self.screen_manager {
                         sm.exit_in_game();
+                    }
+                }
+                ClientboundPlayPacket::CustomPayload(cp) => {
+                    // MCP NetHandlerPlayClient.handleCustomPayload parity
+                    if cp.channel == "MC|Brand" {
+                        if let Ok(brand) = String::from_utf8(cp.data) {
+                            info!(brand = %brand, "Received server brand");
+                        }
                     }
                 }
                 ClientboundPlayPacket::ConfirmTransaction(_ct) => {
@@ -1768,6 +1784,8 @@ impl App {
                     self.selected_hotbar_slot = hic.slot.clamp(0, 8) as usize;
                     if let Some(item) = &self.hotbar_items[self.selected_hotbar_slot] {
                         self.held_item_id = item.item_id;
+                    } else {
+                        self.held_item_id = 0;
                     }
                 }
                 ClientboundPlayPacket::SetSlot(ss) => {
@@ -1911,8 +1929,11 @@ impl App {
                 self.player.pos.z.floor() as i32,
             );
             let is_chunk_loaded = self.world.is_chunk_loaded(player_chunk_x, player_chunk_z);
-            let can_update_player = (self.has_spawned && is_chunk_loaded) || (self.session.is_none() && is_in_game);
-            if can_update_player {
+            let can_simulate_physics = (self.has_spawned && is_chunk_loaded) || (self.session.is_none() && is_in_game);
+            let prev_sprint = self.player.is_sprinting;
+            let prev_sneak = self.player.is_sneaking;
+
+            if can_simulate_physics {
                 let cursor_needed = self.is_cursor_needed();
                 let mut input = PlayerInput::default();
 
@@ -2025,9 +2046,6 @@ impl App {
                     }
                 }
 
-                let prev_sprint = self.player.is_sprinting;
-                let prev_sneak = self.player.is_sneaking;
-
                 self.player.tick(&self.world, &input);
 
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
@@ -2047,51 +2065,53 @@ impl App {
                 } else {
                     self.player_air = 300;
                 }
+            } else if self.session.is_some() {
+                // In multiplayer, freeze motion while waiting for current chunk terrain to load or before spawn (MCP parity)
+                self.player.motion = glam::DVec3::ZERO;
+                self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
+                self.player_look = (self.player.yaw, self.player.pitch);
+                self.player_on_ground = self.player.on_ground;
+            }
 
-                if let Some(sm) = &mut self.screen_manager {
-                    if let Some(ig) = &mut sm.in_game {
-                        ig.pos = self.player_pos;
-                        ig.look = self.player_look;
-                    }
+            if let Some(sm) = &mut self.screen_manager {
+                if let Some(ig) = &mut sm.in_game {
+                    ig.pos = self.player_pos;
+                    ig.look = self.player_look;
                 }
+            }
 
-                // Send network packets only if player is fully spawned in world
+            // Transmit player packets to server on every physical tick (20 TPS) while in multiplayer (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
+            if let Some(s) = &self.session {
                 if self.has_spawned {
                     // Send entity action packets if sprint or sneak state changed (anticheat compliance)
                     if self.player.is_sprinting != prev_sprint {
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::EntityAction {
-                                entity_id: self.player_entity_id,
-                                action: if self.player.is_sprinting {
-                                    protocol::EntityAction::StartSprinting
-                                } else {
-                                    protocol::EntityAction::StopSprinting
-                                },
-                                jump_boost: 0,
-                            });
-                        }
+                        s.send(OutgoingPlayPacket::EntityAction {
+                            entity_id: self.player_entity_id,
+                            action: if self.player.is_sprinting {
+                                protocol::EntityAction::StartSprinting
+                            } else {
+                                protocol::EntityAction::StopSprinting
+                            },
+                            jump_boost: 0,
+                        });
                     }
                     if self.player.is_sneaking != prev_sneak {
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::EntityAction {
-                                entity_id: self.player_entity_id,
-                                action: if self.player.is_sneaking {
-                                    protocol::EntityAction::StartSneaking
-                                } else {
-                                    protocol::EntityAction::StopSneaking
-                                },
-                                jump_boost: 0,
-                            });
-                        }
+                        s.send(OutgoingPlayPacket::EntityAction {
+                            entity_id: self.player_entity_id,
+                            action: if self.player.is_sneaking {
+                                protocol::EntityAction::StartSneaking
+                            } else {
+                                protocol::EntityAction::StopSneaking
+                            },
+                            jump_boost: 0,
+                        });
                     }
 
                     if self.player.abilities_dirty {
                         self.player.abilities_dirty = false;
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::PlayerAbilities {
-                                is_flying: self.player.capabilities.is_flying,
-                            });
-                        }
+                        s.send(OutgoingPlayPacket::PlayerAbilities {
+                            is_flying: self.player.capabilities.is_flying,
+                        });
                     }
 
                     // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
@@ -2103,32 +2123,30 @@ impl App {
                     let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
                     let flag3 = d3 != 0.0 || d4 != 0.0;
 
-                    if let Some(s) = &self.session {
-                        if flag2 && flag3 {
-                            s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                                x: self.player_pos.0,
-                                y: self.player_pos.1,
-                                z: self.player_pos.2,
-                                yaw: self.player_look.0,
-                                pitch: self.player_look.1,
-                                on_ground: self.player_on_ground,
-                            });
-                        } else if flag2 {
-                            s.send(OutgoingPlayPacket::PlayerPosition {
-                                x: self.player_pos.0,
-                                y: self.player_pos.1,
-                                z: self.player_pos.2,
-                                on_ground: self.player_on_ground,
-                            });
-                        } else if flag3 {
-                            s.send(OutgoingPlayPacket::PlayerLook {
-                                yaw: self.player_look.0,
-                                pitch: self.player_look.1,
-                                on_ground: self.player_on_ground,
-                            });
-                        } else {
-                            s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
-                        }
+                    if flag2 && flag3 {
+                        s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                            x: self.player_pos.0,
+                            y: self.player_pos.1,
+                            z: self.player_pos.2,
+                            yaw: self.player_look.0,
+                            pitch: self.player_look.1,
+                            on_ground: self.player_on_ground,
+                        });
+                    } else if flag2 {
+                        s.send(OutgoingPlayPacket::PlayerPosition {
+                            x: self.player_pos.0,
+                            y: self.player_pos.1,
+                            z: self.player_pos.2,
+                            on_ground: self.player_on_ground,
+                        });
+                    } else if flag3 {
+                        s.send(OutgoingPlayPacket::PlayerLook {
+                            yaw: self.player_look.0,
+                            pitch: self.player_look.1,
+                            on_ground: self.player_on_ground,
+                        });
+                    } else {
+                        s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
                     }
 
                     self.position_update_ticks += 1;
@@ -2139,10 +2157,23 @@ impl App {
                     if flag3 {
                         self.last_reported_look = self.player_look;
                     }
+                } else {
+                    // Pre-spawn limbo / bot check verification phase: send 20 TPS ticking packets
+                    let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
+                    let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
+                    let flag3 = d3 != 0.0 || d4 != 0.0;
+
+                    if flag3 {
+                        s.send(OutgoingPlayPacket::PlayerLook {
+                            yaw: self.player_look.0,
+                            pitch: self.player_look.1,
+                            on_ground: self.player_on_ground,
+                        });
+                        self.last_reported_look = self.player_look;
+                    } else {
+                        s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
+                    }
                 }
-            } else if self.has_spawned {
-                // In multiplayer, freeze motion while waiting for current chunk terrain to load (MCP EntityPlayerSP.java:170 parity)
-                self.player.motion = glam::DVec3::ZERO;
             }
         }
 
@@ -2801,6 +2832,18 @@ impl ApplicationHandler for App {
                         self.session = None;
                         self.has_spawned = false;
                         self.world.clear();
+                        if let Some(cm) = &mut self.chunk_manager {
+                            cm.clear();
+                        }
+                        self.profiler.loaded_chunks = 0;
+                        self.held_item_id = 0;
+                        self.hotbar_items = [None, None, None, None, None, None, None, None, None];
+                        self.armor_items = [None, None, None, None];
+                        if let Some(w) = &self.window {
+                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                            w.set_cursor_visible(true);
+                            self.mouse_grabbed = false;
+                        }
                     }
                     GuiOutput::SendChatMessage(msg) => {
                         if let Some(s) = &self.session {

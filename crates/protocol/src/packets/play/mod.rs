@@ -53,6 +53,7 @@ pub enum ClientboundPlayPacket {
     EntityEffect(ClientboundEntityEffectPacket),
     RemoveEntityEffect(ClientboundRemoveEntityEffectPacket),
     ChangeGameState(ClientboundChangeGameStatePacket),
+    CustomPayload(ClientboundCustomPayloadPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -188,6 +189,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundChangeGameStatePacket::PACKET_ID => {
                 Ok(Self::ChangeGameState(ClientboundChangeGameStatePacket::decode(payload)?))
+            }
+            ClientboundCustomPayloadPacket::PACKET_ID => {
+                Ok(Self::CustomPayload(ClientboundCustomPayloadPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,
@@ -613,6 +617,16 @@ mod tests {
         let mut bytes7 = buf7.freeze();
         let decoded_rem_effect = ClientboundRemoveEntityEffectPacket::decode(&mut bytes7).unwrap();
         assert_eq!(rem_effect, decoded_rem_effect);
+    }
+
+    #[test]
+    fn test_clientbound_custom_payload_roundtrip() {
+        let pkt = ClientboundCustomPayloadPacket::new("MC|Brand", b"BungeeCord".to_vec());
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundCustomPayloadPacket::decode(&mut bytes).unwrap();
+        assert_eq!(pkt, decoded);
     }
 }
 

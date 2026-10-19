@@ -75,6 +75,11 @@ pub enum OutgoingPlayPacket {
     Animation,
     HeldItemChange(i16),
     ClientStatus(ClientStatusAction),
+    CustomPayload {
+        channel: String,
+        data: Vec<u8>,
+    },
+    Brand(String),
 }
 
 impl OutgoingPlayPacket {
@@ -219,6 +224,16 @@ impl OutgoingPlayPacket {
                 let pkt = ServerboundClientStatusPacket::new(*action);
                 pkt.encode(buf)?;
                 Ok(ServerboundClientStatusPacket::PACKET_ID)
+            }
+            Self::CustomPayload { channel, data } => {
+                let pkt = ServerboundCustomPayloadPacket::new(channel.as_str(), data.clone());
+                pkt.encode(buf)?;
+                Ok(ServerboundCustomPayloadPacket::PACKET_ID)
+            }
+            Self::Brand(brand) => {
+                let pkt = ServerboundCustomPayloadPacket::brand(brand.as_str());
+                pkt.encode(buf)?;
+                Ok(ServerboundCustomPayloadPacket::PACKET_ID)
             }
         }
     }

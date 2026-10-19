@@ -669,6 +669,49 @@ impl ServerboundClientStatusPacket {
         Ok(Self { action })
     }
 }
+
+/// Serverbound Custom Payload packet (0x17).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerboundCustomPayloadPacket {
+    pub channel: String,
+    pub data: Vec<u8>,
+}
+
+impl ServerboundCustomPayloadPacket {
+    pub const PACKET_ID: i32 = 0x17;
+
+    pub fn new(channel: impl Into<String>, data: Vec<u8>) -> Self {
+        Self {
+            channel: channel.into(),
+            data,
+        }
+    }
+
+    /// Helper to create an `MC|Brand` packet formatted according to vanilla MCP 1.8.9:
+    /// channel = "MC|Brand", data = writeString(brand_name) (VarInt length + UTF-8 bytes).
+    pub fn brand(brand_name: &str) -> Self {
+        let mut buf = BytesMut::new();
+        buf.write_string(brand_name).unwrap();
+        Self {
+            channel: "MC|Brand".to_string(),
+            data: buf.to_vec(),
+        }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_string(&self.channel)?;
+        buf.extend_from_slice(&self.data);
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let channel = buf.read_string(20)?;
+        let mut data = vec![0u8; buf.remaining()];
+        buf.copy_to_slice(&mut data);
+        Ok(Self { channel, data })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,5 +725,17 @@ mod tests {
         let mut bytes = buf.freeze();
         let decoded = ServerboundClientStatusPacket::decode(&mut bytes).unwrap();
         assert_eq!(decoded.action, ClientStatusAction::PerformRespawn);
+    }
+
+    #[test]
+    fn test_custom_payload_packet_roundtrip() {
+        let pkt = ServerboundCustomPayloadPacket::brand("vanilla");
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+
+        let mut bytes = buf.freeze();
+        let decoded = ServerboundCustomPayloadPacket::decode(&mut bytes).unwrap();
+        assert_eq!(decoded.channel, "MC|Brand");
+        assert_eq!(decoded.data, pkt.data);
     }
 }

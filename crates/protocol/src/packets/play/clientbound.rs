@@ -2009,3 +2009,34 @@ impl ClientboundChangeGameStatePacket {
         Ok(())
     }
 }
+
+/// Clientbound Custom Payload packet (0x3F).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundCustomPayloadPacket {
+    pub channel: String,
+    pub data: Vec<u8>,
+}
+
+impl ClientboundCustomPayloadPacket {
+    pub const PACKET_ID: i32 = 0x3F;
+
+    pub fn new(channel: impl Into<String>, data: Vec<u8>) -> Self {
+        Self {
+            channel: channel.into(),
+            data,
+        }
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let channel = buf.read_string(20)?;
+        let mut data = vec![0u8; buf.remaining()];
+        buf.copy_to_slice(&mut data);
+        Ok(Self { channel, data })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_string(&self.channel)?;
+        buf.extend_from_slice(&self.data);
+        Ok(())
+    }
+}
