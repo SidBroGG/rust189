@@ -123,6 +123,43 @@ fn extract_text_recursive(val: &Value, out: &mut String) {
             if let Some(Value::String(text)) = map.get("text") {
                 out.push_str(text);
             }
+            if let Some(Value::String(translate_key)) = map.get("translate") {
+                let translated = resolve_translate_key(translate_key);
+                let template = if !translated.is_empty() {
+                    translated
+                } else if let Some(stripped) = translate_key.strip_prefix("entity.Villager.") {
+                    stripped
+                } else if let Some(stripped) = translate_key.strip_prefix("container.") {
+                    stripped
+                } else {
+                    translate_key.as_str()
+                };
+
+                if let Some(Value::Array(with_args)) = map.get("with") {
+                    let mut res = template.to_string();
+                    for (i, arg) in with_args.iter().enumerate() {
+                        let mut arg_text = String::new();
+                        extract_text_recursive(arg, &mut arg_text);
+                        let spec1 = format!("%{}$s", i + 1);
+                        let spec2 = format!("%{}s", i + 1);
+                        if res.contains(&spec1) {
+                            res = res.replace(&spec1, &arg_text);
+                        } else if res.contains(&spec2) {
+                            res = res.replace(&spec2, &arg_text);
+                        } else if let Some(pos) = res.find("%s") {
+                            res.replace_range(pos..pos + 2, &arg_text);
+                        } else {
+                            if !res.is_empty() {
+                                res.push(' ');
+                            }
+                            res.push_str(&arg_text);
+                        }
+                    }
+                    out.push_str(&res);
+                } else {
+                    out.push_str(template);
+                }
+            }
             if let Some(Value::Array(extra)) = map.get("extra") {
                 for item in extra {
                     extract_text_recursive(item, out);
@@ -135,6 +172,46 @@ fn extract_text_recursive(val: &Value, out: &mut String) {
             }
         }
         _ => {}
+    }
+}
+
+/// Resolves standard Minecraft translation keys to human-readable Russian text.
+pub fn resolve_translate_key(key: &str) -> &'static str {
+    match key {
+        "entity.Villager.armor" => "Оружейник",
+        "entity.Villager.butcher" => "Мясник",
+        "entity.Villager.cleric" => "Священник",
+        "entity.Villager.farmer" => "Фермер",
+        "entity.Villager.fisherman" => "Рыбак",
+        "entity.Villager.fletcher" => "Лучник",
+        "entity.Villager.leather" => "Кожевник",
+        "entity.Villager.librarian" => "Библиотекарь",
+        "entity.Villager.name" => "Житель",
+        "entity.Villager.shepherd" => "Пастух",
+        "entity.Villager.tool" => "Инструментальщик",
+        "entity.Villager.weapon" => "Оружейник",
+        "container.chest" => "Сундук",
+        "container.chestDouble" => "Большой сундук",
+        "container.enderchest" => "Сундук Края",
+        "container.crafting" => "Верстак",
+        "container.furnace" => "Печь",
+        "container.enchant" => "Зачаровывание",
+        "container.brewing" => "Зельеварка",
+        "container.dispenser" => "Раздатчик",
+        "container.dropper" => "Выбрасыватель",
+        "container.hopper" => "Воронка",
+        "container.beacon" => "Маяк",
+        "container.repair" => "Наковальня",
+        "container.inventory" => "Инвентарь",
+        "entity.Horse.name" => "Лошадь",
+        "entity.Donkey.name" => "Осёл",
+        "entity.Mule.name" => "Мул",
+        "gameMode.changed" => "Игровой режим обновлён",
+        "chat.type.text" => "<%s> %s",
+        "chat.type.emote" => "* %s %s",
+        "multiplayer.player.joined" => "%s присоединился к игре",
+        "multiplayer.player.left" => "%s покинул игру",
+        _ => "",
     }
 }
 

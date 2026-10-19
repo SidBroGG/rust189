@@ -105,7 +105,7 @@ pub fn get_item_asset_path(item_id: i16, damage: i16, name: &str) -> Option<Stri
         31 => "blocks/tallgrass.png",
         32 => "blocks/deadbush.png",
         33 => "blocks/piston_top_normal.png",
-        35 => match damage {
+        35 | 171 => match damage & 15 {
             1 => "blocks/wool_colored_orange.png",
             2 => "blocks/wool_colored_magenta.png",
             3 => "blocks/wool_colored_light_blue.png",
@@ -182,8 +182,24 @@ pub fn get_item_asset_path(item_id: i16, damage: i16, name: &str) -> Option<Stri
         90 => "blocks/portal.png",
         91 => "blocks/pumpkin_face_on.png",
         92 => "items/cake.png",
-        93 | 94 => "items/repeater.png",
-        95 => "blocks/glass_white.png",
+        95 | 160 => match damage & 15 {
+            1 => "blocks/glass_orange.png",
+            2 => "blocks/glass_magenta.png",
+            3 => "blocks/glass_light_blue.png",
+            4 => "blocks/glass_yellow.png",
+            5 => "blocks/glass_lime.png",
+            6 => "blocks/glass_pink.png",
+            7 => "blocks/glass_gray.png",
+            8 => "blocks/glass_silver.png",
+            9 => "blocks/glass_cyan.png",
+            10 => "blocks/glass_purple.png",
+            11 => "blocks/glass_blue.png",
+            12 => "blocks/glass_brown.png",
+            13 => "blocks/glass_green.png",
+            14 => "blocks/glass_red.png",
+            15 => "blocks/glass_black.png",
+            _ => "blocks/glass_white.png",
+        },
         96 => "blocks/trapdoor.png",
         98 => match damage {
             1 => "blocks/stonebrick_mossy.png",
@@ -263,7 +279,6 @@ pub fn get_item_asset_path(item_id: i16, damage: i16, name: &str) -> Option<Stri
             15 => "blocks/hardened_clay_stained_black.png",
             _ => "blocks/hardened_clay_stained_white.png",
         },
-        160 => "blocks/glass_white.png",
         161 => "blocks/leaves_acacia.png",
         162 => "blocks/log_acacia.png",
         163 => "blocks/planks_acacia.png",
@@ -278,7 +293,6 @@ pub fn get_item_asset_path(item_id: i16, damage: i16, name: &str) -> Option<Stri
         },
         169 => "blocks/sea_lantern.png",
         170 => "blocks/hay_block_side.png",
-        171 => "blocks/wool_colored_white.png",
         172 => "blocks/hardened_clay.png",
         173 => "blocks/coal_block.png",
         174 => "blocks/ice_packed.png",
@@ -289,11 +303,13 @@ pub fn get_item_asset_path(item_id: i16, damage: i16, name: &str) -> Option<Stri
             2 => "blocks/red_sandstone_smooth.png",
             _ => "blocks/red_sandstone_normal.png",
         },
-        183 => "blocks/planks_spruce.png",
-        184 => "blocks/planks_birch.png",
-        185 => "blocks/planks_jungle.png",
-        186 => "blocks/planks_dark_oak.png",
-        187 => "blocks/planks_acacia.png",
+        180 => "blocks/red_sandstone_normal.png",
+        182 => "blocks/red_sandstone_top.png",
+        183 | 188 => "blocks/planks_spruce.png",
+        184 | 189 => "blocks/planks_birch.png",
+        185 | 190 => "blocks/planks_jungle.png",
+        186 | 191 => "blocks/planks_big_oak.png",
+        187 | 192 => "blocks/planks_acacia.png",
         193 => "items/door_spruce.png",
         194 => "items/door_birch.png",
         195 => "items/door_jungle.png",
@@ -443,7 +459,13 @@ pub fn get_item_asset_path(item_id: i16, damage: i16, name: &str) -> Option<Stri
         370 => "items/ghast_tear.png",
         371 => "items/gold_nugget.png",
         372 => "items/nether_wart.png",
-        373 => "items/potion_bottle_drinkable.png",
+        373 => {
+            if damage & 16384 != 0 {
+                "items/potion_bottle_splash.png"
+            } else {
+                "items/potion_bottle_drinkable.png"
+            }
+        }
         374 => "items/potion_bottle_empty.png",
         375 => "items/spider_eye.png",
         376 => "items/spider_eye_fermented.png",

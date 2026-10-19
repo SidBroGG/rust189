@@ -4034,6 +4034,7 @@ name = "world"
 version = "0.1.0"
 dependencies = [
  "bitvec",
+ "bytes",
  "glam",
  "hashbrown 0.15.5",
  "protocol",

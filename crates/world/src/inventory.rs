@@ -1,6 +1,63 @@
 use crate::item::{get_item_def, get_item_max_stack};
+use bytes::Buf;
+use protocol::codec::slot::read_slot;
 use protocol::Slot;
 use std::collections::HashMap;
+
+/// Represents a single trading offer from a villager merchant.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct MerchantTradeRecipe {
+    pub buy1: Option<Slot>,
+    pub buy2: Option<Slot>,
+    pub sell: Option<Slot>,
+    pub disabled: bool,
+    pub uses: i32,
+    pub max_uses: i32,
+}
+
+impl MerchantTradeRecipe {
+    /// Decodes a list of villager trades from an `MC|TrList` custom payload.
+    pub fn decode_tr_list(bytes: &[u8]) -> Result<(i32, Vec<Self>), protocol::ProtocolError> {
+        let mut buf = bytes;
+        if buf.remaining() < 4 {
+            return Err(protocol::ProtocolError::UnexpectedEof);
+        }
+        let window_id = buf.get_i32();
+        if buf.remaining() < 1 {
+            return Err(protocol::ProtocolError::UnexpectedEof);
+        }
+        let count = buf.get_u8() as usize;
+        let mut recipes = Vec::with_capacity(count);
+        for _ in 0..count {
+            let buy1 = read_slot(&mut buf)?;
+            let sell = read_slot(&mut buf)?;
+            if buf.remaining() < 1 {
+                return Err(protocol::ProtocolError::UnexpectedEof);
+            }
+            let has_buy2 = buf.get_u8() != 0;
+            let buy2 = if has_buy2 {
+                read_slot(&mut buf)?
+            } else {
+                None
+            };
+            if buf.remaining() < 1 + 4 + 4 {
+                return Err(protocol::ProtocolError::UnexpectedEof);
+            }
+            let disabled = buf.get_u8() != 0;
+            let uses = buf.get_i32();
+            let max_uses = buf.get_i32();
+            recipes.push(MerchantTradeRecipe {
+                buy1,
+                buy2,
+                sell,
+                disabled,
+                uses,
+                max_uses,
+            });
+        }
+        Ok((window_id, recipes))
+    }
+}
 
 /// Types of containers supported by Protocol 47.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -130,10 +187,17 @@ impl ContainerState {
     ) -> Self {
         let kind = ContainerKind::from_inventory_type(gui_id, slot_count);
         let count = kind.total_slot_count();
+        let parsed_title = crate::chat::parse_chat_message(&title);
+        let clean_title = crate::chat::strip_formatting(&parsed_title);
+        let display_title = if clean_title.trim().is_empty() {
+            title
+        } else {
+            clean_title
+        };
         Self {
             window_id,
             kind,
-            title,
+            title: display_title,
             slots: vec![None; count],
             carried_item: None,
             properties: HashMap::new(),

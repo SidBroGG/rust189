@@ -69,6 +69,7 @@ pub struct ContainerUiState {
 
     // Villager
     pub villager_trade_idx: usize,
+    pub villager_trades: Vec<world::MerchantTradeRecipe>,
 
     // Drag & drop state
     pub drag_active: bool,
@@ -93,6 +94,7 @@ impl Default for ContainerUiState {
             beacon_primary: 0,
             beacon_secondary: 0,
             villager_trade_idx: 0,
+            villager_trades: Vec::new(),
             drag_active: false,
             drag_mode: 0,
             drag_slots: Vec::new(),
@@ -189,11 +191,21 @@ pub fn render_container(
             ui.vertical(|ui| {
                 // Header bar
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(window_title)
-                            .size(16.0)
-                            .color(COLOR_GOLD)
-                            .strong(),
+                    let clean_title = if window_title.starts_with('{') {
+                        let parsed = world::chat::parse_chat_message(&window_title);
+                        world::chat::strip_formatting(&parsed)
+                    } else {
+                        window_title
+                    };
+                    ui.add_sized(
+                        Vec2::new(260.0, 20.0),
+                        egui::Label::new(
+                            RichText::new(clean_title)
+                                .size(16.0)
+                                .color(COLOR_GOLD)
+                                .strong(),
+                        )
+                        .truncate(),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button(RichText::new("✕").size(14.0).color(COLOR_GRAY)).clicked() {
@@ -909,22 +921,136 @@ fn render_hopper_body(
     render_player_inventory_slots(ui, container, 5, action);
 }
 
-/// Renders Villager / Merchant trading interface.
+/// Helper to render an item icon inside a trade offer row.
+fn render_trade_item_icon(ui: &mut egui::Ui, slot: &Slot) {
+    let size = Vec2::splat(26.0);
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(2), Color32::from_rgb(20, 22, 28));
+    painter.rect_stroke(rect, CornerRadius::same(2), Stroke::new(1.0_f32, Color32::from_rgb(40, 44, 54)), StrokeKind::Inside);
+
+    let name = get_item_name(slot.item_id, slot.item_damage);
+    let max_damage = get_item_max_damage(slot.item_id);
+    if let Some(tex) = get_or_load_item_texture(ui.ctx(), slot.item_id, slot.item_damage, max_damage, &name) {
+        let icon_rect = rect.shrink(2.0);
+        painter.image(tex, icon_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+    }
+    if slot.item_count > 1 {
+        let count_str = format!("{}", slot.item_count);
+        let text_pos = rect.max + Vec2::new(-2.0, -2.0);
+        painter.text(text_pos + Vec2::new(1.0, 1.0), Align2::RIGHT_BOTTOM, &count_str, FontId::proportional(11.0), Color32::from_rgb(30, 30, 30));
+        painter.text(text_pos, Align2::RIGHT_BOTTOM, &count_str, FontId::proportional(11.0), COLOR_WHITE);
+    }
+    if resp.hovered() {
+        resp.on_hover_ui(|ui| {
+            render_item_tooltip(ui, slot, &name, max_damage);
+        });
+    }
+}
+
+/// Renders Villager / Merchant trading interface with a right sidebar of trade offers.
 fn render_villager_body(
     ui: &mut egui::Ui,
     container: &mut ContainerState,
-    _ui_state: &mut ContainerUiState,
+    ui_state: &mut ContainerUiState,
     action: &mut ContainerAction,
 ) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(12.0, 0.0);
-        render_slot(ui, container, 0, action); // Buy 1
-        render_slot(ui, container, 1, action); // Buy 2
-        ui.label(RichText::new("➔").size(18.0).color(COLOR_GRAY));
-        render_slot(ui, container, 2, action); // Sell
-    });
+    ui.horizontal_top(|ui| {
+        // Left section: Active trade + player inventory
+        ui.vertical(|ui| {
+            ui.label(RichText::new("Сделка").size(12.0).color(COLOR_GRAY));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
+                render_slot(ui, container, 0, action); // Buy 1
+                render_slot(ui, container, 1, action); // Buy 2
+                ui.label(RichText::new("➔").size(20.0).color(COLOR_GOLD));
+                render_slot(ui, container, 2, action); // Sell
+            });
 
-    render_player_inventory_slots(ui, container, 3, action);
+            render_player_inventory_slots(ui, container, 3, action);
+        });
+
+        // Vertical separator line
+        ui.add_space(8.0);
+        let (sep_rect, _) = ui.allocate_exact_size(Vec2::new(1.0, 240.0), egui::Sense::hover());
+        ui.painter().rect_filled(sep_rect, CornerRadius::ZERO, Color32::from_rgb(45, 50, 60));
+        ui.add_space(8.0);
+
+        // Right section: Trade offers sidebar
+        ui.vertical(|ui| {
+            ui.set_width(210.0);
+            ui.label(RichText::new("Варианты торговли").size(13.0).color(COLOR_GOLD).strong());
+            ui.add_space(4.0);
+
+            if ui_state.villager_trades.is_empty() {
+                ui.label(RichText::new("Список предложений пуст").size(12.0).color(COLOR_DARK_GRAY));
+            } else {
+                ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
+                        for (idx, recipe) in ui_state.villager_trades.iter().enumerate() {
+                            let is_selected = ui_state.villager_trade_idx == idx;
+                            let bg_color = if recipe.disabled {
+                                Color32::from_rgb(38, 25, 25)
+                            } else if is_selected {
+                                Color32::from_rgb(45, 55, 75)
+                            } else {
+                                Color32::from_rgb(26, 28, 34)
+                            };
+
+                            let border_color = if is_selected {
+                                Color32::from_rgb(90, 140, 220)
+                            } else if recipe.disabled {
+                                Color32::from_rgb(90, 35, 35)
+                            } else {
+                                Color32::from_rgb(46, 50, 60)
+                            };
+
+                            let frame = Frame::NONE
+                                .fill(bg_color)
+                                .stroke(Stroke::new(1.0_f32, border_color))
+                                .corner_radius(CornerRadius::same(4))
+                                .inner_margin(egui::Margin::symmetric(6, 4));
+
+                            let response = frame.show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
+
+                                    if let Some(ref b1) = recipe.buy1 {
+                                        render_trade_item_icon(ui, b1);
+                                    }
+                                    if let Some(ref b2) = recipe.buy2 {
+                                        ui.label(RichText::new("+").size(11.0).color(COLOR_GRAY));
+                                        render_trade_item_icon(ui, b2);
+                                    }
+                                    let arrow_col = if recipe.disabled { COLOR_RED } else { COLOR_YELLOW };
+                                    ui.label(RichText::new("➔").size(12.0).color(arrow_col));
+                                    if let Some(ref s) = recipe.sell {
+                                        render_trade_item_icon(ui, s);
+                                    }
+                                    if recipe.disabled {
+                                        ui.label(RichText::new("✖").size(11.0).color(COLOR_RED));
+                                    }
+                                });
+                            }).response;
+
+                            let clicked = response.interact(egui::Sense::click()).clicked();
+                            if clicked && !recipe.disabled {
+                                ui_state.villager_trade_idx = idx;
+                                let mut buf = bytes::BytesMut::new();
+                                buf.extend_from_slice(&(idx as i32).to_be_bytes());
+                                *action = ContainerAction::CustomPayload {
+                                    channel: "MC|TrSel".into(),
+                                    data: buf.to_vec(),
+                                };
+                            }
+                        }
+                    });
+            }
+        });
+    });
 }
 
 /// Renders Beacon power selection interface.
@@ -1162,7 +1288,195 @@ fn render_book_screen(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
     action
 }
 
-/// Renders Creative Inventory screen (Tabs, Item Grid, Search, Survival Hotbar).
+/// Renders a hotbar slot in creative inventory mode and updates both client state and emits CreativeSetSlot.
+fn render_creative_hotbar_slot(
+    ui: &mut egui::Ui,
+    container: &mut ContainerState,
+    slot_idx: usize,
+    action: &mut ContainerAction,
+) {
+    let slot_size = Vec2::splat(36.0);
+    let (rect, mut response) = ui.allocate_exact_size(slot_size, egui::Sense::click());
+    let painter = ui.painter();
+    let is_hovered = response.hovered();
+
+    let bg_color = if is_hovered {
+        Color32::from_rgb(46, 50, 62)
+    } else {
+        Color32::from_rgb(28, 30, 36)
+    };
+    painter.rect_filled(rect, CornerRadius::same(3), bg_color);
+    painter.rect_stroke(
+        rect,
+        CornerRadius::same(3),
+        Stroke::new(1.0_f32, Color32::from_rgb(50, 54, 66)),
+        StrokeKind::Inside,
+    );
+
+    let item_opt = container.slots.get(slot_idx).cloned().flatten();
+    if let Some(ref item) = item_opt {
+        let name = get_item_name(item.item_id, item.item_damage);
+        let max_damage = get_item_max_damage(item.item_id);
+        if let Some(tex) = get_or_load_item_texture(
+            ui.ctx(),
+            item.item_id,
+            item.item_damage,
+            max_damage,
+            &name,
+        ) {
+            let icon_rect = rect.shrink(3.0);
+            painter.image(
+                tex,
+                icon_rect,
+                Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        if item.item_count > 1 {
+            let count_str = format!("{}", item.item_count);
+            let text_pos = rect.max + Vec2::new(-2.0, -2.0);
+            painter.text(
+                text_pos + Vec2::new(1.0, 1.0),
+                Align2::RIGHT_BOTTOM,
+                &count_str,
+                FontId::proportional(13.0),
+                Color32::from_rgb(30, 30, 30),
+            );
+            painter.text(
+                text_pos,
+                Align2::RIGHT_BOTTOM,
+                &count_str,
+                FontId::proportional(13.0),
+                COLOR_WHITE,
+            );
+        }
+        if is_hovered {
+            response = response.on_hover_ui(|ui| {
+                render_item_tooltip(ui, item, &name, max_damage);
+            });
+        }
+    }
+
+    let is_shift = ui.input(|i| i.modifiers.shift);
+    let is_left = response.clicked_by(egui::PointerButton::Primary);
+    let is_right = response.clicked_by(egui::PointerButton::Secondary);
+
+    if is_left || is_right {
+        if is_shift {
+            container.slots[slot_idx] = None;
+            *action = ContainerAction::CreativeSetSlot {
+                slot: slot_idx as i16,
+                item: None,
+            };
+        } else if let Some(carried) = container.carried_item.take() {
+            if is_left {
+                if let Some(existing) = container.slots[slot_idx].take() {
+                    if existing.item_id == carried.item_id
+                        && existing.item_damage == carried.item_damage
+                    {
+                        let max_st = get_item_max_stack(carried.item_id) as i8;
+                        let space = (max_st - existing.item_count).max(0);
+                        let transfer = carried.item_count.min(space);
+                        let mut new_slot = existing;
+                        new_slot.item_count += transfer;
+                        let remaining = carried.item_count - transfer;
+                        container.slots[slot_idx] = Some(new_slot.clone());
+                        if remaining > 0 {
+                            let mut leftover = carried;
+                            leftover.item_count = remaining;
+                            container.carried_item = Some(leftover);
+                        }
+                        *action = ContainerAction::CreativeSetSlot {
+                            slot: slot_idx as i16,
+                            item: Some(new_slot),
+                        };
+                    } else {
+                        container.slots[slot_idx] = Some(carried);
+                        container.carried_item = Some(existing);
+                        *action = ContainerAction::CreativeSetSlot {
+                            slot: slot_idx as i16,
+                            item: container.slots[slot_idx].clone(),
+                        };
+                    }
+                } else {
+                    container.slots[slot_idx] = Some(carried);
+                    *action = ContainerAction::CreativeSetSlot {
+                        slot: slot_idx as i16,
+                        item: container.slots[slot_idx].clone(),
+                    };
+                }
+            } else {
+                let max_st = get_item_max_stack(carried.item_id) as i8;
+                if let Some(mut existing) = container.slots[slot_idx].take() {
+                    if existing.item_id == carried.item_id
+                        && existing.item_damage == carried.item_damage
+                        && existing.item_count < max_st
+                    {
+                        existing.item_count += 1;
+                        container.slots[slot_idx] = Some(existing.clone());
+                        let rem = carried.item_count - 1;
+                        if rem > 0 {
+                            let mut left = carried;
+                            left.item_count = rem;
+                            container.carried_item = Some(left);
+                        }
+                        *action = ContainerAction::CreativeSetSlot {
+                            slot: slot_idx as i16,
+                            item: Some(existing),
+                        };
+                    } else {
+                        container.slots[slot_idx] = Some(existing);
+                        container.carried_item = Some(carried);
+                    }
+                } else {
+                    let mut placed = carried.clone();
+                    placed.item_count = 1;
+                    container.slots[slot_idx] = Some(placed.clone());
+                    let rem = carried.item_count - 1;
+                    if rem > 0 {
+                        let mut left = carried;
+                        left.item_count = rem;
+                        container.carried_item = Some(left);
+                    }
+                    *action = ContainerAction::CreativeSetSlot {
+                        slot: slot_idx as i16,
+                        item: Some(placed),
+                    };
+                }
+            }
+        } else if let Some(existing) = container.slots[slot_idx].take() {
+            if is_left {
+                container.carried_item = Some(existing);
+                *action = ContainerAction::CreativeSetSlot {
+                    slot: slot_idx as i16,
+                    item: None,
+                };
+            } else {
+                let half = (existing.item_count + 1) / 2;
+                let rem = existing.item_count - half;
+                let mut picked = existing.clone();
+                picked.item_count = half;
+                container.carried_item = Some(picked);
+                if rem > 0 {
+                    let mut left = existing;
+                    left.item_count = rem;
+                    container.slots[slot_idx] = Some(left.clone());
+                    *action = ContainerAction::CreativeSetSlot {
+                        slot: slot_idx as i16,
+                        item: Some(left),
+                    };
+                } else {
+                    *action = ContainerAction::CreativeSetSlot {
+                        slot: slot_idx as i16,
+                        item: None,
+                    };
+                }
+            }
+        }
+    }
+}
+
+/// Renders Creative Inventory screen (2 Rows of Tabs, 9-column Item Grid, Search, Snug Width, Survival Hotbar).
 pub fn render_creative_inventory(
     ctx: &egui::Context,
     ui_state: &mut ContainerUiState,
@@ -1185,31 +1499,66 @@ pub fn render_creative_inventory(
         .resizable(false)
         .collapsible(false)
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .default_width(386.0)
+        .max_width(386.0)
         .frame(frame)
         .show(ctx, |ui| {
             ui.vertical(|ui| {
-                // Creative tabs bar
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::splat(2.0);
-                    let tabs = [
-                        (CreativeTab::BuildingBlocks, "Блоки"),
-                        (CreativeTab::DecorationBlocks, "Декор"),
-                        (CreativeTab::Redstone, "Редстоун"),
-                        (CreativeTab::Transportation, "Транспорт"),
-                        (CreativeTab::Miscellaneous, "Разное"),
-                        (CreativeTab::Food, "Еда"),
-                        (CreativeTab::Tools, "Инструменты"),
-                        (CreativeTab::Combat, "Оружие"),
-                        (CreativeTab::Brewing, "Зелья"),
-                        (CreativeTab::Materials, "Материалы"),
-                    ];
+                // Creative tabs in 2 rows of 5 buttons
+                let row1 = [
+                    (CreativeTab::BuildingBlocks, "Блоки"),
+                    (CreativeTab::DecorationBlocks, "Декор"),
+                    (CreativeTab::Redstone, "Редстоун"),
+                    (CreativeTab::Transportation, "Транспорт"),
+                    (CreativeTab::Miscellaneous, "Разное"),
+                ];
+                let row2 = [
+                    (CreativeTab::Food, "Еда"),
+                    (CreativeTab::Tools, "Инструменты"),
+                    (CreativeTab::Combat, "Оружие"),
+                    (CreativeTab::Brewing, "Зелья"),
+                    (CreativeTab::Materials, "Материалы"),
+                ];
 
-                    for (tab, label) in tabs {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::splat(3.0);
+                    for (tab, label) in row1 {
                         let is_active = ui_state.creative_tab == tab;
                         let btn = egui::Button::new(
-                            RichText::new(label).size(11.0).color(if is_active { COLOR_YELLOW } else { COLOR_WHITE }),
+                            RichText::new(label)
+                                .size(11.0)
+                                .color(if is_active { COLOR_YELLOW } else { COLOR_WHITE }),
                         )
-                        .fill(if is_active { Color32::from_rgb(50, 56, 70) } else { Color32::from_rgb(30, 32, 40) });
+                        .fill(if is_active {
+                            Color32::from_rgb(50, 56, 70)
+                        } else {
+                            Color32::from_rgb(30, 32, 40)
+                        })
+                        .min_size(Vec2::new(69.0, 22.0));
+
+                        if ui.add(btn).clicked() {
+                            ui_state.creative_tab = tab;
+                        }
+                    }
+                });
+
+                ui.add_space(3.0);
+
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::splat(3.0);
+                    for (tab, label) in row2 {
+                        let is_active = ui_state.creative_tab == tab;
+                        let btn = egui::Button::new(
+                            RichText::new(label)
+                                .size(11.0)
+                                .color(if is_active { COLOR_YELLOW } else { COLOR_WHITE }),
+                        )
+                        .fill(if is_active {
+                            Color32::from_rgb(50, 56, 70)
+                        } else {
+                            Color32::from_rgb(30, 32, 40)
+                        })
+                        .min_size(Vec2::new(69.0, 22.0));
 
                         if ui.add(btn).clicked() {
                             ui_state.creative_tab = tab;
@@ -1219,13 +1568,59 @@ pub fn render_creative_inventory(
 
                 ui.add_space(8.0);
 
-                // Search field
+                // Search field and trash can
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(4.0, 0.0);
                     ui.label(RichText::new("🔍").size(14.0));
                     let edit = TextEdit::singleline(&mut ui_state.creative_search)
-                        .desired_width(200.0)
+                        .desired_width(290.0)
                         .hint_text("Поиск предметов...");
                     ui.add(edit);
+
+                    // Trash Can button
+                    let (t_rect, t_resp) =
+                        ui.allocate_exact_size(Vec2::splat(26.0), egui::Sense::click());
+                    let painter = ui.painter();
+                    let is_t_hov = t_resp.hovered();
+                    let t_bg = if is_t_hov {
+                        Color32::from_rgb(85, 30, 30)
+                    } else {
+                        Color32::from_rgb(55, 22, 22)
+                    };
+                    painter.rect_filled(t_rect, CornerRadius::same(3), t_bg);
+                    painter.rect_stroke(
+                        t_rect,
+                        CornerRadius::same(3),
+                        Stroke::new(1.0_f32, Color32::from_rgb(100, 40, 40)),
+                        StrokeKind::Inside,
+                    );
+                    painter.text(
+                        t_rect.center(),
+                        Align2::CENTER_CENTER,
+                        "🗑",
+                        FontId::proportional(14.0),
+                        COLOR_WHITE,
+                    );
+                    let is_t_clicked = t_resp.clicked();
+                    if is_t_hov {
+                        t_resp.on_hover_text("Удалить предмет на курсоре (Shift: очистить хотбар)");
+                    }
+                    if is_t_clicked {
+                        if ui.input(|i| i.modifiers.shift) {
+                            container.carried_item = None;
+                            for s in 36..=44 {
+                                if container.slots[s].is_some() {
+                                    container.slots[s] = None;
+                                    action = ContainerAction::CreativeSetSlot {
+                                        slot: s as i16,
+                                        item: None,
+                                    };
+                                }
+                            }
+                        } else {
+                            container.carried_item = None;
+                        }
+                    }
                 });
 
                 ui.add_space(8.0);
@@ -1246,7 +1641,8 @@ pub fn render_creative_inventory(
                                 ui.spacing_mut().item_spacing = Vec2::splat(4.0);
                                 for &(item_id, damage) in row {
                                     let slot_size = Vec2::splat(36.0);
-                                    let (rect, resp) = ui.allocate_exact_size(slot_size, egui::Sense::click());
+                                    let (rect, resp) =
+                                        ui.allocate_exact_size(slot_size, egui::Sense::click());
                                     let painter = ui.painter();
                                     let is_hovered = resp.hovered();
 
@@ -1256,27 +1652,61 @@ pub fn render_creative_inventory(
                                         Color32::from_rgb(28, 30, 36)
                                     };
                                     painter.rect_filled(rect, CornerRadius::same(3), bg_col);
-                                    painter.rect_stroke(rect, CornerRadius::same(3), Stroke::new(1.0_f32, Color32::from_rgb(50, 54, 66)), StrokeKind::Inside);
+                                    painter.rect_stroke(
+                                        rect,
+                                        CornerRadius::same(3),
+                                        Stroke::new(1.0_f32, Color32::from_rgb(50, 54, 66)),
+                                        StrokeKind::Inside,
+                                    );
 
                                     let name = get_item_name(item_id, damage);
                                     let max_damage = get_item_max_damage(item_id);
-                                    if let Some(tex) = get_or_load_item_texture(ui.ctx(), item_id, damage, max_damage, &name) {
+                                    if let Some(tex) = get_or_load_item_texture(
+                                        ui.ctx(),
+                                        item_id,
+                                        damage,
+                                        max_damage,
+                                        &name,
+                                    ) {
                                         let icon_rect = rect.shrink(3.0);
-                                        painter.image(tex, icon_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+                                        painter.image(
+                                            tex,
+                                            icon_rect,
+                                            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                                            Color32::WHITE,
+                                        );
                                     }
 
-                                    let resp = if is_hovered {
+                                    let is_item_clicked = resp.clicked();
+                                    if is_hovered {
                                         resp.on_hover_ui(|ui| {
                                             let temp_slot = Slot::new(item_id, 1, damage, None);
                                             render_item_tooltip(ui, &temp_slot, &name, max_damage);
-                                        })
-                                    } else {
-                                        resp
-                                    };
+                                        });
+                                    }
 
-                                    if resp.clicked() {
+                                    if is_item_clicked {
                                         let stack_size = get_item_max_stack(item_id) as i8;
-                                        container.carried_item = Some(Slot::new(item_id, stack_size, damage, None));
+                                        if ui.input(|i| i.modifiers.shift) {
+                                            let mut target_slot = None;
+                                            for s in 36..=44 {
+                                                if container.slots[s].is_none() {
+                                                    target_slot = Some(s);
+                                                    break;
+                                                }
+                                            }
+                                            let slot_idx = target_slot.unwrap_or(36);
+                                            let new_slot =
+                                                Slot::new(item_id, stack_size, damage, None);
+                                            container.slots[slot_idx] = Some(new_slot.clone());
+                                            action = ContainerAction::CreativeSetSlot {
+                                                slot: slot_idx as i16,
+                                                item: Some(new_slot),
+                                            };
+                                        } else {
+                                            container.carried_item =
+                                                Some(Slot::new(item_id, stack_size, damage, None));
+                                        }
                                     }
                                 }
                             });
@@ -1292,22 +1722,7 @@ pub fn render_creative_inventory(
                     ui.spacing_mut().item_spacing = Vec2::splat(4.0);
                     for col in 0..9 {
                         let idx = 36 + col;
-                        render_slot(ui, container, idx, &mut action);
-                    }
-
-                    ui.add_space(10.0);
-
-                    // Trash Can slot (destroys carried item)
-                    let (t_rect, t_resp) = ui.allocate_exact_size(Vec2::splat(36.0), egui::Sense::click());
-                    let painter = ui.painter();
-                    painter.rect_filled(t_rect, CornerRadius::same(3), Color32::from_rgb(60, 25, 25));
-                    painter.rect_stroke(t_rect, CornerRadius::same(3), Stroke::new(1.0_f32, Color32::from_rgb(100, 40, 40)), StrokeKind::Inside);
-                    painter.text(t_rect.center(), Align2::CENTER_CENTER, "🗑", FontId::proportional(16.0), COLOR_WHITE);
-                    if t_resp.clicked() {
-                        container.carried_item = None;
-                    }
-                    if t_resp.hovered() {
-                        t_resp.on_hover_text("Удалить предмет на курсоре");
+                        render_creative_hotbar_slot(ui, container, idx, &mut action);
                     }
                 });
             });
@@ -1315,19 +1730,45 @@ pub fn render_creative_inventory(
 
     // Render carried item floating on cursor
     if let Some(ref carried) = container.carried_item {
-        let painter = ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("carried_item_creative_layer")));
+        let painter = ctx.layer_painter(LayerId::new(
+            Order::Tooltip,
+            Id::new("carried_item_creative_layer"),
+        ));
         if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
             let icon_rect = Rect::from_min_size(pos + Vec2::new(-16.0, -16.0), Vec2::splat(32.0));
             let name = get_item_name(carried.item_id, carried.item_damage);
             let max_damage = get_item_max_damage(carried.item_id);
-            if let Some(tex) = get_or_load_item_texture(ctx, carried.item_id, carried.item_damage, max_damage, &name) {
-                painter.image(tex, icon_rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
+            if let Some(tex) = get_or_load_item_texture(
+                ctx,
+                carried.item_id,
+                carried.item_damage,
+                max_damage,
+                &name,
+            ) {
+                painter.image(
+                    tex,
+                    icon_rect,
+                    Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+                    Color32::WHITE,
+                );
             }
             if carried.item_count > 1 {
                 let count_str = format!("{}", carried.item_count);
                 let text_pos = icon_rect.max + Vec2::new(-2.0, -2.0);
-                painter.text(text_pos + Vec2::new(1.0, 1.0), Align2::RIGHT_BOTTOM, &count_str, FontId::proportional(14.0), Color32::from_rgb(30, 30, 30));
-                painter.text(text_pos, Align2::RIGHT_BOTTOM, &count_str, FontId::proportional(14.0), COLOR_WHITE);
+                painter.text(
+                    text_pos + Vec2::new(1.0, 1.0),
+                    Align2::RIGHT_BOTTOM,
+                    &count_str,
+                    FontId::proportional(14.0),
+                    Color32::from_rgb(30, 30, 30),
+                );
+                painter.text(
+                    text_pos,
+                    Align2::RIGHT_BOTTOM,
+                    &count_str,
+                    FontId::proportional(14.0),
+                    COLOR_WHITE,
+                );
             }
         }
     }

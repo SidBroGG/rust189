@@ -1738,6 +1738,16 @@ impl App {
                         if let Ok(brand) = String::from_utf8(cp.data) {
                             info!(brand = %brand, "Received server brand");
                         }
+                    } else if cp.channel == "MC|TrList" {
+                        if let Ok((_win_id, recipes)) = world::MerchantTradeRecipe::decode_tr_list(&cp.data) {
+                            info!(count = recipes.len(), "Decoded villager trade recipes from MC|TrList");
+                            if let Some(sm) = &mut self.screen_manager {
+                                if let Some(ig) = &mut sm.in_game {
+                                    ig.container_ui_state.villager_trades = recipes;
+                                    ig.container_ui_state.villager_trade_idx = 0;
+                                }
+                            }
+                        }
                     }
                 }
                 ClientboundPlayPacket::ConfirmTransaction(_ct) => {
@@ -1936,6 +1946,9 @@ impl App {
                     info!(window_id = ow.window_id, kind = %ow.inventory_type, title = %ow.window_title, slots = ow.slot_count, "Opening container window");
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
+                            if ow.inventory_type != "minecraft:villager" {
+                                ig.container_ui_state.villager_trades.clear();
+                            }
                             let mut container = world::ContainerState::from_open_window(
                                 ow.window_id,
                                 &ow.inventory_type,
@@ -1956,6 +1969,7 @@ impl App {
                     info!(window_id = cw.window_id, "Closing container window from server");
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
+                            ig.container_ui_state.villager_trades.clear();
                             if ig.active_container.as_ref().map_or(false, |c| c.window_id == cw.window_id as u8) {
                                 ig.active_container = None;
                             }
@@ -3144,7 +3158,33 @@ impl ApplicationHandler for App {
                             }
                             gui::ContainerAction::CreativeSetSlot { slot, item } => {
                                 if let Some(s) = &self.session {
-                                    s.send(OutgoingPlayPacket::CreativeInventoryAction { slot, item });
+                                    s.send(OutgoingPlayPacket::CreativeInventoryAction {
+                                        slot,
+                                        item: item.clone(),
+                                    });
+                                }
+                                if let Some(sm) = &mut self.screen_manager {
+                                    if let Some(ig) = &mut sm.in_game {
+                                        let s_idx = slot as usize;
+                                        if s_idx < ig.player_inventory.slots.len() {
+                                            ig.player_inventory.slots[s_idx] = item.clone();
+                                        }
+                                        if let Some(ref mut c) = ig.active_container {
+                                            if s_idx < c.slots.len() {
+                                                c.slots[s_idx] = item.clone();
+                                            }
+                                        }
+                                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                            let item_info = slot_opt
+                                                .as_ref()
+                                                .filter(|s| s.item_id > 0 && s.item_count > 0)
+                                                .map(Self::get_item_info_from_slot);
+                                            self.hotbar_items[idx] = item_info.clone();
+                                            if idx == self.selected_hotbar_slot {
+                                                self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                            }
+                                        }
+                                    }
                                 }
                             }
                             gui::ContainerAction::Enchant { window_id, button } => {

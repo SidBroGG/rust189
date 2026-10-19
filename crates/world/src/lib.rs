@@ -14,7 +14,7 @@ pub mod tab_list;
 pub mod world;
 
 pub use inventory::{
-    match_crafting_2x2, match_crafting_3x3, ContainerKind, ContainerState,
+    match_crafting_2x2, match_crafting_3x3, ContainerKind, ContainerState, MerchantTradeRecipe,
 };
 pub use item::{
     get_creative_tab_items, get_item_def, get_item_max_damage, get_item_max_stack,

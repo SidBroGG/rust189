@@ -216,6 +216,7 @@ pub static ITEMS: &[ItemDef] = &[
     ItemDef::new(88, "soul_sand", "Песок душ", 64, 0, false, true, CreativeTab::BuildingBlocks),
     ItemDef::new(89, "glowstone", "Светокамень", 64, 0, false, true, CreativeTab::BuildingBlocks),
     ItemDef::new(91, "lit_pumpkin", "Светильник Джека", 64, 0, false, true, CreativeTab::BuildingBlocks),
+    ItemDef::new(95, "stained_glass", "Окрашенное стекло", 64, 0, true, true, CreativeTab::BuildingBlocks),
     ItemDef::new(96, "trapdoor", "Люк", 64, 0, false, true, CreativeTab::Redstone),
     ItemDef::new(98, "stonebrick", "Каменный кирпич", 64, 0, true, true, CreativeTab::BuildingBlocks),
     ItemDef::new(101, "iron_bars", "Железные прутья", 64, 0, false, true, CreativeTab::DecorationBlocks),
@@ -277,6 +278,18 @@ pub static ITEMS: &[ItemDef] = &[
     ItemDef::new(174, "packed_ice", "Плотный лёд", 64, 0, false, true, CreativeTab::BuildingBlocks),
     ItemDef::new(175, "double_plant", "Высокие растения", 64, 0, true, true, CreativeTab::DecorationBlocks),
     ItemDef::new(179, "red_sandstone", "Красный песчаник", 64, 0, true, true, CreativeTab::BuildingBlocks),
+    ItemDef::new(180, "red_sandstone_stairs", "Ступени из красного песчаника", 64, 0, false, true, CreativeTab::BuildingBlocks),
+    ItemDef::new(182, "stone_slab2", "Плита из красного песчаника", 64, 0, true, true, CreativeTab::BuildingBlocks),
+    ItemDef::new(183, "spruce_fence_gate", "Еловая калитка", 64, 0, false, true, CreativeTab::Redstone),
+    ItemDef::new(184, "birch_fence_gate", "Берёзовая калитка", 64, 0, false, true, CreativeTab::Redstone),
+    ItemDef::new(185, "jungle_fence_gate", "Калитка из тропического дерева", 64, 0, false, true, CreativeTab::Redstone),
+    ItemDef::new(186, "dark_oak_fence_gate", "Калитка из тёмного дуба", 64, 0, false, true, CreativeTab::Redstone),
+    ItemDef::new(187, "acacia_fence_gate", "Калитка из акации", 64, 0, false, true, CreativeTab::Redstone),
+    ItemDef::new(188, "spruce_fence", "Еловый забор", 64, 0, false, true, CreativeTab::DecorationBlocks),
+    ItemDef::new(189, "birch_fence", "Берёзовый забор", 64, 0, false, true, CreativeTab::DecorationBlocks),
+    ItemDef::new(190, "jungle_fence", "Забор из тропического дерева", 64, 0, false, true, CreativeTab::DecorationBlocks),
+    ItemDef::new(191, "dark_oak_fence", "Забор из тёмного дуба", 64, 0, false, true, CreativeTab::DecorationBlocks),
+    ItemDef::new(192, "acacia_fence", "Забор из акации", 64, 0, false, true, CreativeTab::DecorationBlocks),
 
     // --- Items (Tools, Weapons, Armor, Materials, Food) (IDs 256..431) ---
     ItemDef::tool(256, "iron_shovel", "Железная лопата", 250, 4.5),
@@ -515,11 +528,13 @@ pub fn get_subtype_name(item_id: i16, damage: i16) -> Option<&'static str> {
             2 => Some("Подзол"),
             _ => None,
         },
-        // Planks & Saplings & Logs & Leaves
-        5 | 6 | 17 | 18 => match damage & 3 {
+        // Planks & Saplings & Logs & Leaves & Slabs
+        5 | 6 | 17 | 18 | 126 => match damage & 7 {
             1 => Some("Ель"),
             2 => Some("Берёза"),
             3 => Some("Тропическое дерево"),
+            4 => Some("Акация"),
+            5 => Some("Тёмный дуб"),
             _ => Some("Дуб"),
         },
         // Sand
@@ -532,8 +547,38 @@ pub fn get_subtype_name(item_id: i16, damage: i16) -> Option<&'static str> {
             2 => Some("Гладкий песчаник"),
             _ => None,
         },
-        // Wool & Carpet & Stained Clay & Stained Glass
-        35 | 159 | 171 => match damage & 15 {
+        // Flowers
+        38 => match damage {
+            1 => Some("Синяя орхидея"),
+            2 => Some("Лук-батун"),
+            3 => Some("Хаустония серая"),
+            4 => Some("Красный тюльпан"),
+            5 => Some("Оранжевый тюльпан"),
+            6 => Some("Белый тюльпан"),
+            7 => Some("Розовый тюльпан"),
+            8 => Some("Ромашка"),
+            _ => Some("Мак"),
+        },
+        // Stone Slabs
+        44 => match damage & 7 {
+            1 => Some("Песчаниковая плита"),
+            2 => Some("Деревянная плита"),
+            3 => Some("Булыжная плита"),
+            4 => Some("Кирпичная плита"),
+            5 => Some("Плита из каменного кирпича"),
+            6 => Some("Незерская плита"),
+            7 => Some("Кварцевая плита"),
+            _ => Some("Каменная плита"),
+        },
+        // Stonebrick
+        98 => match damage {
+            1 => Some("Замшелый каменный кирпич"),
+            2 => Some("Потрескавшийся каменный кирпич"),
+            3 => Some("Резной каменный кирпич"),
+            _ => Some("Каменный кирпич"),
+        },
+        // Wool & Carpet & Stained Clay & Stained Glass & Stained Glass Pane & Banner
+        35 | 95 | 159 | 160 | 171 | 425 => match damage & 15 {
             0 => Some("Белый"),
             1 => Some("Оранжевый"),
             2 => Some("Пурпурный"),
@@ -551,12 +596,59 @@ pub fn get_subtype_name(item_id: i16, damage: i16) -> Option<&'static str> {
             14 => Some("Красный"),
             _ => Some("Чёрный"),
         },
+        // Cobblestone Wall
+        139 => match damage {
+            1 => Some("Замшелая булыжная ограда"),
+            _ => Some("Булыжная ограда"),
+        },
+        // Anvil
+        145 => match damage {
+            1 => Some("Повреждённая наковальня"),
+            2 => Some("Сильно повреждённая наковальня"),
+            _ => Some("Наковальня"),
+        },
+        // Quartz Block
+        155 => match damage {
+            1 => Some("Резной кварцевый блок"),
+            2 => Some("Колонный кварцевый блок"),
+            _ => Some("Кварцевый блок"),
+        },
+        // Prismarine
+        168 => match damage {
+            1 => Some("Призмариновый кирпич"),
+            2 => Some("Тёмный призмарин"),
+            _ => Some("Призмарин"),
+        },
+        // Double Plant
+        175 => match damage {
+            1 => Some("Сирень"),
+            2 => Some("Высокая трава"),
+            3 => Some("Большой папоротник"),
+            4 => Some("Розовый куст"),
+            5 => Some("Пион"),
+            _ => Some("Подсолнух"),
+        },
+        // Red Sandstone
+        179 => match damage {
+            1 => Some("Декоративный красный песчаник"),
+            2 => Some("Гладкий красный песчаник"),
+            _ => Some("Красный песчаник"),
+        },
+        // Coal
+        263 => match damage {
+            1 => Some("Древесный уголь"),
+            _ => Some("Уголь"),
+        },
         // Fish
-        349 | 350 => match damage {
-            1 => Some("Лосось"),
+        349 => match damage {
+            1 => Some("Сырой лосось"),
             2 => Some("Рыба-клоун"),
             3 => Some("Иглобрюх"),
-            _ => None,
+            _ => Some("Сырая рыба"),
+        },
+        350 => match damage {
+            1 => Some("Жареный лосось"),
+            _ => Some("Жареная рыба"),
         },
         // Dye
         351 => match damage & 15 {
@@ -579,6 +671,61 @@ pub fn get_subtype_name(item_id: i16, damage: i16) -> Option<&'static str> {
         },
         // Golden Apple
         322 => if damage == 1 { Some("Зачарованное золотое яблоко") } else { None },
+        // Potion
+        373 => match damage {
+            0 => Some("Колба воды"),
+            16 => Some("Неловкое зелье"),
+            8193 => Some("Зелье регенерации (0:45)"),
+            8194 => Some("Зелье стремительности (3:00)"),
+            8195 => Some("Зелье огнестойкости (3:00)"),
+            8196 => Some("Зелье отравления (0:45)"),
+            8197 => Some("Зелье исцеления"),
+            8198 => Some("Зелье ночного зрения (3:00)"),
+            8200 => Some("Зелье слабости (1:30)"),
+            8201 => Some("Зелье силы (3:00)"),
+            8202 => Some("Зелье замедления (1:30)"),
+            8204 => Some("Зелье урона"),
+            8205 => Some("Зелье подводного дыхания (3:00)"),
+            8206 => Some("Зелье невидимости (3:00)"),
+            16385 => Some("Взрывное зелье регенерации (0:33)"),
+            16386 => Some("Взрывное зелье стремительности (2:15)"),
+            16388 => Some("Взрывное зелье отравления (0:33)"),
+            16389 => Some("Взрывное зелье исцеления"),
+            16393 => Some("Взрывное зелье силы (2:15)"),
+            16396 => Some("Взрывное зелье урона"),
+            _ => None,
+        },
+        // Spawn Egg
+        383 => match damage {
+            50 => Some("Яйцо призыва: Крипер"),
+            51 => Some("Яйцо призыва: Скелет"),
+            52 => Some("Яйцо призыва: Паук"),
+            54 => Some("Яйцо призыва: Зомби"),
+            55 => Some("Яйцо призыва: Слизень"),
+            56 => Some("Яйцо призыва: Гаст"),
+            57 => Some("Яйцо призыва: Свинозомби"),
+            58 => Some("Яйцо призыва: Эндермен"),
+            59 => Some("Яйцо призыва: Пещерный паук"),
+            60 => Some("Яйцо призыва: Чешуйница"),
+            61 => Some("Яйцо призыва: Ифрит"),
+            62 => Some("Яйцо призыва: Лавовый куб"),
+            65 => Some("Яйцо призыва: Летучая мышь"),
+            66 => Some("Яйцо призыва: Ведьма"),
+            67 => Some("Яйцо призыва: Эндермит"),
+            68 => Some("Яйцо призыва: Страж"),
+            90 => Some("Яйцо призыва: Свинья"),
+            91 => Some("Яйцо призыва: Овца"),
+            92 => Some("Яйцо призыва: Корова"),
+            93 => Some("Яйцо призыва: Курица"),
+            94 => Some("Яйцо призыва: Спрут"),
+            95 => Some("Яйцо призыва: Волк"),
+            96 => Some("Яйцо призыва: Грибная корова"),
+            98 => Some("Яйцо призыва: Оцелот"),
+            100 => Some("Яйцо призыва: Лошадь"),
+            101 => Some("Яйцо призыва: Кролик"),
+            120 => Some("Яйцо призыва: Деревенский житель"),
+            _ => None,
+        },
         // Skull
         397 => match damage {
             1 => Some("Череп скелета-иссушителя"),
@@ -594,11 +741,14 @@ pub fn get_subtype_name(item_id: i16, damage: i16) -> Option<&'static str> {
 /// Returns user-friendly localized display name for an item stack.
 pub fn get_item_name(id: i16, damage: i16) -> String {
     if let Some(sub) = get_subtype_name(id, damage) {
-        if matches!(id, 35 | 159 | 171) {
+        if matches!(id, 35 | 95 | 159 | 160 | 171 | 425) {
             let base = get_item_def(id).map_or("Предмет", |i| i.display_name);
             return format!("{sub} {base}");
         }
-        if matches!(id, 5 | 6 | 17 | 18 | 322 | 351 | 397) {
+        if matches!(
+            id,
+            1 | 3 | 5 | 6 | 17 | 18 | 24 | 38 | 44 | 98 | 126 | 139 | 145 | 155 | 168 | 175 | 179 | 263 | 322 | 349 | 350 | 351 | 373 | 383 | 397
+        ) {
             return sub.to_string();
         }
     }
@@ -616,8 +766,8 @@ pub fn get_creative_tab_items(tab: CreativeTab) -> Vec<(i16, i16)> {
             continue;
         }
 
-        if item.id == 35 || item.id == 171 || item.id == 159 {
-            // Add all 16 wool/carpet colors
+        if matches!(item.id, 35 | 95 | 159 | 160 | 171 | 425) {
+            // Add all 16 colors
             for meta in 0..16 {
                 items.push((item.id, meta));
             }
@@ -625,22 +775,92 @@ pub fn get_creative_tab_items(tab: CreativeTab) -> Vec<(i16, i16)> {
             for meta in 0..=6 {
                 items.push((item.id, meta));
             }
-        } else if item.id == 5 || item.id == 6 || item.id == 17 {
+        } else if item.id == 3 {
+            for meta in 0..=2 {
+                items.push((item.id, meta));
+            }
+        } else if matches!(item.id, 5 | 6 | 17 | 126) {
             for meta in 0..=5 {
                 items.push((item.id, meta));
             }
-        } else if item.id == 351 {
-            // All 16 dyes
-            for meta in 0..16 {
+        } else if item.id == 12 {
+            items.push((item.id, 0));
+            items.push((item.id, 1));
+        } else if item.id == 18 {
+            for meta in 0..=3 {
                 items.push((item.id, meta));
             }
+        } else if item.id == 19 {
+            items.push((item.id, 0));
+            items.push((item.id, 1));
+        } else if item.id == 24 || item.id == 179 {
+            for meta in 0..=2 {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 38 {
+            for meta in 0..=8 {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 44 {
+            for meta in 0..=7 {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 98 {
+            for meta in 0..=3 {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 139 {
+            items.push((item.id, 0));
+            items.push((item.id, 1));
+        } else if item.id == 145 {
+            for meta in 0..=2 {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 155 || item.id == 168 {
+            for meta in 0..=2 {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 175 {
+            for meta in 0..=5 {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 263 {
+            items.push((item.id, 0));
+            items.push((item.id, 1));
+        } else if item.id == 322 {
+            items.push((item.id, 0));
+            items.push((item.id, 1));
         } else if item.id == 349 {
             for meta in 0..=3 {
                 items.push((item.id, meta));
             }
-        } else if item.id == 322 {
+        } else if item.id == 350 {
             items.push((item.id, 0));
             items.push((item.id, 1));
+        } else if item.id == 351 {
+            for meta in 0..16 {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 373 {
+            let potions = [
+                0, 16, 8193, 8194, 8195, 8196, 8197, 8198, 8200, 8201, 8202, 8204, 8205, 8206,
+                16385, 16386, 16388, 16389, 16393, 16396,
+            ];
+            for meta in potions {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 383 {
+            let eggs = [
+                50, 51, 52, 54, 55, 56, 57, 58, 59, 60, 61, 62, 65, 66, 67, 68, 90, 91, 92, 93,
+                94, 95, 96, 98, 100, 101, 120,
+            ];
+            for meta in eggs {
+                items.push((item.id, meta));
+            }
+        } else if item.id == 397 {
+            for meta in 0..=4 {
+                items.push((item.id, meta));
+            }
         } else {
             items.push((item.id, 0));
         }
