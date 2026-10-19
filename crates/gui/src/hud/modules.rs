@@ -1,6 +1,6 @@
 use super::data::{HudData, HudItemInfo};
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Shape, Stroke, Vec2,
+    Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, Vec2,
 };
 
 /// Content dimensions for each HUD widget at scale 1.0.
@@ -67,290 +67,43 @@ pub fn render_crosshair(painter: &Painter, rect: Rect) {
     painter.circle_filled(center, 0.8, Color32::WHITE);
 }
 
-fn get_block_face_colors(block_id: u16) -> (Color32, Color32, Color32, Option<Color32>) {
-    match block_id {
-        // Stone
-        1 => (Color32::from_rgb(145, 145, 145), Color32::from_rgb(115, 115, 115), Color32::from_rgb(85, 85, 85), None),
-        // Grass block: green top, dirt sides with green rim
-        2 => (Color32::from_rgb(112, 178, 65), Color32::from_rgb(120, 85, 55), Color32::from_rgb(90, 60, 40), Some(Color32::from_rgb(112, 178, 65))),
-        // Dirt
-        3 => (Color32::from_rgb(134, 96, 67), Color32::from_rgb(110, 78, 52), Color32::from_rgb(85, 60, 40), None),
-        // Cobblestone
-        4 => (Color32::from_rgb(125, 125, 125), Color32::from_rgb(98, 98, 98), Color32::from_rgb(72, 72, 72), None),
-        // Oak Wood Planks
-        5 => (Color32::from_rgb(186, 145, 93), Color32::from_rgb(155, 118, 72), Color32::from_rgb(120, 90, 52), None),
-        // Bedrock
-        7 => (Color32::from_rgb(60, 60, 60), Color32::from_rgb(45, 45, 45), Color32::from_rgb(30, 30, 30), None),
-        // Sand
-        12 => (Color32::from_rgb(222, 210, 155), Color32::from_rgb(190, 178, 125), Color32::from_rgb(155, 142, 95), None),
-        // Gravel
-        13 => (Color32::from_rgb(135, 130, 130), Color32::from_rgb(110, 105, 105), Color32::from_rgb(85, 80, 80), None),
-        // Gold Ore / Gold Block
-        14 | 41 => (Color32::from_rgb(255, 235, 75), Color32::from_rgb(220, 200, 50), Color32::from_rgb(180, 160, 30), None),
-        // Iron Ore / Iron Block
-        15 | 42 => (Color32::from_rgb(220, 220, 225), Color32::from_rgb(185, 185, 190), Color32::from_rgb(150, 150, 155), None),
-        // Coal Ore / Coal Block
-        16 | 173 => (Color32::from_rgb(45, 45, 48), Color32::from_rgb(35, 35, 38), Color32::from_rgb(25, 25, 28), None),
-        // Wood Log
-        17 => (Color32::from_rgb(180, 145, 95), Color32::from_rgb(105, 78, 48), Color32::from_rgb(80, 58, 35), None),
-        // Leaves
-        18 => (Color32::from_rgb(65, 125, 40), Color32::from_rgb(50, 100, 30), Color32::from_rgb(35, 75, 20), None),
-        // Glass
-        20 => (Color32::from_rgba_unmultiplied(190, 225, 255, 180), Color32::from_rgba_unmultiplied(160, 200, 235, 160), Color32::from_rgba_unmultiplied(130, 170, 210, 150), None),
-        // Lapis Block
-        22 => (Color32::from_rgb(35, 75, 160), Color32::from_rgb(25, 60, 135), Color32::from_rgb(18, 45, 105), None),
-        // Sandstone
-        24 => (Color32::from_rgb(220, 205, 150), Color32::from_rgb(190, 175, 120), Color32::from_rgb(155, 140, 95), None),
-        // Wool
-        35 => (Color32::from_rgb(235, 235, 235), Color32::from_rgb(205, 205, 205), Color32::from_rgb(175, 175, 175), None),
-        // Bricks
-        45 => (Color32::from_rgb(165, 75, 60), Color32::from_rgb(140, 60, 48), Color32::from_rgb(110, 45, 35), None),
-        // TNT
-        46 => (Color32::from_rgb(220, 50, 40), Color32::from_rgb(185, 40, 30), Color32::from_rgb(150, 30, 20), Some(Color32::WHITE)),
-        // Bookshelf
-        47 => (Color32::from_rgb(175, 135, 85), Color32::from_rgb(140, 90, 60), Color32::from_rgb(110, 70, 45), None),
-        // Moss Stone
-        48 => (Color32::from_rgb(105, 135, 95), Color32::from_rgb(85, 110, 75), Color32::from_rgb(65, 85, 55), None),
-        // Obsidian
-        49 => (Color32::from_rgb(30, 22, 45), Color32::from_rgb(22, 16, 35), Color32::from_rgb(15, 10, 25), None),
-        // Chest
-        54 => (Color32::from_rgb(170, 115, 45), Color32::from_rgb(140, 95, 35), Color32::from_rgb(110, 70, 25), Some(Color32::from_rgb(40, 40, 40))),
-        // Diamond Ore / Diamond Block
-        56 | 57 => (Color32::from_rgb(95, 240, 235), Color32::from_rgb(70, 195, 190), Color32::from_rgb(50, 150, 145), None),
-        // Crafting Table
-        58 => (Color32::from_rgb(180, 140, 90), Color32::from_rgb(130, 85, 50), Color32::from_rgb(100, 65, 38), None),
-        // Furnace
-        61 => (Color32::from_rgb(125, 125, 125), Color32::from_rgb(70, 70, 70), Color32::from_rgb(50, 50, 50), None),
-        // Netherrack
-        87 => (Color32::from_rgb(120, 45, 45), Color32::from_rgb(95, 32, 32), Color32::from_rgb(70, 20, 20), None),
-        // Soul Sand
-        88 => (Color32::from_rgb(85, 65, 55), Color32::from_rgb(68, 50, 40), Color32::from_rgb(50, 36, 28), None),
-        // Glowstone
-        89 => (Color32::from_rgb(235, 195, 95), Color32::from_rgb(205, 165, 75), Color32::from_rgb(175, 135, 55), None),
-        // Emerald Block
-        133 => (Color32::from_rgb(35, 225, 100), Color32::from_rgb(25, 180, 80), Color32::from_rgb(18, 140, 60), None),
-        // Quartz Block
-        155 => (Color32::from_rgb(240, 236, 230), Color32::from_rgb(215, 210, 200), Color32::from_rgb(185, 180, 170), None),
-        // Default Block
-        _ => (Color32::from_rgb(140, 140, 145), Color32::from_rgb(110, 110, 115), Color32::from_rgb(80, 80, 85), None),
-    }
-}
-
-#[inline]
-fn draw_polygon(painter: &Painter, points: Vec<Pos2>, fill: Color32) {
-    painter.add(Shape::convex_polygon(points, fill, Stroke::NONE));
-}
-
-fn render_block_icon(painter: &Painter, center: Pos2, block_id: i16, scale: f32) {
-    let r = 5.6 * scale;
-    let dx = r * 0.866;
-    let dy = r * 0.5;
-
-    let p_top = Pos2::new(center.x, center.y - r);
-    let p_tr = Pos2::new(center.x + dx, center.y - dy);
-    let p_tl = Pos2::new(center.x - dx, center.y - dy);
-    let p_cen = center;
-    let p_br = Pos2::new(center.x + dx, center.y + dy);
-    let p_bl = Pos2::new(center.x - dx, center.y + dy);
-    let p_bot = Pos2::new(center.x, center.y + r);
-
-    let (col_top, col_left, col_right, accent) = get_block_face_colors(block_id as u16);
-
-    // 1. Top face (illuminated)
-    draw_polygon(painter, vec![p_top, p_tr, p_cen, p_tl], col_top);
-
-    // 2. Left face (medium shaded)
-    draw_polygon(painter, vec![p_tl, p_cen, p_bot, p_bl], col_left);
-
-    // 3. Right face (dark shaded)
-    draw_polygon(painter, vec![p_cen, p_tr, p_br, p_bot], col_right);
-
-    // Accent decoration (e.g. Grass top rim, TNT stripe, Chest latch)
-    if let Some(acc) = accent {
-        if block_id == 2 {
-            let rim_h = 2.0 * scale;
-            draw_polygon(
-                painter,
-                vec![p_tl, p_cen, Pos2::new(p_cen.x, p_cen.y + rim_h), Pos2::new(p_tl.x, p_tl.y + rim_h)],
-                acc,
-            );
-            draw_polygon(
-                painter,
-                vec![p_cen, p_tr, Pos2::new(p_tr.x, p_tr.y + rim_h), Pos2::new(p_cen.x, p_cen.y + rim_h)],
-                acc,
-            );
-        } else if block_id == 46 {
-            let band_y = 1.8 * scale;
-            draw_polygon(
-                painter,
-                vec![
-                    Pos2::new(p_tl.x, p_tl.y + band_y),
-                    Pos2::new(p_cen.x, p_cen.y + band_y),
-                    Pos2::new(p_cen.x, p_cen.y + band_y + 1.8 * scale),
-                    Pos2::new(p_tl.x, p_tl.y + band_y + 1.8 * scale),
-                ],
-                acc,
-            );
-            draw_polygon(
-                painter,
-                vec![
-                    Pos2::new(p_cen.x, p_cen.y + band_y),
-                    Pos2::new(p_tr.x, p_tr.y + band_y),
-                    Pos2::new(p_tr.x, p_tr.y + band_y + 1.8 * scale),
-                    Pos2::new(p_cen.x, p_cen.y + band_y + 1.8 * scale),
-                ],
-                acc,
-            );
-        } else if block_id == 54 {
-            painter.rect_filled(
-                Rect::from_center_size(Pos2::new(center.x, center.y + 1.0 * scale), Vec2::new(1.8 * scale, 2.4 * scale)),
-                CornerRadius::ZERO,
-                acc,
-            );
-        }
-    }
-
-    // Outer edge crease lines
-    let edge_stroke = Stroke::new((0.8 * scale).max(0.5), Color32::from_rgba_unmultiplied(20, 20, 20, 80));
-    painter.line_segment([p_top, p_tr], edge_stroke);
-    painter.line_segment([p_tr, p_br], edge_stroke);
-    painter.line_segment([p_br, p_bot], edge_stroke);
-    painter.line_segment([p_bot, p_bl], edge_stroke);
-    painter.line_segment([p_bl, p_tl], edge_stroke);
-    painter.line_segment([p_tl, p_top], edge_stroke);
-    painter.line_segment([p_cen, p_top], edge_stroke);
-    painter.line_segment([p_cen, p_bl], edge_stroke);
-    painter.line_segment([p_cen, p_br], edge_stroke);
-}
-
-fn render_item_icon(painter: &Painter, slot_rect: Rect, item: &HudItemInfo, scale: f32, tick_counter: u64) {
+fn render_item_icon(
+    painter: &Painter,
+    slot_rect: Rect,
+    item: &HudItemInfo,
+    scale: f32,
+    tick_counter: u64,
+) {
     let center = slot_rect.center();
-    let cx = center.x;
-    let cy = center.y;
+    let icon_size = Vec2::splat(16.0 * scale);
+    let icon_rect = Rect::from_center_size(center, icon_size);
 
-    if item.item_id > 0 && item.item_id <= 255 {
-        render_block_icon(painter, center, item.item_id, scale);
+    let ctx = painter.ctx();
+    if let Some(tex_id) = crate::hud::item_textures::get_or_load_item_texture(
+        ctx,
+        item.item_id,
+        item.damage,
+        item.max_damage,
+        &item.name,
+    ) {
+        painter.image(
+            tex_id,
+            icon_rect,
+            Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0)),
+            Color32::WHITE,
+        );
     } else {
-        match item.item_id {
-            // Swords (Diamond 276, Iron 267, Stone 272, Gold 283, Wood 268)
-            267 | 268 | 272 | 276 | 283 => {
-                let (blade_col, blade_core, guard_col) = match item.item_id {
-                    276 => (Color32::from_rgb(76, 239, 232), Color32::from_rgb(155, 251, 255), Color32::from_rgb(40, 153, 149)),
-                    267 => (Color32::from_rgb(230, 230, 230), Color32::WHITE, Color32::from_rgb(160, 160, 160)),
-                    283 => (Color32::from_rgb(255, 229, 64), Color32::from_rgb(255, 248, 160), Color32::from_rgb(200, 168, 16)),
-                    272 => (Color32::from_rgb(140, 140, 140), Color32::from_rgb(180, 180, 180), Color32::from_rgb(90, 90, 90)),
-                    _ => (Color32::from_rgb(153, 102, 51), Color32::from_rgb(185, 135, 80), Color32::from_rgb(100, 65, 30)),
-                };
-                painter.line_segment(
-                    [Pos2::new(cx - 5.5 * scale, cy + 5.5 * scale), Pos2::new(cx - 2.5 * scale, cy + 2.5 * scale)],
-                    Stroke::new(2.2 * scale, Color32::from_rgb(110, 73, 39)),
-                );
-                painter.line_segment(
-                    [Pos2::new(cx - 4.5 * scale, cy + 1.0 * scale), Pos2::new(cx - 1.0 * scale, cy + 4.5 * scale)],
-                    Stroke::new(2.0 * scale, guard_col),
-                );
-                painter.line_segment(
-                    [Pos2::new(cx - 2.0 * scale, cy + 2.0 * scale), Pos2::new(cx + 5.5 * scale, cy - 5.5 * scale)],
-                    Stroke::new(2.8 * scale, blade_col),
-                );
-                painter.line_segment(
-                    [Pos2::new(cx - 1.2 * scale, cy + 1.2 * scale), Pos2::new(cx + 4.5 * scale, cy - 4.5 * scale)],
-                    Stroke::new(1.2 * scale, blade_core),
-                );
-            }
-            // Bow (261)
-            261 => {
-                let bow_col = Color32::from_rgb(138, 87, 40);
-                painter.line_segment([Pos2::new(cx + 3.0 * scale, cy - 6.0 * scale), Pos2::new(cx - 4.5 * scale, cy - 2.0 * scale)], Stroke::new(2.0 * scale, bow_col));
-                painter.line_segment([Pos2::new(cx - 4.5 * scale, cy - 2.0 * scale), Pos2::new(cx - 4.5 * scale, cy + 2.0 * scale)], Stroke::new(2.0 * scale, bow_col));
-                painter.line_segment([Pos2::new(cx - 4.5 * scale, cy + 2.0 * scale), Pos2::new(cx + 3.0 * scale, cy + 6.0 * scale)], Stroke::new(2.0 * scale, bow_col));
-                painter.line_segment([Pos2::new(cx + 3.0 * scale, cy - 6.0 * scale), Pos2::new(cx + 3.0 * scale, cy + 6.0 * scale)], Stroke::new(1.0 * scale, Color32::from_rgb(220, 220, 220)));
-            }
-            // Pickaxes (257, 270, 274, 278, 285)
-            257 | 270 | 274 | 278 | 285 => {
-                let head_col = match item.item_id {
-                    278 => Color32::from_rgb(76, 239, 232),
-                    257 => Color32::from_rgb(230, 230, 230),
-                    285 => Color32::from_rgb(255, 229, 64),
-                    _ => Color32::from_rgb(140, 140, 140),
-                };
-                painter.line_segment([Pos2::new(cx - 5.0 * scale, cy + 5.0 * scale), Pos2::new(cx + 3.0 * scale, cy - 3.0 * scale)], Stroke::new(1.8 * scale, Color32::from_rgb(110, 73, 39)));
-                painter.line_segment([Pos2::new(cx - 2.0 * scale, cy - 6.0 * scale), Pos2::new(cx + 3.0 * scale, cy - 3.0 * scale)], Stroke::new(2.4 * scale, head_col));
-                painter.line_segment([Pos2::new(cx + 3.0 * scale, cy - 3.0 * scale), Pos2::new(cx + 6.0 * scale, cy + 2.0 * scale)], Stroke::new(2.4 * scale, head_col));
-            }
-            // Axes (258, 271, 275, 279, 286)
-            258 | 271 | 275 | 279 | 286 => {
-                let head_col = match item.item_id {
-                    279 => Color32::from_rgb(76, 239, 232),
-                    258 => Color32::from_rgb(230, 230, 230),
-                    286 => Color32::from_rgb(255, 229, 64),
-                    _ => Color32::from_rgb(140, 140, 140),
-                };
-                painter.line_segment([Pos2::new(cx - 5.0 * scale, cy + 5.0 * scale), Pos2::new(cx + 3.0 * scale, cy - 3.0 * scale)], Stroke::new(1.8 * scale, Color32::from_rgb(110, 73, 39)));
-                draw_polygon(
-                    painter,
-                    vec![
-                        Pos2::new(cx + 1.0 * scale, cy - 5.5 * scale),
-                        Pos2::new(cx + 5.5 * scale, cy - 3.0 * scale),
-                        Pos2::new(cx + 3.0 * scale, cy),
-                        Pos2::new(cx, cy - 2.0 * scale),
-                    ],
-                    head_col,
-                );
-            }
-            // Shovels (256, 269, 273, 277, 284)
-            256 | 269 | 273 | 277 | 284 => {
-                let head_col = match item.item_id {
-                    277 => Color32::from_rgb(76, 239, 232),
-                    256 => Color32::from_rgb(230, 230, 230),
-                    284 => Color32::from_rgb(255, 229, 64),
-                    _ => Color32::from_rgb(140, 140, 140),
-                };
-                painter.line_segment([Pos2::new(cx - 5.0 * scale, cy + 5.0 * scale), Pos2::new(cx + 2.0 * scale, cy - 2.0 * scale)], Stroke::new(1.8 * scale, Color32::from_rgb(110, 73, 39)));
-                draw_polygon(
-                    painter,
-                    vec![
-                        Pos2::new(cx + 2.0 * scale, cy - 2.0 * scale),
-                        Pos2::new(cx + 6.0 * scale, cy - 4.5 * scale),
-                        Pos2::new(cx + 4.5 * scale, cy - 6.0 * scale),
-                    ],
-                    head_col,
-                );
-            }
-            // Golden Apple (322)
-            322 => {
-                painter.circle_filled(Pos2::new(cx, cy + 0.8 * scale), 4.2 * scale, Color32::from_rgb(255, 215, 0));
-                painter.line_segment([Pos2::new(cx, cy - 3.4 * scale), Pos2::new(cx + 1.8 * scale, cy - 5.5 * scale)], Stroke::new(1.5 * scale, Color32::from_rgb(90, 50, 20)));
-                painter.circle_filled(Pos2::new(cx - 1.2 * scale, cy - 0.5 * scale), 1.0 * scale, Color32::from_rgb(255, 248, 170));
-            }
-            // Ender Pearl (368)
-            368 => {
-                painter.circle_filled(center, 4.5 * scale, Color32::from_rgb(10, 45, 40));
-                painter.circle_filled(center, 3.8 * scale, Color32::from_rgb(22, 105, 92));
-                painter.circle_filled(Pos2::new(cx - 0.8 * scale, cy - 0.8 * scale), 1.8 * scale, Color32::from_rgb(60, 225, 185));
-                painter.circle_filled(Pos2::new(cx - 0.8 * scale, cy - 0.8 * scale), 0.7 * scale, Color32::WHITE);
-            }
-            // Potion (373)
-            373 => {
-                painter.rect_filled(Rect::from_center_size(Pos2::new(cx, cy - 5.2 * scale), Vec2::new(2.8 * scale, 1.4 * scale)), CornerRadius::ZERO, Color32::from_rgb(160, 110, 65));
-                painter.rect_filled(Rect::from_center_size(Pos2::new(cx, cy - 3.8 * scale), Vec2::new(2.0 * scale, 2.0 * scale)), CornerRadius::ZERO, Color32::from_rgba_unmultiplied(200, 220, 240, 200));
-                painter.circle_filled(Pos2::new(cx, cy + 1.2 * scale), 4.2 * scale, Color32::from_rgb(215, 40, 40));
-                painter.circle_stroke(Pos2::new(cx, cy + 1.2 * scale), 4.2 * scale, Stroke::new(1.0 * scale, Color32::from_rgba_unmultiplied(220, 235, 255, 180)));
-            }
-            // Default item
-            _ => {
-                painter.circle_filled(center, 4.5 * scale, Color32::from_rgb(60, 65, 80));
-                painter.circle_stroke(center, 4.5 * scale, Stroke::new(1.0 * scale, Color32::from_rgb(120, 125, 140)));
-                let initial = item.name.chars().next().unwrap_or('?').to_string();
-                painter.text(
-                    center,
-                    Align2::CENTER_CENTER,
-                    initial,
-                    FontId::monospace((7.5 * scale).max(5.0)),
-                    Color32::WHITE,
-                );
-            }
-        }
+        // Fallback placeholder if asset file is missing from disk
+        let bg_col = Color32::from_rgba_unmultiplied(60, 65, 80, 200);
+        painter.rect_filled(icon_rect, CornerRadius::same(2), bg_col);
+        let initial = item.name.chars().next().unwrap_or('?').to_string();
+        painter.text(
+            center,
+            Align2::CENTER_CENTER,
+            initial,
+            FontId::monospace((8.0 * scale).max(5.0)),
+            Color32::WHITE,
+        );
     }
 
     // Enchanted Item Glint: sweeping diagonal purple/magenta shimmer

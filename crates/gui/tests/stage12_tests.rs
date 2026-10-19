@@ -242,3 +242,38 @@ fn test_drop_item_action_and_localization() {
         _ => panic!("Expected DropItem output"),
     }
 }
+
+#[test]
+fn test_minecraft_item_asset_mapping_and_texture_loading() {
+    use gui::hud::{find_assets_dir, get_item_asset_path, get_or_load_item_texture};
+
+    // Check item asset paths
+    assert_eq!(get_item_asset_path(276, 0, "Diamond Sword"), Some("items/diamond_sword.png".to_string()));
+    assert_eq!(get_item_asset_path(260, 0, "Apple"), Some("items/apple.png".to_string()));
+    assert_eq!(get_item_asset_path(322, 0, "Golden Apple"), Some("items/apple_golden.png".to_string()));
+    assert_eq!(get_item_asset_path(368, 0, "Ender Pearl"), Some("items/ender_pearl.png".to_string()));
+    assert_eq!(get_item_asset_path(1, 0, "Stone"), Some("blocks/stone.png".to_string()));
+    assert_eq!(get_item_asset_path(2, 0, "Grass Block"), Some("blocks/grass_top.png".to_string()));
+    assert_eq!(get_item_asset_path(4, 0, "Cobblestone"), Some("blocks/cobblestone.png".to_string()));
+    assert_eq!(get_item_asset_path(46, 0, "TNT"), Some("blocks/tnt_side.png".to_string()));
+    assert_eq!(get_item_asset_path(2256, 0, "13 Disc"), Some("items/record_13.png".to_string()));
+
+    // Verify assets directory resolution
+    let assets_dir = find_assets_dir();
+    assert!(assets_dir.exists(), "Assets directory should exist: {:?}", assets_dir);
+
+    let sword_png = assets_dir.join("minecraft/textures/items/diamond_sword.png");
+    assert!(sword_png.exists(), "Diamond sword PNG should exist at {:?}", sword_png);
+
+    let stone_png = assets_dir.join("minecraft/textures/blocks/stone.png");
+    assert!(stone_png.exists(), "Stone PNG should exist at {:?}", stone_png);
+
+    // Verify egui texture loading and caching
+    let ctx = egui::Context::default();
+    let tex_id = get_or_load_item_texture(&ctx, 276, 0, 1561, "Diamond Sword");
+    assert!(tex_id.is_some(), "Should successfully load diamond sword texture into egui");
+
+    // Second call should return the cached texture
+    let tex_id_2 = get_or_load_item_texture(&ctx, 276, 42, 1561, "Diamond Sword");
+    assert_eq!(tex_id, tex_id_2, "Damaged tool should share the same cached texture ID");
+}

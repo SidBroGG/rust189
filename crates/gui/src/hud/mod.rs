@@ -2,6 +2,7 @@ pub mod data;
 pub mod editor;
 pub mod element;
 pub mod layout;
+pub mod item_textures;
 pub mod modules;
 
 pub use data::{HudBossBarInfo, HudData, HudItemInfo, HudPotionInfo};
@@ -11,6 +12,7 @@ pub use layout::{
     create_competitive_elements, create_default_elements, create_minimal_elements, HudLayoutConfig,
     COMPETITIVE_PROFILE_NAME, DEFAULT_PROFILE_NAME, MINIMAL_PROFILE_NAME,
 };
+pub use item_textures::{find_assets_dir, get_item_asset_path, get_or_load_item_texture};
 pub use modules::{
     compute_facing_direction, get_module_content_size, render_armor_status, render_boss_bar,
     render_coords_direction, render_crosshair, render_exp_bar, render_fps_ping, render_hotbar,
