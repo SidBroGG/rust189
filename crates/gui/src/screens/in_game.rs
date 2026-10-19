@@ -351,7 +351,6 @@ impl InGameScreen {
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        let mut chat_font_delta = 0.0_f32;
 
         for (id, elem) in &active_elements {
             if !elem.visible {
@@ -454,11 +453,6 @@ impl InGameScreen {
                     };
 
                     let title_x = rect.left() + pad_x + (content_w - final_title_galley.size().x).max(0.0) * 0.5;
-                    hud_painter.galley(
-                        Pos2::new(title_x + 1.0, title_y + 1.0),
-                        final_title_galley.clone(),
-                        Color32::from_black_alpha(180),
-                    );
                     hud_painter.galley(Pos2::new(title_x, title_y), final_title_galley, Color32::WHITE);
 
                     // Horizontal separator line underneath title
@@ -483,11 +477,6 @@ impl InGameScreen {
                         let val_x = rect.right() - pad_x - val_w;
 
                         hud_painter.galley(
-                            Pos2::new(val_x + 1.0, cur_y + 1.0),
-                            val_galley.clone(),
-                            Color32::from_black_alpha(180),
-                        );
-                        hud_painter.galley(
                             Pos2::new(val_x, cur_y),
                             val_galley,
                             Color32::from_rgb(255, 85, 85),
@@ -509,11 +498,6 @@ impl InGameScreen {
                         };
 
                         let entry_x = rect.left() + pad_x;
-                        hud_painter.galley(
-                            Pos2::new(entry_x + 1.0, cur_y + 1.0),
-                            final_entry_galley.clone(),
-                            Color32::from_black_alpha(180),
-                        );
                         hud_painter.galley(Pos2::new(entry_x, cur_y), final_entry_galley, Color32::WHITE);
 
                         cur_y += row_h;
@@ -524,13 +508,14 @@ impl InGameScreen {
                 let chat_font_size = self.hud_layout.chat_font_size.clamp(8.0, 28.0);
                 egui::Area::new(Id::new("chat_area"))
                     .fixed_pos(rect.min)
+                    .interactable(self.chat_opened)
                     .show(ctx, |ui| {
                         let chat_bg_alpha = if self.chat_opened { bg_alpha } else { (bg_alpha as f32 * 0.7) as u8 };
                         Frame::NONE
                             .fill(Color32::from_rgba_unmultiplied(16, 18, 24, chat_bg_alpha))
                             .stroke(Stroke::new(1.0_f32, elem_border_col))
-                            .corner_radius(CornerRadius::same(4))
-                            .inner_margin(egui::Margin::symmetric(8, 8))
+                            .corner_radius(CornerRadius::same(3))
+                            .inner_margin(egui::Margin::symmetric(2, 2))
                             .show(ui, |ui| {
                                 ui.set_width(rect.width());
 
@@ -605,7 +590,7 @@ impl InGameScreen {
                                         let edit = TextEdit::singleline(&mut self.chat_input)
                                             .hint_text("Press Enter to send, Tab to autocomplete...")
                                             .font(FontId::proportional(chat_font_size))
-                                            .desired_width((rect.width() - 150.0).max(60.0));
+                                            .desired_width((rect.width() - 8.0).max(60.0));
 
                                         let response = ui.add(edit);
                                         if self.request_chat_focus {
@@ -613,17 +598,8 @@ impl InGameScreen {
                                             self.request_chat_focus = false;
                                         }
 
-                                        // Chat font size buttons [A- 13px A+]
-                                        if ui.button("A-").on_hover_text("Decrease chat font size").clicked() {
-                                            chat_font_delta -= 1.0;
-                                        }
-                                        ui.label(RichText::new(format!("{:.0}", chat_font_size)).size(11.0).strong());
-                                        if ui.button("A+").on_hover_text("Increase chat font size").clicked() {
-                                            chat_font_delta += 1.0;
-                                        }
-
                                         if (response.lost_focus() && ctx.input(|i| i.key_pressed(Key::Enter)))
-                                            || ui.button("Send").clicked()
+                                            || ctx.input(|i| i.key_pressed(Key::Enter))
                                         {
                                             let trimmed = self.chat_input.trim().to_string();
                                             if !trimmed.is_empty() {
@@ -640,12 +616,6 @@ impl InGameScreen {
                 // All visual modules: Crosshair, Hotbar, Vitals, Exp Bar, Boss Bar, Keystrokes, FPS/Ping, Armor Status, Potions, Coords
                 render_module_by_id(&hud_painter, id, rect, &self.hud_data, self.tick_counter);
             }
-        }
-
-        if chat_font_delta != 0.0 {
-            self.hud_layout.chat_font_size =
-                (self.hud_layout.chat_font_size + chat_font_delta).clamp(8.0, 28.0);
-            let _ = self.hud_layout.save_to_file(&self.layout_path);
         }
 
         // 7. Tab List Overlay (when holding Tab key)

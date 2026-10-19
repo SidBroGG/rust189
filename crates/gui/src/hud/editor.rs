@@ -391,16 +391,6 @@ pub fn render_hud_editor(
                             elem.visible = !elem.visible;
                         }
 
-                        if sel_id == "chat" {
-                            ui.separator();
-                            ui.label("Font Size:");
-                            ui.add(
-                                Slider::new(&mut layout.chat_font_size, 8.0..=24.0)
-                                    .text("px")
-                                    .step_by(1.0),
-                            );
-                        }
-
                         if ui.button("✖").clicked() {
                             state.selected_id = None;
                         }

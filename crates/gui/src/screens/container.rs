@@ -4,7 +4,7 @@ use crate::theme::{
     COLOR_GREEN, COLOR_RED, COLOR_WHITE, COLOR_YELLOW,
 };
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Frame, Id, Key, LayerId, Layout, Order, Pos2,
+    Align2, Color32, CornerRadius, FontId, Frame, Id, Key, LayerId, Order, Pos2,
     Rect, RichText, ScrollArea, Stroke, StrokeKind, TextEdit, Vec2, Window,
 };
 use protocol::{Position, Slot};
@@ -159,21 +159,21 @@ pub fn render_container(
 
     let window_title = if container.title.is_empty() {
         match container.kind {
-            ContainerKind::Player => "Инвентарь".to_string(),
-            ContainerKind::Chest => "Одинарный сундук".to_string(),
-            ContainerKind::DoubleChest => "Двойной сундук".to_string(),
-            ContainerKind::EnderChest => "Сундук Края".to_string(),
-            ContainerKind::Workbench => "Верстак".to_string(),
-            ContainerKind::Furnace => "Печь".to_string(),
-            ContainerKind::Anvil => "Наковальня".to_string(),
-            ContainerKind::EnchantingTable => "Зачаровывание".to_string(),
-            ContainerKind::BrewingStand => "Зельеварение".to_string(),
-            ContainerKind::Dispenser => "Раздатчик".to_string(),
-            ContainerKind::Dropper => "Выбрасыватель".to_string(),
-            ContainerKind::Hopper => "Воронка".to_string(),
-            ContainerKind::Villager => "Торговля".to_string(),
-            ContainerKind::Beacon => "Маяк".to_string(),
-            ContainerKind::Horse => "Инвентарь лошади".to_string(),
+            ContainerKind::Player => "Inventory".to_string(),
+            ContainerKind::Chest => "Chest".to_string(),
+            ContainerKind::DoubleChest => "Large Chest".to_string(),
+            ContainerKind::EnderChest => "Ender Chest".to_string(),
+            ContainerKind::Workbench => "Crafting".to_string(),
+            ContainerKind::Furnace => "Furnace".to_string(),
+            ContainerKind::Anvil => "Repair & Name".to_string(),
+            ContainerKind::EnchantingTable => "Enchant".to_string(),
+            ContainerKind::BrewingStand => "Brewing Stand".to_string(),
+            ContainerKind::Dispenser => "Dispenser".to_string(),
+            ContainerKind::Dropper => "Dropper".to_string(),
+            ContainerKind::Hopper => "Hopper".to_string(),
+            ContainerKind::Villager => "Villager".to_string(),
+            ContainerKind::Beacon => "Beacon".to_string(),
+            ContainerKind::Horse => "Horse".to_string(),
         }
     } else {
         container.title.clone()
@@ -207,11 +207,6 @@ pub fn render_container(
                         )
                         .truncate(),
                     );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button(RichText::new("✕").size(14.0).color(COLOR_GRAY)).clicked() {
-                            action = ContainerAction::Close(container.window_id as i8);
-                        }
-                    });
                 });
                 ui.add_space(8.0);
 
@@ -406,14 +401,14 @@ fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i
     if let Some(d) = def {
         if d.attack_damage > 1.0 {
             ui.label(
-                RichText::new(format!("В руке: +{:.0} урона", d.attack_damage))
+                RichText::new(format!("When in main hand: +{:.0} Attack Damage", d.attack_damage))
                     .size(12.0)
                     .color(COLOR_GRAY),
             );
         }
         if d.armor_defense > 0 {
             ui.label(
-                RichText::new(format!("Броня: +{} защиты", d.armor_defense))
+                RichText::new(format!("+{} Armor", d.armor_defense))
                     .size(12.0)
                     .color(COLOR_GRAY),
             );
@@ -424,7 +419,7 @@ fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i
     if max_damage > 0 {
         let left = (max_damage - slot.item_damage).max(0);
         ui.label(
-            RichText::new(format!("Прочность: {} / {}", left, max_damage))
+            RichText::new(format!("Durability: {} / {}", left, max_damage))
                 .size(12.0)
                 .color(COLOR_GRAY),
         );
@@ -482,32 +477,32 @@ fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i
 
 fn get_enchantment_name(id: i16) -> &'static str {
     match id {
-        0 => "Защита",
-        1 => "Огнеупорность",
-        2 => "Невесомость",
-        3 => "Взрывоустойчивость",
-        4 => "Снарядостойкость",
-        5 => "Подводное дыхание",
-        6 => "Подводник",
-        7 => "Шипы",
-        8 => "Подводная ходьба",
-        16 => "Острота",
-        17 => "Небесная кара",
-        18 => "Гибель членистоногих",
-        19 => "Отдача",
-        20 => "Заговор огня",
-        21 => "Добыча",
-        32 => "Эффективность",
-        33 => "Шёлковое касание",
-        34 => "Прочность",
-        35 => "Удача",
-        48 => "Сила",
-        49 => "Опрокидывание",
-        50 => "Горящая стрела",
-        51 => "Бесконечность",
-        61 => "Морская удача",
-        62 => "Приманка",
-        _ => "Зачарование",
+        0 => "Protection",
+        1 => "Fire Protection",
+        2 => "Feather Falling",
+        3 => "Blast Protection",
+        4 => "Projectile Protection",
+        5 => "Respiration",
+        6 => "Aqua Affinity",
+        7 => "Thorns",
+        8 => "Depth Strider",
+        16 => "Sharpness",
+        17 => "Smite",
+        18 => "Bane of Arthropods",
+        19 => "Knockback",
+        20 => "Fire Aspect",
+        21 => "Looting",
+        32 => "Efficiency",
+        33 => "Silk Touch",
+        34 => "Unbreaking",
+        35 => "Fortune",
+        48 => "Power",
+        49 => "Punch",
+        50 => "Flame",
+        51 => "Infinity",
+        61 => "Luck of the Sea",
+        62 => "Lure",
+        _ => "Enchantment",
     }
 }
 
@@ -519,7 +514,7 @@ pub fn render_player_inventory_slots(
     action: &mut ContainerAction,
 ) {
     ui.add_space(8.0);
-    ui.label(RichText::new("Инвентарь").size(13.0).color(COLOR_GRAY));
+    ui.label(RichText::new("Inventory").size(13.0).color(COLOR_GRAY));
     ui.add_space(4.0);
 
     // 27 Main inventory slots (3 rows of 9)
@@ -581,7 +576,7 @@ fn render_player_inventory_body(
 
         // 2x2 Crafting Grid
         ui.vertical(|ui| {
-            ui.label(RichText::new("Создание").size(12.0).color(COLOR_GRAY));
+            ui.label(RichText::new("Crafting").size(12.0).color(COLOR_GRAY));
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::splat(4.0);
@@ -746,7 +741,7 @@ fn render_anvil_body(
 
     // Rename input box
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Название:").size(13.0).color(COLOR_GRAY));
+        ui.label(RichText::new("Name:").size(13.0).color(COLOR_GRAY));
         let edit = TextEdit::singleline(&mut ui_state.anvil_rename_text)
             .desired_width(220.0);
         if ui.add(edit).changed() {
@@ -782,7 +777,7 @@ fn render_anvil_body(
             COLOR_RED
         };
         ui.label(
-            RichText::new(format!("Стоимость зачарования: {} ур.", cost))
+            RichText::new(format!("Enchantment Cost: {} Levels", cost))
                 .size(13.0)
                 .color(col)
                 .strong(),
@@ -805,9 +800,9 @@ fn render_enchanting_body(
         // Item slot (0) and Lapis slot (1)
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing = Vec2::splat(6.0);
-            ui.label(RichText::new("Предмет").size(11.0).color(COLOR_GRAY));
+            ui.label(RichText::new("Item").size(11.0).color(COLOR_GRAY));
             render_slot(ui, container, 0, action);
-            ui.label(RichText::new("Лазурит").size(11.0).color(COLOR_GRAY));
+            ui.label(RichText::new("Lapis").size(11.0).color(COLOR_GRAY));
             render_slot(ui, container, 1, action);
         });
 
@@ -958,7 +953,7 @@ fn render_villager_body(
     ui.horizontal_top(|ui| {
         // Left section: Active trade + player inventory
         ui.vertical(|ui| {
-            ui.label(RichText::new("Сделка").size(12.0).color(COLOR_GRAY));
+            ui.label(RichText::new("Trade").size(12.0).color(COLOR_GRAY));
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
@@ -980,11 +975,11 @@ fn render_villager_body(
         // Right section: Trade offers sidebar
         ui.vertical(|ui| {
             ui.set_width(210.0);
-            ui.label(RichText::new("Варианты торговли").size(13.0).color(COLOR_GOLD).strong());
+            ui.label(RichText::new("Villager Trades").size(13.0).color(COLOR_GOLD).strong());
             ui.add_space(4.0);
 
             if ui_state.villager_trades.is_empty() {
-                ui.label(RichText::new("Список предложений пуст").size(12.0).color(COLOR_DARK_GRAY));
+                ui.label(RichText::new("No trades available").size(12.0).color(COLOR_DARK_GRAY));
             } else {
                 ScrollArea::vertical()
                     .max_height(240.0)
@@ -1065,9 +1060,9 @@ fn render_beacon_body(
 
         // Powers list
         ui.vertical(|ui| {
-            ui.label(RichText::new("Эффекты маяка").size(13.0).color(COLOR_GOLD));
+            ui.label(RichText::new("Beacon Effects").size(13.0).color(COLOR_GOLD));
             ui.horizontal(|ui| {
-                let powers = [("Скорость", 1), ("Спешка", 3), ("Сопротивление", 11), ("Прыгучесть", 8), ("Сила", 5)];
+                let powers = [("Speed", 1), ("Haste", 3), ("Resistance", 11), ("Jump Boost", 8), ("Strength", 5)];
                 for (name, id) in powers {
                     let sel = ui_state.beacon_primary == id;
                     let btn = egui::Button::new(RichText::new(name).size(11.0).color(if sel { COLOR_YELLOW } else { COLOR_WHITE }))
@@ -1081,9 +1076,9 @@ fn render_beacon_body(
 
         // Payment slot (0) & Confirm button
         ui.vertical(|ui| {
-            ui.label(RichText::new("Оплата").size(11.0).color(COLOR_GRAY));
+            ui.label(RichText::new("Payment").size(11.0).color(COLOR_GRAY));
             render_slot(ui, container, 0, action);
-            if ui.button(RichText::new("✔ Применить").size(12.0).color(COLOR_GREEN)).clicked() {
+            if ui.button(RichText::new("✔ Done").size(12.0).color(COLOR_GREEN)).clicked() {
                 let mut buf = bytes::BytesMut::new();
                 buf.extend_from_slice(&(ui_state.beacon_primary).to_be_bytes());
                 buf.extend_from_slice(&(ui_state.beacon_secondary).to_be_bytes());
@@ -1109,15 +1104,15 @@ fn render_horse_body(
 
         // Saddle & Armor
         ui.vertical(|ui| {
-            ui.label(RichText::new("Седло").size(11.0).color(COLOR_GRAY));
+            ui.label(RichText::new("Saddle").size(11.0).color(COLOR_GRAY));
             render_slot(ui, container, 0, action);
-            ui.label(RichText::new("Броня").size(11.0).color(COLOR_GRAY));
+            ui.label(RichText::new("Armor").size(11.0).color(COLOR_GRAY));
             render_slot(ui, container, 1, action);
         });
 
         // 15 Chest slots (3 rows of 5)
         ui.vertical(|ui| {
-            ui.label(RichText::new("Сундук лошади").size(11.0).color(COLOR_GRAY));
+            ui.label(RichText::new("Horse Chest").size(11.0).color(COLOR_GRAY));
             for row in 0..3 {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing = Vec2::splat(4.0);
@@ -1151,7 +1146,7 @@ fn render_sign_editor(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
         )
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("Редактирование таблички").size(16.0).color(COLOR_BLACK).strong());
+                ui.label(RichText::new("Edit Sign Message").size(16.0).color(COLOR_BLACK).strong());
                 ui.add_space(10.0);
 
                 for (i, line) in ui_state.sign_lines.iter_mut().enumerate() {
@@ -1159,13 +1154,13 @@ fn render_sign_editor(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
                         .desired_width(220.0)
                         .font(FontId::proportional(14.0))
                         .text_color(COLOR_BLACK)
-                        .hint_text(format!("Строка {}", i + 1));
+                        .hint_text(format!("Line {}", i + 1));
                     ui.add(edit);
                 }
 
                 ui.add_space(14.0);
 
-                if ui.button(RichText::new("Готово").size(14.0).color(COLOR_WHITE)).clicked() {
+                if ui.button(RichText::new("Done").size(14.0).color(COLOR_WHITE)).clicked() {
                     if let Some(pos) = ui_state.sign_pos.take() {
                         action = ContainerAction::UpdateSign {
                             position: pos,
@@ -1198,12 +1193,12 @@ fn render_book_screen(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
         .show(ctx, |ui| {
             ui.vertical(|ui| {
                 if ui_state.book_signing {
-                    ui.label(RichText::new("Введите название книги:").size(15.0).color(COLOR_BLACK).strong());
+                    ui.label(RichText::new("Enter book title:").size(15.0).color(COLOR_BLACK).strong());
                     ui.add_space(8.0);
                     ui.add(TextEdit::singleline(&mut ui_state.book_title).desired_width(240.0));
                     ui.add_space(14.0);
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Подписать и закрыть").size(13.0).color(COLOR_WHITE)).clicked() {
+                        if ui.button(RichText::new("Sign and Close").size(13.0).color(COLOR_WHITE)).clicked() {
                             ui_state.book_open = false;
                             ui_state.book_signing = false;
                             // Send MC|BSign
@@ -1218,7 +1213,7 @@ fn render_book_screen(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
                                 data: buf.to_vec(),
                             };
                         }
-                        if ui.button(RichText::new("Отмена").size(13.0).color(COLOR_GRAY)).clicked() {
+                        if ui.button(RichText::new("Cancel").size(13.0).color(COLOR_GRAY)).clicked() {
                             ui_state.book_signing = false;
                         }
                     });
@@ -1227,7 +1222,7 @@ fn render_book_screen(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
                     let cur = ui_state.book_page_idx;
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("Страница {} из {}", cur + 1, total_pages)).size(12.0).color(COLOR_DARK_GRAY));
+                        ui.label(RichText::new(format!("Page {} of {}", cur + 1, total_pages)).size(12.0).color(COLOR_DARK_GRAY));
                     });
                     ui.add_space(6.0);
 
@@ -1246,10 +1241,10 @@ fn render_book_screen(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
 
                     // Navigation buttons
                     ui.horizontal(|ui| {
-                        if ui.button(RichText::new("◀ Пред.").size(12.0)).clicked() && cur > 0 {
+                        if ui.button(RichText::new("◀ Prev").size(12.0)).clicked() && cur > 0 {
                             ui_state.book_page_idx -= 1;
                         }
-                        if ui.button(RichText::new("След. ▶").size(12.0)).clicked() {
+                        if ui.button(RichText::new("Next ▶").size(12.0)).clicked() {
                             if cur + 1 < total_pages {
                                 ui_state.book_page_idx += 1;
                             } else if total_pages < 50 {
@@ -1260,10 +1255,10 @@ fn render_book_screen(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
 
                         ui.add_space(16.0);
 
-                        if ui.button(RichText::new("Подписать").size(12.0)).clicked() {
+                        if ui.button(RichText::new("Sign").size(12.0)).clicked() {
                             ui_state.book_signing = true;
                         }
-                        if ui.button(RichText::new("Готово").size(12.0)).clicked() {
+                        if ui.button(RichText::new("Done").size(12.0)).clicked() {
                             ui_state.book_open = false;
                             // Send MC|BEdit
                             let mut buf = bytes::BytesMut::new();
@@ -1506,18 +1501,18 @@ pub fn render_creative_inventory(
             ui.vertical(|ui| {
                 // Creative tabs in 2 rows of 5 buttons
                 let row1 = [
-                    (CreativeTab::BuildingBlocks, "Блоки"),
-                    (CreativeTab::DecorationBlocks, "Декор"),
-                    (CreativeTab::Redstone, "Редстоун"),
-                    (CreativeTab::Transportation, "Транспорт"),
-                    (CreativeTab::Miscellaneous, "Разное"),
+                    (CreativeTab::BuildingBlocks, "Building Blocks"),
+                    (CreativeTab::DecorationBlocks, "Decoration"),
+                    (CreativeTab::Redstone, "Redstone"),
+                    (CreativeTab::Transportation, "Transportation"),
+                    (CreativeTab::Miscellaneous, "Miscellaneous"),
                 ];
                 let row2 = [
-                    (CreativeTab::Food, "Еда"),
-                    (CreativeTab::Tools, "Инструменты"),
-                    (CreativeTab::Combat, "Оружие"),
-                    (CreativeTab::Brewing, "Зелья"),
-                    (CreativeTab::Materials, "Материалы"),
+                    (CreativeTab::Food, "Foodstuffs"),
+                    (CreativeTab::Tools, "Tools"),
+                    (CreativeTab::Combat, "Combat"),
+                    (CreativeTab::Brewing, "Brewing"),
+                    (CreativeTab::Materials, "Materials"),
                 ];
 
                 ui.horizontal(|ui| {
@@ -1574,7 +1569,7 @@ pub fn render_creative_inventory(
                     ui.label(RichText::new("🔍").size(14.0));
                     let edit = TextEdit::singleline(&mut ui_state.creative_search)
                         .desired_width(290.0)
-                        .hint_text("Поиск предметов...");
+                        .hint_text("Search Items...");
                     ui.add(edit);
 
                     // Trash Can button
@@ -1603,7 +1598,7 @@ pub fn render_creative_inventory(
                     );
                     let is_t_clicked = t_resp.clicked();
                     if is_t_hov {
-                        t_resp.on_hover_text("Удалить предмет на курсоре (Shift: очистить хотбар)");
+                        t_resp.on_hover_text("Delete item on cursor (Shift: clear hotbar)");
                     }
                     if is_t_clicked {
                         if ui.input(|i| i.modifiers.shift) {
@@ -1715,7 +1710,7 @@ pub fn render_creative_inventory(
 
                 // Hotbar section (slots 36..45)
                 ui.add_space(8.0);
-                ui.label(RichText::new("Панель быстрого доступа").size(12.0).color(COLOR_GRAY));
+                ui.label(RichText::new("Hotbar").size(12.0).color(COLOR_GRAY));
                 ui.add_space(4.0);
 
                 ui.horizontal(|ui| {

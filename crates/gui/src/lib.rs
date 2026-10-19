@@ -23,7 +23,7 @@ pub use keybinds::{
 };
 pub use scale::ScaledResolution;
 pub use screens::{
-    AudioSettings, ContainerAction, ContainerUiState, GuiOutput, InGameAction, InGameScreen,
+    AudioSettings, ChatSettings, ContainerAction, ContainerUiState, GuiOutput, InGameAction, InGameScreen,
     KeybindsSettings, MainMenuScreen, MultiplayerScreen, NametagInfo, ScreenManager,
     SettingsScreen, VideoSettings,
 };

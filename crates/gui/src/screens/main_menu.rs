@@ -3,7 +3,7 @@ use crate::i18n::{t, Language};
 use crate::screens::server_dialog::{
     render_server_dialog, ServerDialogResult, ServerDialogState,
 };
-use crate::screens::settings::{AudioSettings, KeybindsSettings, SettingsAction, SettingsScreen, VideoSettings};
+use crate::screens::settings::{AudioSettings, ChatSettings, KeybindsSettings, SettingsAction, SettingsScreen, VideoSettings};
 use crate::servers::{load_servers_dat, ping_server_async, save_servers_dat, ServerEntry, ServerPingResult};
 use crate::theme::parse_minecraft_text;
 use egui::{
@@ -49,6 +49,7 @@ impl MainMenuScreen {
         video: VideoSettings,
         audio: AudioSettings,
         keybinds: KeybindsSettings,
+        chat: ChatSettings,
     ) -> Self {
         let servers = load_servers_dat(&servers_dat_path);
         let (ping_tx, ping_rx) = channel();
@@ -61,7 +62,7 @@ impl MainMenuScreen {
             servers_dat_path,
             modal_mode: ModalMode::None,
             dialog_state: ServerDialogState::default(),
-            settings_screen: SettingsScreen::new(language, video, audio, keybinds),
+            settings_screen: SettingsScreen::new(language, video, audio, keybinds, chat),
             ping_tx,
             ping_rx,
         };
@@ -118,7 +119,7 @@ impl MainMenuScreen {
     pub fn render(
         &mut self,
         ctx: &Context,
-        out_settings: &mut Option<(Language, VideoSettings, AudioSettings, KeybindsSettings)>,
+        out_settings: &mut Option<(Language, VideoSettings, AudioSettings, KeybindsSettings, ChatSettings)>,
     ) -> MainMenuAction {
         self.poll_pings();
         let mut action = MainMenuAction::None;
@@ -422,6 +423,7 @@ impl MainMenuScreen {
                         self.settings_screen.video.clone(),
                         self.settings_screen.audio.clone(),
                         self.settings_screen.keybinds.clone(),
+                        self.settings_screen.chat.clone(),
                     ));
                     self.modal_mode = ModalMode::None;
                 }

@@ -81,7 +81,7 @@ impl Scoreboard {
             .scores
             .iter()
             .filter(|((o, _), _)| o == objective_name)
-            .map(|((_, entry), &val)| (entry.clone(), val))
+            .map(|((_, entry), &val)| (self.format_player_name(entry), val))
             .collect();
 
         // Sort by score descending; if equal, by entry name

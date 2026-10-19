@@ -9,7 +9,7 @@ pub use container::{render_container, render_creative_inventory, ContainerAction
 pub use in_game::{InGameAction, InGameScreen, NametagInfo};
 pub use main_menu::{MainMenuAction, MainMenuScreen, ModalMode};
 pub use multiplayer::{MultiplayerAction, MultiplayerScreen};
-pub use settings::{AudioSettings, KeybindsSettings, SettingsAction, SettingsScreen, VideoSettings};
+pub use settings::{AudioSettings, ChatSettings, KeybindsSettings, SettingsAction, SettingsScreen, VideoSettings};
 
 use crate::i18n::Language;
 use std::path::PathBuf;
@@ -28,6 +28,7 @@ pub enum GuiOutput {
         video: VideoSettings,
         audio: AudioSettings,
         keybinds: KeybindsSettings,
+        chat: ChatSettings,
     },
     None,
 }
@@ -46,6 +47,7 @@ impl ScreenManager {
         video: VideoSettings,
         audio: AudioSettings,
         keybinds: KeybindsSettings,
+        chat: ChatSettings,
     ) -> Self {
         let last_reported_nickname = nickname.clone();
         Self {
@@ -56,6 +58,7 @@ impl ScreenManager {
                 video,
                 audio,
                 keybinds,
+                chat,
             ),
             in_game: None,
             last_reported_nickname,
@@ -67,6 +70,7 @@ impl ScreenManager {
         screen.language = self.main_menu.language;
         screen.toggle_fps_key = self.main_menu.settings_screen.keybinds.toggle_fps.clone();
         screen.inventory_key = self.main_menu.settings_screen.keybinds.inventory.clone();
+        screen.hud_layout.chat_font_size = self.main_menu.settings_screen.chat.font_size;
         self.in_game = Some(screen);
         self.main_menu.modal_mode = main_menu::ModalMode::None;
     }
@@ -112,7 +116,6 @@ impl ScreenManager {
             return ig.escape_menu_opened
                 || ig.chat_opened
                 || ig.hud_editor_opened
-                || ig.hud_data.health <= 0.0
                 || ig.active_container.is_some()
                 || ig.inventory_opened
                 || ig.container_ui_state.sign_pos.is_some()
@@ -138,7 +141,10 @@ impl ScreenManager {
                     let video = self.main_menu.settings_screen.video.clone();
                     let audio = self.main_menu.settings_screen.audio.clone();
                     let keybinds = self.main_menu.settings_screen.keybinds.clone();
+                    let chat = self.main_menu.settings_screen.chat.clone();
                     in_game.language = language;
+                    in_game.hud_layout.chat_font_size = chat.font_size;
+                    let _ = in_game.hud_layout.save_to_file(&in_game.layout_path);
                     in_game.toggle_fps_key = keybinds.toggle_fps.clone();
                     in_game.inventory_key = keybinds.inventory.clone();
                     in_game.escape_menu_opened = true;
@@ -149,6 +155,7 @@ impl ScreenManager {
                         video,
                         audio,
                         keybinds,
+                        chat,
                     };
                 }
 
@@ -187,12 +194,13 @@ impl ScreenManager {
         let action = self.main_menu.render(ctx, &mut out_settings);
 
         // Check if settings were updated in the settings modal
-        if let Some((language, video, audio, keybinds)) = out_settings {
+        if let Some((language, video, audio, keybinds, chat)) = out_settings {
             return GuiOutput::SettingsUpdated {
                 language,
                 video,
                 audio,
                 keybinds,
+                chat,
             };
         }
 

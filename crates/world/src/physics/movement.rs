@@ -439,12 +439,6 @@ impl PlayerMovement {
             }
         }
 
-        // Landing disables flying (MCP `EntityPlayerSP` line 904)
-        if self.on_ground && self.capabilities.is_flying {
-            self.capabilities.is_flying = false;
-            self.abilities_dirty = true;
-        }
-
         self.check_environment(world);
 
         let mut strafe = input.move_strafe;
@@ -673,6 +667,12 @@ impl PlayerMovement {
             f1_pitch = 0.0;
         }
         self.camera_pitch += (f1_pitch - self.camera_pitch) * 0.8;
+
+        // Landing disables flying in creative mode (MCP `EntityPlayerSP` line 904)
+        if self.on_ground && self.capabilities.is_flying && self.capabilities.is_creative {
+            self.capabilities.is_flying = false;
+            self.abilities_dirty = true;
+        }
     }
 
     /// Minecraft `Entity.moveFlying` angle acceleration with 45-degree normalization.

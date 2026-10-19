@@ -418,9 +418,6 @@ impl App {
     }
 
     pub fn is_cursor_needed(&self) -> bool {
-        if self.player_health <= 0.0 {
-            return true;
-        }
         self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed())
     }
 
@@ -1226,8 +1223,7 @@ impl App {
                         }
                     }
 
-                    // Reset movement keys and mining states on teleport to avoid walking into anticheat setbacks
-                    self.pressed_keys.clear();
+                    // Reset mining and item usage states on teleport to avoid walking into anticheat setbacks
                     self.is_left_clicking = false;
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
@@ -1767,6 +1763,18 @@ impl App {
                     self.player.capabilities.is_creative = pa.creative_mode;
                     self.player.capabilities.fly_speed = pa.fly_speed;
                     self.player.capabilities.walk_speed = pa.walk_speed;
+                    self.player.abilities_dirty = false;
+                    if pa.is_flying || pa.allow_flying {
+                        self.death_time = 0;
+                        if !self.is_cursor_needed() {
+                            if let Some(w) = &self.window {
+                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                w.set_cursor_visible(false);
+                                self.mouse_grabbed = true;
+                            }
+                        }
+                    }
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.is_creative = pa.creative_mode;
@@ -1852,10 +1860,12 @@ impl App {
 
                     if self.player_health <= 0.0 {
                         self.death_time = 0;
-                        if let Some(w) = &self.window {
-                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
-                            w.set_cursor_visible(true);
-                            self.mouse_grabbed = false;
+                        if !self.player.capabilities.is_flying && !self.player.capabilities.allow_flying {
+                            if let Some(w) = &self.window {
+                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                w.set_cursor_visible(true);
+                                self.mouse_grabbed = false;
+                            }
                         }
                         if let Some(sm) = &mut self.screen_manager {
                             if let Some(ig) = &mut sm.in_game {
@@ -1878,10 +1888,12 @@ impl App {
                             self.max_hurt_time = 10;
                             self.player_health = 0.0;
                             self.death_time = 0;
-                            if let Some(w) = &self.window {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
-                                w.set_cursor_visible(true);
-                                self.mouse_grabbed = false;
+                            if !self.player.capabilities.is_flying && !self.player.capabilities.allow_flying {
+                                if let Some(w) = &self.window {
+                                    let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                    w.set_cursor_visible(true);
+                                    self.mouse_grabbed = false;
+                                }
                             }
                             if let Some(sm) = &mut self.screen_manager {
                                 if let Some(ig) = &mut sm.in_game {
@@ -2194,12 +2206,7 @@ impl App {
             }
 
             let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-            let (player_chunk_x, player_chunk_z) = world::World::chunk_coords(
-                self.player.pos.x.floor() as i32,
-                self.player.pos.z.floor() as i32,
-            );
-            let is_chunk_loaded = self.world.is_chunk_loaded(player_chunk_x, player_chunk_z);
-            let can_simulate_physics = (self.has_spawned && is_chunk_loaded) || (self.session.is_none() && is_in_game);
+            let can_simulate_physics = self.has_spawned || (self.session.is_none() && is_in_game);
             let prev_sprint = self.player.is_sprinting;
             let prev_sneak = self.player.is_sneaking;
 
@@ -2432,8 +2439,8 @@ impl App {
                         }
                     }
                 }
-            } else if self.session.is_some() {
-                // In multiplayer, freeze motion while waiting for current chunk terrain to load or before spawn (MCP parity)
+            } else if self.session.is_some() && !self.has_spawned {
+                // In multiplayer, freeze motion only before initial spawn (MCP parity)
                 self.player.motion = glam::DVec3::ZERO;
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                 self.player_look = (self.player.yaw, self.player.pitch);
@@ -2507,6 +2514,7 @@ impl ApplicationHandler for App {
             (&self.config.video).into(),
             (&self.config.audio).into(),
             (&self.config.keybinds).into(),
+            (&self.config.chat).into(),
         );
 
         let atlas = Arc::new(TextureAtlas::build(Path::new("assets/minecraft/textures/blocks")));
@@ -3162,6 +3170,7 @@ impl ApplicationHandler for App {
                         video,
                         audio,
                         keybinds,
+                        chat,
                     } => {
                         let prev_vsync = self.config.video.vsync;
                         let prev_fullscreen = self.config.video.fullscreen;
@@ -3170,6 +3179,7 @@ impl ApplicationHandler for App {
                         self.config.video = (&video).into();
                         self.config.audio = (&audio).into();
                         self.config.keybinds = (&keybinds).into();
+                        self.config.chat = (&chat).into();
                         self.camera.fov = self.config.video.fov;
 
                         let gpu = self.gpu.as_mut().unwrap();

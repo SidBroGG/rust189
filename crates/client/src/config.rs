@@ -8,6 +8,8 @@ use std::path::Path;
 pub struct ClientConfig {
     #[serde(default)]
     pub general: GeneralConfig,
+    #[serde(default)]
+    pub chat: ChatConfig,
     pub auth: AuthConfig,
     pub video: VideoConfig,
     pub audio: AudioConfig,
@@ -21,6 +23,7 @@ impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             general: GeneralConfig::default(),
+            chat: ChatConfig::default(),
             auth: AuthConfig::default(),
             video: VideoConfig::default(),
             audio: AudioConfig::default(),
@@ -72,13 +75,32 @@ pub struct GeneralConfig {
 }
 
 fn default_language() -> String {
-    "ru_RU".to_string()
+    "en_US".to_string()
 }
 
 impl Default for GeneralConfig {
     fn default() -> Self {
         Self {
             language: default_language(),
+        }
+    }
+}
+
+/// In-game chat settings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatConfig {
+    #[serde(default = "default_chat_font_size")]
+    pub font_size: f32,
+}
+
+fn default_chat_font_size() -> f32 {
+    13.0
+}
+
+impl Default for ChatConfig {
+    fn default() -> Self {
+        Self {
+            font_size: default_chat_font_size(),
         }
     }
 }
@@ -412,6 +434,22 @@ impl From<&gui::KeybindsSettings> for KeybindsConfig {
     }
 }
 
+impl From<&ChatConfig> for gui::ChatSettings {
+    fn from(c: &ChatConfig) -> Self {
+        Self {
+            font_size: c.font_size,
+        }
+    }
+}
+
+impl From<&gui::ChatSettings> for ChatConfig {
+    fn from(s: &gui::ChatSettings) -> Self {
+        Self {
+            font_size: s.font_size,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,5 +534,9 @@ mod tests {
         let gui_keybinds: gui::KeybindsSettings = (&config.keybinds).into();
         let back_keybinds: KeybindsConfig = (&gui_keybinds).into();
         assert_eq!(config.keybinds, back_keybinds);
+
+        let gui_chat: gui::ChatSettings = (&config.chat).into();
+        let back_chat: ChatConfig = (&gui_chat).into();
+        assert_eq!(config.chat, back_chat);
     }
 }

@@ -3,9 +3,9 @@ use serde::{Deserialize, Serialize};
 /// Supported client languages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Language {
-    #[default]
     #[serde(rename = "ru_RU")]
     Russian,
+    #[default]
     #[serde(rename = "en_US")]
     English,
 }
@@ -87,7 +87,10 @@ fn translate_ru<'a>(key: &'a str) -> &'a str {
         "settings.tab_video" => "🖥 Графика",
         "settings.tab_controls" => "⌨ Управление",
         "settings.tab_audio" => "🔊 Звук",
+        "settings.tab_chat" => "💬 Чат",
         "settings.tab_language" => "🌐 Язык",
+        "settings.chat_font_size" => "Размер шрифта чата:",
+        "settings.chat_font_size_desc" => "Настройка размера шрифта для всех входящих сообщений и строки ввода чата.",
         "settings.done" => "Готово",
 
         // Video tab
@@ -206,7 +209,10 @@ fn translate_en<'a>(key: &'a str) -> &'a str {
         "settings.tab_video" => "🖥 Video",
         "settings.tab_controls" => "⌨ Controls",
         "settings.tab_audio" => "🔊 Audio",
+        "settings.tab_chat" => "💬 Chat",
         "settings.tab_language" => "🌐 Language",
+        "settings.chat_font_size" => "Chat Font Size:",
+        "settings.chat_font_size_desc" => "Configures the font size for all incoming messages and the chat input line.",
         "settings.done" => "Done",
 
         // Video tab

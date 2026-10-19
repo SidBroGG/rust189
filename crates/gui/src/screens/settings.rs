@@ -1,6 +1,6 @@
 use crate::i18n::{t, Language};
 use crate::keybinds::{egui_key_to_standard, standardize_key, KeyCategory, ALL_KEYBINDS};
-use egui::{Button, Color32, Context, ScrollArea, Slider, Ui, Vec2, Window};
+use egui::{Button, Color32, Context, RichText, ScrollArea, Slider, Ui, Vec2, Window};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -63,6 +63,19 @@ impl Default for AudioSettings {
             players: 1.0,
             hostile: 1.0,
             ambient: 0.8,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ChatSettings {
+    pub font_size: f32,
+}
+
+impl Default for ChatSettings {
+    fn default() -> Self {
+        Self {
+            font_size: 13.0,
         }
     }
 }
@@ -186,6 +199,7 @@ pub enum SettingsTab {
     Video,
     Controls,
     Audio,
+    Chat,
     Language,
 }
 
@@ -200,6 +214,7 @@ pub struct SettingsScreen {
     pub video: VideoSettings,
     pub audio: AudioSettings,
     pub keybinds: KeybindsSettings,
+    pub chat: ChatSettings,
     pub rebinding_key: Option<String>,
 }
 
@@ -209,6 +224,7 @@ impl SettingsScreen {
         video: VideoSettings,
         audio: AudioSettings,
         mut keybinds: KeybindsSettings,
+        chat: ChatSettings,
     ) -> Self {
         keybinds.standardize_all();
         Self {
@@ -217,6 +233,7 @@ impl SettingsScreen {
             video,
             audio,
             keybinds,
+            chat,
             rebinding_key: None,
         }
     }
@@ -237,6 +254,7 @@ impl SettingsScreen {
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Video, t(self.language, "settings.tab_video"));
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Controls, t(self.language, "settings.tab_controls"));
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Audio, t(self.language, "settings.tab_audio"));
+                    ui.selectable_value(&mut self.current_tab, SettingsTab::Chat, t(self.language, "settings.tab_chat"));
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Language, t(self.language, "settings.tab_language"));
                 });
                 ui.separator();
@@ -245,6 +263,7 @@ impl SettingsScreen {
                     SettingsTab::Video => self.render_video_tab(ui),
                     SettingsTab::Controls => self.render_controls_tab(ui),
                     SettingsTab::Audio => self.render_audio_tab(ui),
+                    SettingsTab::Chat => self.render_chat_tab(ui),
                     SettingsTab::Language => self.render_language_tab(ui),
                 }
 
@@ -322,7 +341,7 @@ impl SettingsScreen {
             ui.separator();
             ui.add_space(4.0);
 
-            // Anti-Aliasing (Сглаживание)
+            // Anti-Aliasing
             ui.horizontal(|ui| {
                 ui.label(t(self.language, "settings.video.antialiasing"));
                 let aa_text = match self.video.antialiasing {
@@ -489,6 +508,24 @@ impl SettingsScreen {
             _ => {}
         }
     }
+
+    fn render_chat_tab(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(6.0);
+            ui.label(RichText::new(t(self.language, "settings.chat_font_size")).strong());
+            ui.add(
+                Slider::new(&mut self.chat.font_size, 8.0..=28.0)
+                    .text("px")
+                    .step_by(1.0),
+            );
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(t(self.language, "settings.chat_font_size_desc"))
+                    .size(11.0)
+                    .color(Color32::from_rgb(140, 145, 160)),
+            );
+        });
+    }
 }
 
 #[cfg(test)]
@@ -520,6 +557,7 @@ mod tests {
             VideoSettings::default(),
             AudioSettings::default(),
             KeybindsSettings::default(),
+            ChatSettings::default(),
         );
 
         assert_eq!(screen.keybinds.forward, "W");

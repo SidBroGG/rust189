@@ -19,16 +19,16 @@ pub enum CreativeTab {
 impl CreativeTab {
     pub fn title(&self) -> &'static str {
         match self {
-            Self::BuildingBlocks => "Строительные блоки",
-            Self::DecorationBlocks => "Декоративные блоки",
-            Self::Redstone => "Механизмы",
-            Self::Transportation => "Транспорт",
-            Self::Miscellaneous => "Разное",
-            Self::Food => "Еда",
-            Self::Tools => "Инструменты",
-            Self::Combat => "Оружие и броня",
-            Self::Brewing => "Зельеварение",
-            Self::Materials => "Материалы",
+            Self::BuildingBlocks => "Building Blocks",
+            Self::DecorationBlocks => "Decoration Blocks",
+            Self::Redstone => "Redstone",
+            Self::Transportation => "Transportation",
+            Self::Miscellaneous => "Miscellaneous",
+            Self::Food => "Foodstuffs",
+            Self::Tools => "Tools",
+            Self::Combat => "Combat",
+            Self::Brewing => "Brewing",
+            Self::Materials => "Materials",
         }
     }
 }
@@ -514,227 +514,264 @@ pub fn get_subtype_name(item_id: i16, damage: i16) -> Option<&'static str> {
     match item_id {
         // Stone
         1 => match damage {
-            1 => Some("Гранит"),
-            2 => Some("Полированный гранит"),
-            3 => Some("Диорит"),
-            4 => Some("Полированный диорит"),
-            5 => Some("Андезит"),
-            6 => Some("Полированный андезит"),
+            1 => Some("Granite"),
+            2 => Some("Polished Granite"),
+            3 => Some("Diorite"),
+            4 => Some("Polished Diorite"),
+            5 => Some("Andesite"),
+            6 => Some("Polished Andesite"),
             _ => None,
         },
         // Dirt
         3 => match damage {
-            1 => Some("Каменистая земля"),
-            2 => Some("Подзол"),
+            1 => Some("Coarse Dirt"),
+            2 => Some("Podzol"),
             _ => None,
         },
         // Planks & Saplings & Logs & Leaves & Slabs
         5 | 6 | 17 | 18 | 126 => match damage & 7 {
-            1 => Some("Ель"),
-            2 => Some("Берёза"),
-            3 => Some("Тропическое дерево"),
-            4 => Some("Акация"),
-            5 => Some("Тёмный дуб"),
-            _ => Some("Дуб"),
+            1 => Some("Spruce"),
+            2 => Some("Birch"),
+            3 => Some("Jungle"),
+            4 => Some("Acacia"),
+            5 => Some("Dark Oak"),
+            _ => Some("Oak"),
         },
         // Sand
-        12 => if damage == 1 { Some("Красный песок") } else { None },
+        12 => if damage == 1 { Some("Red Sand") } else { None },
         // Sponge
-        19 => if damage == 1 { Some("Мокрая губка") } else { None },
+        19 => if damage == 1 { Some("Wet Sponge") } else { None },
         // Sandstone
         24 => match damage {
-            1 => Some("Декоративный песчаник"),
-            2 => Some("Гладкий песчаник"),
+            1 => Some("Chiseled Sandstone"),
+            2 => Some("Smooth Sandstone"),
             _ => None,
         },
         // Flowers
         38 => match damage {
-            1 => Some("Синяя орхидея"),
-            2 => Some("Лук-батун"),
-            3 => Some("Хаустония серая"),
-            4 => Some("Красный тюльпан"),
-            5 => Some("Оранжевый тюльпан"),
-            6 => Some("Белый тюльпан"),
-            7 => Some("Розовый тюльпан"),
-            8 => Some("Ромашка"),
-            _ => Some("Мак"),
+            1 => Some("Blue Orchid"),
+            2 => Some("Allium"),
+            3 => Some("Azure Bluet"),
+            4 => Some("Red Tulip"),
+            5 => Some("Orange Tulip"),
+            6 => Some("White Tulip"),
+            7 => Some("Pink Tulip"),
+            8 => Some("Oxeye Daisy"),
+            _ => Some("Poppy"),
         },
         // Stone Slabs
         44 => match damage & 7 {
-            1 => Some("Песчаниковая плита"),
-            2 => Some("Деревянная плита"),
-            3 => Some("Булыжная плита"),
-            4 => Some("Кирпичная плита"),
-            5 => Some("Плита из каменного кирпича"),
-            6 => Some("Незерская плита"),
-            7 => Some("Кварцевая плита"),
-            _ => Some("Каменная плита"),
+            1 => Some("Sandstone Slab"),
+            2 => Some("Wooden Slab"),
+            3 => Some("Cobblestone Slab"),
+            4 => Some("Bricks Slab"),
+            5 => Some("Stone Brick Slab"),
+            6 => Some("Nether Brick Slab"),
+            7 => Some("Quartz Slab"),
+            _ => Some("Stone Slab"),
         },
         // Stonebrick
         98 => match damage {
-            1 => Some("Замшелый каменный кирпич"),
-            2 => Some("Потрескавшийся каменный кирпич"),
-            3 => Some("Резной каменный кирпич"),
-            _ => Some("Каменный кирпич"),
+            1 => Some("Mossy Stone Bricks"),
+            2 => Some("Cracked Stone Bricks"),
+            3 => Some("Chiseled Stone Bricks"),
+            _ => Some("Stone Bricks"),
         },
         // Wool & Carpet & Stained Clay & Stained Glass & Stained Glass Pane & Banner
         35 | 95 | 159 | 160 | 171 | 425 => match damage & 15 {
-            0 => Some("Белый"),
-            1 => Some("Оранжевый"),
-            2 => Some("Пурпурный"),
-            3 => Some("Светло-синий"),
-            4 => Some("Жёлтый"),
-            5 => Some("Лаймовый"),
-            6 => Some("Розовый"),
-            7 => Some("Серый"),
-            8 => Some("Светло-серый"),
-            9 => Some("Бирюзовый"),
-            10 => Some("Фиолетовый"),
-            11 => Some("Синий"),
-            12 => Some("Коричневый"),
-            13 => Some("Зелёный"),
-            14 => Some("Красный"),
-            _ => Some("Чёрный"),
+            0 => Some("White"),
+            1 => Some("Orange"),
+            2 => Some("Magenta"),
+            3 => Some("Light Blue"),
+            4 => Some("Yellow"),
+            5 => Some("Lime"),
+            6 => Some("Pink"),
+            7 => Some("Gray"),
+            8 => Some("Light Gray"),
+            9 => Some("Cyan"),
+            10 => Some("Purple"),
+            11 => Some("Blue"),
+            12 => Some("Brown"),
+            13 => Some("Green"),
+            14 => Some("Red"),
+            _ => Some("Black"),
         },
         // Cobblestone Wall
         139 => match damage {
-            1 => Some("Замшелая булыжная ограда"),
-            _ => Some("Булыжная ограда"),
+            1 => Some("Mossy Cobblestone Wall"),
+            _ => Some("Cobblestone Wall"),
         },
         // Anvil
         145 => match damage {
-            1 => Some("Повреждённая наковальня"),
-            2 => Some("Сильно повреждённая наковальня"),
-            _ => Some("Наковальня"),
+            1 => Some("Slightly Damaged Anvil"),
+            2 => Some("Very Damaged Anvil"),
+            _ => Some("Anvil"),
         },
         // Quartz Block
         155 => match damage {
-            1 => Some("Резной кварцевый блок"),
-            2 => Some("Колонный кварцевый блок"),
-            _ => Some("Кварцевый блок"),
+            1 => Some("Chiseled Quartz Block"),
+            2 => Some("Pillar Quartz Block"),
+            _ => Some("Block of Quartz"),
         },
         // Prismarine
         168 => match damage {
-            1 => Some("Призмариновый кирпич"),
-            2 => Some("Тёмный призмарин"),
-            _ => Some("Призмарин"),
+            1 => Some("Prismarine Bricks"),
+            2 => Some("Dark Prismarine"),
+            _ => Some("Prismarine"),
         },
         // Double Plant
         175 => match damage {
-            1 => Some("Сирень"),
-            2 => Some("Высокая трава"),
-            3 => Some("Большой папоротник"),
-            4 => Some("Розовый куст"),
-            5 => Some("Пион"),
-            _ => Some("Подсолнух"),
+            1 => Some("Lilac"),
+            2 => Some("Double Tallgrass"),
+            3 => Some("Large Fern"),
+            4 => Some("Rose Bush"),
+            5 => Some("Peony"),
+            _ => Some("Sunflower"),
         },
         // Red Sandstone
         179 => match damage {
-            1 => Some("Декоративный красный песчаник"),
-            2 => Some("Гладкий красный песчаник"),
-            _ => Some("Красный песчаник"),
+            1 => Some("Chiseled Red Sandstone"),
+            2 => Some("Smooth Red Sandstone"),
+            _ => Some("Red Sandstone"),
         },
         // Coal
         263 => match damage {
-            1 => Some("Древесный уголь"),
-            _ => Some("Уголь"),
+            1 => Some("Charcoal"),
+            _ => Some("Coal"),
         },
         // Fish
         349 => match damage {
-            1 => Some("Сырой лосось"),
-            2 => Some("Рыба-клоун"),
-            3 => Some("Иглобрюх"),
-            _ => Some("Сырая рыба"),
+            1 => Some("Raw Salmon"),
+            2 => Some("Clownfish"),
+            3 => Some("Pufferfish"),
+            _ => Some("Raw Fish"),
         },
         350 => match damage {
-            1 => Some("Жареный лосось"),
-            _ => Some("Жареная рыба"),
+            1 => Some("Cooked Salmon"),
+            _ => Some("Cooked Fish"),
         },
         // Dye
         351 => match damage & 15 {
-            0 => Some("Чернильный мешок"),
-            1 => Some("Красный краситель"),
-            2 => Some("Кактусовый зелёный"),
-            3 => Some("Какао-бобы"),
-            4 => Some("Лазурит"),
-            5 => Some("Фиолетовый краситель"),
-            6 => Some("Бирюзовый краситель"),
-            7 => Some("Светло-серый краситель"),
-            8 => Some("Серый краситель"),
-            9 => Some("Розовый краситель"),
-            10 => Some("Лаймовый краситель"),
-            11 => Some("Жёлтый краситель"),
-            12 => Some("Светло-синий краситель"),
-            13 => Some("Пурпурный краситель"),
-            14 => Some("Оранжевый краситель"),
-            _ => Some("Костная мука"),
+            0 => Some("Ink Sac"),
+            1 => Some("Rose Red"),
+            2 => Some("Cactus Green"),
+            3 => Some("Cocoa Beans"),
+            4 => Some("Lapis Lazuli"),
+            5 => Some("Purple Dye"),
+            6 => Some("Cyan Dye"),
+            7 => Some("Light Gray Dye"),
+            8 => Some("Gray Dye"),
+            9 => Some("Pink Dye"),
+            10 => Some("Lime Dye"),
+            11 => Some("Dandelion Yellow"),
+            12 => Some("Light Blue Dye"),
+            13 => Some("Magenta Dye"),
+            14 => Some("Orange Dye"),
+            _ => Some("Bone Meal"),
         },
         // Golden Apple
-        322 => if damage == 1 { Some("Зачарованное золотое яблоко") } else { None },
+        322 => if damage == 1 { Some("Enchanted Golden Apple") } else { None },
         // Potion
         373 => match damage {
-            0 => Some("Колба воды"),
-            16 => Some("Неловкое зелье"),
-            8193 => Some("Зелье регенерации (0:45)"),
-            8194 => Some("Зелье стремительности (3:00)"),
-            8195 => Some("Зелье огнестойкости (3:00)"),
-            8196 => Some("Зелье отравления (0:45)"),
-            8197 => Some("Зелье исцеления"),
-            8198 => Some("Зелье ночного зрения (3:00)"),
-            8200 => Some("Зелье слабости (1:30)"),
-            8201 => Some("Зелье силы (3:00)"),
-            8202 => Some("Зелье замедления (1:30)"),
-            8204 => Some("Зелье урона"),
-            8205 => Some("Зелье подводного дыхания (3:00)"),
-            8206 => Some("Зелье невидимости (3:00)"),
-            16385 => Some("Взрывное зелье регенерации (0:33)"),
-            16386 => Some("Взрывное зелье стремительности (2:15)"),
-            16388 => Some("Взрывное зелье отравления (0:33)"),
-            16389 => Some("Взрывное зелье исцеления"),
-            16393 => Some("Взрывное зелье силы (2:15)"),
-            16396 => Some("Взрывное зелье урона"),
+            0 => Some("Water Bottle"),
+            16 => Some("Awkward Potion"),
+            8193 => Some("Potion of Regeneration (0:45)"),
+            8194 => Some("Potion of Swiftness (3:00)"),
+            8195 => Some("Potion of Fire Resistance (3:00)"),
+            8196 => Some("Potion of Poison (0:45)"),
+            8197 => Some("Potion of Healing"),
+            8198 => Some("Potion of Night Vision (3:00)"),
+            8200 => Some("Potion of Weakness (1:30)"),
+            8201 => Some("Potion of Strength (3:00)"),
+            8202 => Some("Potion of Slowness (1:30)"),
+            8204 => Some("Potion of Harming"),
+            8205 => Some("Potion of Water Breathing (3:00)"),
+            8206 => Some("Potion of Invisibility (3:00)"),
+            16385 => Some("Splash Potion of Regeneration (0:33)"),
+            16386 => Some("Splash Potion of Swiftness (2:15)"),
+            16388 => Some("Splash Potion of Poison (0:33)"),
+            16389 => Some("Splash Potion of Healing"),
+            16393 => Some("Splash Potion of Strength (2:15)"),
+            16396 => Some("Splash Potion of Harming"),
             _ => None,
         },
         // Spawn Egg
         383 => match damage {
-            50 => Some("Яйцо призыва: Крипер"),
-            51 => Some("Яйцо призыва: Скелет"),
-            52 => Some("Яйцо призыва: Паук"),
-            54 => Some("Яйцо призыва: Зомби"),
-            55 => Some("Яйцо призыва: Слизень"),
-            56 => Some("Яйцо призыва: Гаст"),
-            57 => Some("Яйцо призыва: Свинозомби"),
-            58 => Some("Яйцо призыва: Эндермен"),
-            59 => Some("Яйцо призыва: Пещерный паук"),
-            60 => Some("Яйцо призыва: Чешуйница"),
-            61 => Some("Яйцо призыва: Ифрит"),
-            62 => Some("Яйцо призыва: Лавовый куб"),
-            65 => Some("Яйцо призыва: Летучая мышь"),
-            66 => Some("Яйцо призыва: Ведьма"),
-            67 => Some("Яйцо призыва: Эндермит"),
-            68 => Some("Яйцо призыва: Страж"),
-            90 => Some("Яйцо призыва: Свинья"),
-            91 => Some("Яйцо призыва: Овца"),
-            92 => Some("Яйцо призыва: Корова"),
-            93 => Some("Яйцо призыва: Курица"),
-            94 => Some("Яйцо призыва: Спрут"),
-            95 => Some("Яйцо призыва: Волк"),
-            96 => Some("Яйцо призыва: Грибная корова"),
-            98 => Some("Яйцо призыва: Оцелот"),
-            100 => Some("Яйцо призыва: Лошадь"),
-            101 => Some("Яйцо призыва: Кролик"),
-            120 => Some("Яйцо призыва: Деревенский житель"),
+            50 => Some("Spawn Creeper"),
+            51 => Some("Spawn Skeleton"),
+            52 => Some("Spawn Spider"),
+            54 => Some("Spawn Zombie"),
+            55 => Some("Spawn Slime"),
+            56 => Some("Spawn Ghast"),
+            57 => Some("Spawn Pigman"),
+            58 => Some("Spawn Enderman"),
+            59 => Some("Spawn Cave Spider"),
+            60 => Some("Spawn Silverfish"),
+            61 => Some("Spawn Blaze"),
+            62 => Some("Spawn Magma Cube"),
+            65 => Some("Spawn Bat"),
+            66 => Some("Spawn Witch"),
+            67 => Some("Spawn Endermite"),
+            68 => Some("Spawn Guardian"),
+            90 => Some("Spawn Pig"),
+            91 => Some("Spawn Sheep"),
+            92 => Some("Spawn Cow"),
+            93 => Some("Spawn Chicken"),
+            94 => Some("Spawn Squid"),
+            95 => Some("Spawn Wolf"),
+            96 => Some("Spawn Mooshroom"),
+            98 => Some("Spawn Ocelot"),
+            100 => Some("Spawn Horse"),
+            101 => Some("Spawn Rabbit"),
+            120 => Some("Spawn Villager"),
             _ => None,
         },
         // Skull
         397 => match damage {
-            1 => Some("Череп скелета-иссушителя"),
-            2 => Some("Голова зомби"),
-            3 => Some("Голова игрока"),
-            4 => Some("Голова крипера"),
-            _ => Some("Череп скелета"),
+            1 => Some("Wither Skeleton Skull"),
+            2 => Some("Zombie Head"),
+            3 => Some("Player Head"),
+            4 => Some("Creeper Head"),
+            _ => Some("Skeleton Skull"),
         },
         _ => None,
+    }
+}
+
+/// Formats internal resource name into standard English item title.
+pub fn get_english_name(name: &str) -> String {
+    match name {
+        "grass" => "Grass Block".to_string(),
+        "tallgrass" => "Grass".to_string(),
+        "noteblock" => "Note Block".to_string(),
+        "golden_rail" => "Powered Rail".to_string(),
+        "mob_spawner" => "Monster Spawner".to_string(),
+        "waterlily" => "Lily Pad".to_string(),
+        "lit_pumpkin" => "Jack o'Lantern".to_string(),
+        "red_flower" => "Poppy".to_string(),
+        "yellow_flower" => "Dandelion".to_string(),
+        "brick_block" => "Bricks".to_string(),
+        "stone_slab" => "Stone Slab".to_string(),
+        "wooden_slab" => "Wood Slab".to_string(),
+        "wool" => "Wool".to_string(),
+        "stained_glass" => "Stained Glass".to_string(),
+        "stained_glass_pane" => "Stained Glass Pane".to_string(),
+        "carpet" => "Carpet".to_string(),
+        "banner" => "Banner".to_string(),
+        "hardened_clay" => "Hardened Clay".to_string(),
+        "stained_hardened_clay" => "Stained Clay".to_string(),
+        _ => {
+            name.split('_')
+                .map(|word| {
+                    let mut c = word.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        }
     }
 }
 
@@ -742,7 +779,15 @@ pub fn get_subtype_name(item_id: i16, damage: i16) -> Option<&'static str> {
 pub fn get_item_name(id: i16, damage: i16) -> String {
     if let Some(sub) = get_subtype_name(id, damage) {
         if matches!(id, 35 | 95 | 159 | 160 | 171 | 425) {
-            let base = get_item_def(id).map_or("Предмет", |i| i.display_name);
+            let base = match id {
+                35 => "Wool",
+                95 => "Stained Glass",
+                159 => "Stained Clay",
+                160 => "Stained Glass Pane",
+                171 => "Carpet",
+                425 => "Banner",
+                _ => "Item",
+            };
             return format!("{sub} {base}");
         }
         if matches!(
@@ -754,8 +799,8 @@ pub fn get_item_name(id: i16, damage: i16) -> String {
     }
 
     get_item_def(id)
-        .map(|i| i.display_name.to_string())
-        .unwrap_or_else(|| format!("Предмет #{id}"))
+        .map(|i| get_english_name(i.name))
+        .unwrap_or_else(|| format!("Item #{id}"))
 }
 
 /// Returns the list of items for a given creative tab.
@@ -877,7 +922,9 @@ pub fn search_items(query: &str) -> Vec<(i16, i16)> {
 
     let mut results = Vec::new();
     for item in ITEMS {
+        let en_name = get_english_name(item.name);
         let name_match = item.name.to_lowercase().contains(&q)
+            || en_name.to_lowercase().contains(&q)
             || item.display_name.to_lowercase().contains(&q);
 
         if name_match {
