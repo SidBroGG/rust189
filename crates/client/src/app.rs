@@ -1110,8 +1110,21 @@ impl App {
                             ig.dimension = rp.dimension as i8;
                             ig.hud_data.health = 20.0;
                             ig.death_ticks = 0;
+                            ig.active_container = None;
+                            ig.inventory_opened = false;
+                            ig.escape_menu_opened = false;
+                            ig.chat_opened = false;
+                            ig.hud_editor_opened = false;
+                            ig.container_ui_state.villager_trades.clear();
+                            ig.container_ui_state.sign_pos = None;
+                            ig.container_ui_state.book_open = false;
                         }
                     }
+                    self.pressed_keys.clear();
+                    self.is_left_clicking = false;
+                    self.is_right_clicking = false;
+                    self.item_use_state.stop();
+                    self.breaking_block_pos = None;
                     if let Some(w) = &self.window {
                         let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
                             .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
@@ -1195,10 +1208,25 @@ impl App {
                         self.player_on_ground = false;
                     }
 
-                    // MCP parity: Do NOT overwrite last_reported_pos with player_pos here.
-                    // Leaving last_reported_pos as previous reported coords ensures flag2 evaluates to true
-                    // on the next physics tick, sending a full position packet to confirm teleport to server.
-                    self.position_update_ticks = 20;
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            // MCP parity: Close open screens on teleport (NetHandlerPlayClient line 725)
+                            ig.active_container = None;
+                            ig.inventory_opened = false;
+                            ig.container_ui_state.villager_trades.clear();
+                            ig.container_ui_state.sign_pos = None;
+                            ig.container_ui_state.book_open = false;
+                            ig.pos = self.player_pos;
+                            ig.look = self.player_look;
+                        }
+                    }
+
+                    // MCP parity: teleport confirmed immediately to server with C06.
+                    // Sync last_reported_pos and last_reported_look with the confirmed position
+                    // to prevent huge delta on the next physics tick from triggering anticheat setback.
+                    self.last_reported_pos = (self.player.pos.x, self.player.bounding_box.min_y, self.player.pos.z);
+                    self.last_reported_look = (self.player.yaw, self.player.pitch);
+                    self.position_update_ticks = 0;
 
                     // Confirm position back to server and mark spawned (on_ground = false per MCP line 717)
                     self.has_spawned = true;
@@ -1211,13 +1239,6 @@ impl App {
                             pitch: self.player.pitch,
                             on_ground: false,
                         });
-                    }
-
-                    if let Some(sm) = &mut self.screen_manager {
-                        if let Some(ig) = &mut sm.in_game {
-                            ig.pos = self.player_pos;
-                            ig.look = self.player_look;
-                        }
                     }
 
                     let eye_h = self.player.get_eye_height() as f32;
@@ -1315,28 +1336,43 @@ impl App {
                         if offset >= bulk.data.len() {
                             break;
                         }
+                        let bit_count = meta.bit_mask.count_ones() as usize;
+                        let expected = bit_count * (8192 + 2048 + if bulk.sky_light_sent { 2048 } else { 0 }) + 256;
+
                         if let Some(chunk) = self.world.get_chunk_mut(meta.x, meta.z) {
-                            if let Ok(consumed) = chunk.load_from_raw_payload(
+                            match chunk.load_from_raw_payload(
                                 &bulk.data[offset..],
                                 meta.bit_mask,
                                 true,
                                 bulk.sky_light_sent,
                             ) {
-                                offset += consumed;
-                                loaded_meta.push((meta.x, meta.z, meta.bit_mask));
+                                Ok(consumed) => {
+                                    offset += consumed;
+                                    loaded_meta.push((meta.x, meta.z, meta.bit_mask));
+                                }
+                                Err(e) => {
+                                    warn!(x = meta.x, z = meta.z, error = %e, "Failed to load chunk from MapChunkBulk");
+                                    offset += expected;
+                                }
                             }
                         } else {
                             let mut chunk =
                                 world::ChunkColumn::new(meta.x, meta.z, bulk.sky_light_sent);
-                            if let Ok(consumed) = chunk.load_from_raw_payload(
+                            match chunk.load_from_raw_payload(
                                 &bulk.data[offset..],
                                 meta.bit_mask,
                                 true,
                                 bulk.sky_light_sent,
                             ) {
-                                offset += consumed;
-                                self.world.chunks.insert((meta.x, meta.z), chunk);
-                                loaded_meta.push((meta.x, meta.z, meta.bit_mask));
+                                Ok(consumed) => {
+                                    offset += consumed;
+                                    self.world.chunks.insert((meta.x, meta.z), chunk);
+                                    loaded_meta.push((meta.x, meta.z, meta.bit_mask));
+                                }
+                                Err(e) => {
+                                    warn!(x = meta.x, z = meta.z, error = %e, "Failed to load chunk from MapChunkBulk");
+                                    offset += expected;
+                                }
                             }
                         }
                     }
@@ -1998,9 +2034,18 @@ impl App {
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.container_ui_state.villager_trades.clear();
-                            if ig.active_container.as_ref().map_or(false, |c| c.window_id == cw.window_id as u8) {
-                                ig.active_container = None;
-                            }
+                            // In MCP 1.8.9 (NetHandlerPlayClient.handleCloseWindow line 1314), closeScreenAndDropStack()
+                            // unconditionally closes whatever container is currently open, matching server window_id 0 or any id.
+                            ig.active_container = None;
+                            ig.inventory_opened = false;
+                        }
+                    }
+                    if !self.is_cursor_needed() {
+                        if let Some(w) = &self.window {
+                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            w.set_cursor_visible(false);
+                            self.mouse_grabbed = true;
                         }
                     }
                 }
@@ -2277,6 +2322,86 @@ impl App {
                 } else {
                     self.player_air = 300;
                 }
+
+                // Transmit player packets to server on every physical tick (20 TPS) while in multiplayer (MCP `EntityPlayerSP.onUpdate` line 170)
+                if let Some(s) = &self.session {
+                    if self.has_spawned {
+                        // Send entity action packets if sprint or sneak state changed (anticheat compliance)
+                        if self.player.is_sprinting != prev_sprint {
+                            s.send(OutgoingPlayPacket::EntityAction {
+                                entity_id: self.player_entity_id,
+                                action: if self.player.is_sprinting {
+                                    protocol::EntityAction::StartSprinting
+                                } else {
+                                    protocol::EntityAction::StopSprinting
+                                },
+                                jump_boost: 0,
+                            });
+                        }
+                        if self.player.is_sneaking != prev_sneak {
+                            s.send(OutgoingPlayPacket::EntityAction {
+                                entity_id: self.player_entity_id,
+                                action: if self.player.is_sneaking {
+                                    protocol::EntityAction::StartSneaking
+                                } else {
+                                    protocol::EntityAction::StopSneaking
+                                },
+                                jump_boost: 0,
+                            });
+                        }
+
+                        if self.player.abilities_dirty {
+                            self.player.abilities_dirty = false;
+                            s.send(OutgoingPlayPacket::PlayerAbilities {
+                                is_flying: self.player.capabilities.is_flying,
+                            });
+                        }
+
+                        // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
+                        let d0 = self.player_pos.0 - self.last_reported_pos.0;
+                        let d1 = self.player_pos.1 - self.last_reported_pos.1;
+                        let d2 = self.player_pos.2 - self.last_reported_pos.2;
+                        let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
+                        let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
+                        let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
+                        let flag3 = d3 != 0.0 || d4 != 0.0;
+
+                        if flag2 && flag3 {
+                            s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                                x: self.player_pos.0,
+                                y: self.player_pos.1,
+                                z: self.player_pos.2,
+                                yaw: self.player_look.0,
+                                pitch: self.player_look.1,
+                                on_ground: self.player_on_ground,
+                            });
+                        } else if flag2 {
+                            s.send(OutgoingPlayPacket::PlayerPosition {
+                                x: self.player_pos.0,
+                                y: self.player_pos.1,
+                                z: self.player_pos.2,
+                                on_ground: self.player_on_ground,
+                            });
+                        } else if flag3 {
+                            s.send(OutgoingPlayPacket::PlayerLook {
+                                yaw: self.player_look.0,
+                                pitch: self.player_look.1,
+                                on_ground: self.player_on_ground,
+                            });
+                        } else {
+                            s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
+                        }
+
+                        self.position_update_ticks += 1;
+                        if flag2 {
+                            self.last_reported_pos = self.player_pos;
+                            self.position_update_ticks = 0;
+                        }
+                        if flag3 {
+                            self.last_reported_look = self.player_look;
+                        }
+                    }
+                }
             } else if self.session.is_some() {
                 // In multiplayer, freeze motion while waiting for current chunk terrain to load or before spawn (MCP parity)
                 self.player.motion = glam::DVec3::ZERO;
@@ -2289,86 +2414,6 @@ impl App {
                 if let Some(ig) = &mut sm.in_game {
                     ig.pos = self.player_pos;
                     ig.look = self.player_look;
-                }
-            }
-
-            // Transmit player packets to server on every physical tick (20 TPS) while in multiplayer (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
-            if let Some(s) = &self.session {
-                if self.has_spawned {
-                    // Send entity action packets if sprint or sneak state changed (anticheat compliance)
-                    if self.player.is_sprinting != prev_sprint {
-                        s.send(OutgoingPlayPacket::EntityAction {
-                            entity_id: self.player_entity_id,
-                            action: if self.player.is_sprinting {
-                                protocol::EntityAction::StartSprinting
-                            } else {
-                                protocol::EntityAction::StopSprinting
-                            },
-                            jump_boost: 0,
-                        });
-                    }
-                    if self.player.is_sneaking != prev_sneak {
-                        s.send(OutgoingPlayPacket::EntityAction {
-                            entity_id: self.player_entity_id,
-                            action: if self.player.is_sneaking {
-                                protocol::EntityAction::StartSneaking
-                            } else {
-                                protocol::EntityAction::StopSneaking
-                            },
-                            jump_boost: 0,
-                        });
-                    }
-
-                    if self.player.abilities_dirty {
-                        self.player.abilities_dirty = false;
-                        s.send(OutgoingPlayPacket::PlayerAbilities {
-                            is_flying: self.player.capabilities.is_flying,
-                        });
-                    }
-
-                    // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
-                    let d0 = self.player_pos.0 - self.last_reported_pos.0;
-                    let d1 = self.player_pos.1 - self.last_reported_pos.1;
-                    let d2 = self.player_pos.2 - self.last_reported_pos.2;
-                    let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
-                    let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
-                    let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
-                    let flag3 = d3 != 0.0 || d4 != 0.0;
-
-                    if flag2 && flag3 {
-                        s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                            x: self.player_pos.0,
-                            y: self.player_pos.1,
-                            z: self.player_pos.2,
-                            yaw: self.player_look.0,
-                            pitch: self.player_look.1,
-                            on_ground: self.player_on_ground,
-                        });
-                    } else if flag2 {
-                        s.send(OutgoingPlayPacket::PlayerPosition {
-                            x: self.player_pos.0,
-                            y: self.player_pos.1,
-                            z: self.player_pos.2,
-                            on_ground: self.player_on_ground,
-                        });
-                    } else if flag3 {
-                        s.send(OutgoingPlayPacket::PlayerLook {
-                            yaw: self.player_look.0,
-                            pitch: self.player_look.1,
-                            on_ground: self.player_on_ground,
-                        });
-                    } else {
-                        s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
-                    }
-
-                    self.position_update_ticks += 1;
-                    if flag2 {
-                        self.last_reported_pos = self.player_pos;
-                        self.position_update_ticks = 0;
-                    }
-                    if flag3 {
-                        self.last_reported_look = self.player_look;
-                    }
                 }
             }
         }
