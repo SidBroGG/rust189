@@ -68,6 +68,9 @@ pub struct InGameScreen {
     pub inventory_opened: bool,
     pub inventory_key: String,
 
+    pub tab_list_scroll: f32,
+    pub credits_screen: Option<crate::screens::credits::CreditsScreen>,
+
     // Modular HUD Layout and Editor
     pub hud_layout: HudLayoutConfig,
     pub hud_editor: HudEditorState,
@@ -80,6 +83,15 @@ pub struct InGameScreen {
 }
 
 impl InGameScreen {
+    pub fn open_credits(&mut self) {
+        self.credits_screen = Some(crate::screens::credits::CreditsScreen::new(&self.player_name));
+        self.escape_menu_opened = false;
+        self.chat_opened = false;
+        self.hud_editor_opened = false;
+        self.active_container = None;
+        self.inventory_opened = false;
+    }
+
     pub fn new(server_ip: String, player_name: String) -> Self {
         let layout_path = PathBuf::from("hud_layout.toml");
         let hud_layout = HudLayoutConfig::load_or_default(&layout_path);
@@ -111,6 +123,8 @@ impl InGameScreen {
             container_ui_state: crate::screens::container::ContainerUiState::default(),
             inventory_opened: false,
             inventory_key: "E".to_string(),
+            tab_list_scroll: 0.0,
+            credits_screen: None,
             hud_layout,
             hud_editor: HudEditorState::default(),
             hud_data: HudData::default(),
@@ -145,6 +159,19 @@ impl InGameScreen {
         let mut action = InGameAction::None;
         self.tick_counter = self.tick_counter.wrapping_add(1);
         self.sync_hud_data();
+
+        // 0. End Poem & Credits Screen (GuiWinGame)
+        if let Some(ref mut credits) = self.credits_screen {
+            match credits.render(ctx) {
+                crate::screens::credits::CreditsAction::CloseAndRespawn => {
+                    self.credits_screen = None;
+                    return InGameAction::Respawn;
+                }
+                crate::screens::credits::CreditsAction::None => {
+                    return InGameAction::None;
+                }
+            }
+        }
 
         let screen_rect = ctx.screen_rect();
         let screen_size = screen_rect.size();
@@ -303,6 +330,7 @@ impl InGameScreen {
             self.show_tab_list = true;
         } else {
             self.show_tab_list = false;
+            self.tab_list_scroll = 0.0;
         }
 
         // 4. Check Toggle FPS / Telemetry key (e.g. F3)
@@ -661,7 +689,8 @@ impl InGameScreen {
                         );
                         ui.add_space(2.0);
 
-                        ScrollArea::vertical()
+                        let scroll_out = ScrollArea::vertical()
+                            .vertical_scroll_offset(self.tab_list_scroll)
                             .max_height(320.0)
                             .auto_shrink([true, true])
                             .show(ui, |ui| {
@@ -705,6 +734,7 @@ impl InGameScreen {
                                         }
                                     });
                             });
+                        self.tab_list_scroll = scroll_out.state.offset.y;
                     });
                 });
         }

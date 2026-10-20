@@ -2326,6 +2326,25 @@ impl App {
                                 ig.is_creative = gm == 1;
                             }
                         }
+                    } else if cgs.state == 4 {
+                        // State 4: Win Game / End Poem & Credits (0: show credits, 1: respawn immediately)
+                        info!(value = cgs.value, "Handling ChangeGameState state 4 (Win Game / End Credits)");
+                        if cgs.value == 1.0 {
+                            if let Some(s) = &self.session {
+                                s.send(OutgoingPlayPacket::ClientStatus(ClientStatusAction::PerformRespawn));
+                            }
+                        } else {
+                            if let Some(sm) = &mut self.screen_manager {
+                                if let Some(ig) = &mut sm.in_game {
+                                    ig.open_credits();
+                                }
+                            }
+                            if let Some(w) = &self.window {
+                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                w.set_cursor_visible(true);
+                                self.mouse_grabbed = false;
+                            }
+                        }
                     }
                 }
                 ClientboundPlayPacket::Unknown { payload_len, .. } => {
@@ -2918,32 +2937,50 @@ impl ApplicationHandler for App {
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-                let cursor_needed = self.is_cursor_needed();
-                if is_in_game && !cursor_needed && self.mouse_grabbed {
+                let is_tab_list_open = self
+                    .screen_manager
+                    .as_ref()
+                    .and_then(|sm| sm.in_game.as_ref())
+                    .map_or(false, |ig| ig.show_tab_list);
+
+                if is_tab_list_open {
                     let scroll_dir = match delta {
                         winit::event::MouseScrollDelta::LineDelta(_x, y) => y,
-                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
+                        winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 20.0,
                     };
-                    if scroll_dir.abs() > 0.01 {
-                        let next_slot = if scroll_dir > 0.0 {
-                            (self.selected_hotbar_slot + 8) % 9
-                        } else {
-                            (self.selected_hotbar_slot + 1) % 9
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            ig.tab_list_scroll = (ig.tab_list_scroll - scroll_dir * 24.0).max(0.0);
+                        }
+                    }
+                } else {
+                    let cursor_needed = self.is_cursor_needed();
+                    if is_in_game && !cursor_needed && self.mouse_grabbed {
+                        let scroll_dir = match delta {
+                            winit::event::MouseScrollDelta::LineDelta(_x, y) => y,
+                            winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
                         };
-                        self.selected_hotbar_slot = next_slot;
-                        if let Some(item) = &self.hotbar_items[next_slot] {
-                            self.held_item_id = item.item_id;
-                        } else {
-                            self.held_item_id = 0;
-                        }
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::HeldItemChange(next_slot as i16));
-                        }
-                        if self.item_use_state.active_action != ItemUseAction::None {
-                            self.item_use_state.stop();
-                        }
-                        if self.breaking_block_pos.is_some() {
-                            self.handle_left_release();
+                        if scroll_dir.abs() > 0.01 {
+                            let next_slot = if scroll_dir > 0.0 {
+                                (self.selected_hotbar_slot + 8) % 9
+                            } else {
+                                (self.selected_hotbar_slot + 1) % 9
+                            };
+                            self.selected_hotbar_slot = next_slot;
+                            if let Some(item) = &self.hotbar_items[next_slot] {
+                                self.held_item_id = item.item_id;
+                            } else {
+                                self.held_item_id = 0;
+                            }
+                            if let Some(s) = &self.session {
+                                s.send(OutgoingPlayPacket::HeldItemChange(next_slot as i16));
+                            }
+                            if self.item_use_state.active_action != ItemUseAction::None {
+                                self.item_use_state.stop();
+                            }
+                            if self.breaking_block_pos.is_some() {
+                                self.handle_left_release();
+                            }
                         }
                     }
                 }

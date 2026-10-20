@@ -1,4 +1,5 @@
 pub mod container;
+pub mod credits;
 pub mod in_game;
 pub mod main_menu;
 pub mod multiplayer;
@@ -6,6 +7,7 @@ pub mod server_dialog;
 pub mod settings;
 
 pub use container::{render_container, render_creative_inventory, ContainerAction, ContainerUiState};
+pub use credits::{CreditsAction, CreditsScreen};
 pub use in_game::{InGameAction, InGameScreen, NametagInfo};
 pub use main_menu::{MainMenuAction, MainMenuScreen, ModalMode};
 pub use multiplayer::{MultiplayerAction, MultiplayerScreen};
@@ -119,7 +121,8 @@ impl ScreenManager {
                 || ig.active_container.is_some()
                 || ig.inventory_opened
                 || ig.container_ui_state.sign_pos.is_some()
-                || ig.container_ui_state.book_open;
+                || ig.container_ui_state.book_open
+                || ig.credits_screen.is_some();
         }
         true
     }

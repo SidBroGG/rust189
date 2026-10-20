@@ -990,7 +990,7 @@ fn render_anvil_body(
     render_player_inventory_slots(ui, container, 3, action);
 }
 
-/// Renders Enchanting table with 3 enchantment rows and galactic runes.
+/// Renders Enchanting table with horizontal compact layout (356px width), authentic clues, and clickable choices.
 fn render_enchanting_body(
     ui: &mut egui::Ui,
     container: &mut ContainerState,
@@ -998,55 +998,235 @@ fn render_enchanting_body(
     action: &mut ContainerAction,
 ) {
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::new(14.0, 0.0);
+        ui.spacing_mut().item_spacing = Vec2::new(12.0, 0.0);
 
-        // Item slot (0) and Lapis slot (1)
+        // Left sub-panel: Item slot & Lapis slot side-by-side with clear labels (84px width)
         ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::splat(6.0);
-            ui.label(RichText::new("Item").size(11.0).color(COLOR_GRAY));
-            render_slot(ui, container, 0, action);
-            ui.label(RichText::new("Lapis").size(11.0).color(COLOR_GRAY));
-            render_slot(ui, container, 1, action);
+            ui.set_width(84.0);
+            ui.label(RichText::new("Item & Lapis").size(11.0).color(COLOR_GRAY));
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::splat(6.0);
+                // Slot 0 (Item)
+                render_slot(ui, container, 0, action);
+                // Slot 1 (Lapis)
+                render_slot(ui, container, 1, action);
+            });
+            ui.add_space(4.0);
+            let lapis_count = container
+                .slots
+                .get(1)
+                .and_then(|s| s.as_ref())
+                .map(|s| {
+                    if s.item_id == 351 && s.item_damage == 4 {
+                        s.item_count as i32
+                    } else {
+                        0
+                    }
+                })
+                .unwrap_or(0);
+            let lapis_col = if lapis_count > 0 {
+                COLOR_AQUA
+            } else {
+                COLOR_DARK_GRAY
+            };
+            ui.label(
+                RichText::new(format!("Lapis: {}", lapis_count))
+                    .size(10.5)
+                    .color(lapis_col),
+            );
         });
 
-        // 3 Enchantment choices
+        // Right sub-panel: 3 Enchantment rows matching full width (260px width)
         ui.vertical(|ui| {
+            ui.set_width(260.0);
             ui.spacing_mut().item_spacing = Vec2::splat(4.0);
+
+            let lapis_count = container
+                .slots
+                .get(1)
+                .and_then(|s| s.as_ref())
+                .map(|s| {
+                    if s.item_id == 351 && s.item_damage == 4 {
+                        s.item_count as i32
+                    } else {
+                        0
+                    }
+                })
+                .unwrap_or(0);
+
             for i in 0..3 {
                 let cost = *container.properties.get(&(i as i16)).unwrap_or(&0);
-                let can_afford = cost > 0 && player_level >= cost as i32;
-                let bg_col = if can_afford {
-                    Color32::from_rgb(38, 48, 40)
-                } else {
-                    Color32::from_rgb(32, 34, 40)
-                };
+                let clue_raw = *container.properties.get(&(4 + i as i16)).unwrap_or(&-1);
+                let lapis_needed = (i + 1) as i32;
+                let has_cost = cost > 0;
+                let can_afford =
+                    has_cost && player_level >= cost as i32 && lapis_count >= lapis_needed;
 
-                let runes = format!(
-                    "{} {} {}",
-                    GALACTIC_RUNES[(i * 7) % GALACTIC_RUNES.len()],
-                    GALACTIC_RUNES[(i * 11 + 3) % GALACTIC_RUNES.len()],
-                    GALACTIC_RUNES[(i * 5 + 1) % GALACTIC_RUNES.len()]
+                let row_size = Vec2::new(260.0, 26.0);
+                let (rect, resp) = ui.allocate_exact_size(
+                    row_size,
+                    if has_cost {
+                        egui::Sense::click()
+                    } else {
+                        egui::Sense::hover()
+                    },
                 );
 
-                let btn_text = if cost > 0 {
-                    format!("{} ... {}", runes, cost)
+                let is_hovered = resp.hovered();
+                let bg_col = if has_cost && can_afford {
+                    if is_hovered {
+                        Color32::from_rgb(46, 68, 52)
+                    } else {
+                        Color32::from_rgb(34, 50, 38)
+                    }
+                } else if has_cost {
+                    if is_hovered {
+                        Color32::from_rgb(44, 48, 58)
+                    } else {
+                        Color32::from_rgb(32, 34, 42)
+                    }
                 } else {
-                    "---".to_string()
+                    Color32::from_rgb(24, 26, 32)
                 };
 
-                let btn = egui::Button::new(
-                    RichText::new(btn_text)
-                        .size(13.0)
-                        .color(if can_afford { COLOR_YELLOW } else { COLOR_DARK_GRAY }),
-                )
-                .fill(bg_col)
-                .min_size(Vec2::new(180.0, 26.0));
+                let stroke_col = if has_cost && can_afford {
+                    Color32::from_rgb(70, 145, 85)
+                } else if has_cost {
+                    Color32::from_rgb(55, 60, 72)
+                } else {
+                    Color32::from_rgb(38, 40, 48)
+                };
 
-                if ui.add_enabled(can_afford, btn).clicked() {
-                    *action = ContainerAction::Enchant {
-                        window_id: container.window_id as i8,
-                        button: i as i8,
+                let painter = ui.painter();
+                painter.rect_filled(rect, CornerRadius::same(3), bg_col);
+                painter.rect_stroke(
+                    rect,
+                    CornerRadius::same(3),
+                    Stroke::new(1.0_f32, stroke_col),
+                    StrokeKind::Inside,
+                );
+
+                if has_cost {
+                    // Option index badge: "1", "2", "3"
+                    let num_text = format!("{}", i + 1);
+                    painter.text(
+                        rect.left_top() + Vec2::new(8.0, 6.0),
+                        Align2::LEFT_TOP,
+                        &num_text,
+                        FontId::proportional(12.0),
+                        COLOR_GRAY,
+                    );
+
+                    // Clue or SGA runes
+                    let (clue_label, clue_full) = if clue_raw >= 0 {
+                        let ench_id = (clue_raw & 0xFF) as i16;
+                        let ench_lvl = ((clue_raw >> 8) & 0xFF) as i32;
+                        let ench_name = get_enchantment_name(ench_id);
+                        let lvl_str = roman_numeral(ench_lvl);
+                        (
+                            format!("{} {} ... ?", ench_name, lvl_str),
+                            format!("{} {}", ench_name, lvl_str),
+                        )
+                    } else {
+                        let runes = format!(
+                            "{} {} {}",
+                            GALACTIC_RUNES[(i * 7) % GALACTIC_RUNES.len()],
+                            GALACTIC_RUNES[(i * 11 + 3) % GALACTIC_RUNES.len()],
+                            GALACTIC_RUNES[(i * 5 + 1) % GALACTIC_RUNES.len()]
+                        );
+                        (runes.clone(), runes)
                     };
+
+                    let text_col = if can_afford {
+                        COLOR_YELLOW
+                    } else {
+                        Color32::from_rgb(170, 175, 185)
+                    };
+                    painter.text(
+                        rect.left_top() + Vec2::new(24.0, 6.0),
+                        Align2::LEFT_TOP,
+                        &clue_label,
+                        FontId::proportional(12.0),
+                        text_col,
+                    );
+
+                    // Required level badge on right: "[ 30 ]"
+                    let cost_str = format!("{}", cost);
+                    let cost_col = if can_afford {
+                        COLOR_GREEN
+                    } else {
+                        COLOR_RED
+                    };
+                    painter.text(
+                        rect.right_top() + Vec2::new(-8.0, 6.0),
+                        Align2::RIGHT_TOP,
+                        &cost_str,
+                        FontId::proportional(12.5),
+                        cost_col,
+                    );
+
+                    // Click sends Enchant action
+                    if resp.clicked() {
+                        *action = ContainerAction::Enchant {
+                            window_id: container.window_id as i8,
+                            button: i as i8,
+                        };
+                    }
+
+                    // Tooltip
+                    if is_hovered {
+                        resp.on_hover_ui(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
+                            if clue_raw >= 0 {
+                                ui.label(
+                                    RichText::new(format!("Enchantment: {} ... ?", clue_full))
+                                        .size(13.0)
+                                        .color(COLOR_GOLD)
+                                        .strong(),
+                                );
+                            }
+                            ui.label(
+                                RichText::new(format!("Level Requirement: {}", cost))
+                                    .size(12.0)
+                                    .color(COLOR_WHITE),
+                            );
+                            ui.label(
+                                RichText::new(format!(
+                                    "Cost: {} Level{} & {} Lapis Lazuli",
+                                    lapis_needed,
+                                    if lapis_needed == 1 { "" } else { "s" },
+                                    lapis_needed
+                                ))
+                                .size(11.5)
+                                .color(COLOR_AQUA),
+                            );
+                            if can_afford {
+                                ui.label(
+                                    RichText::new("✔ Click to Enchant")
+                                        .size(11.0)
+                                        .color(COLOR_GREEN),
+                                );
+                            } else {
+                                ui.label(
+                                    RichText::new(
+                                        "✘ Insufficient levels or lapis (Clicking still sends packet)",
+                                    )
+                                    .size(10.5)
+                                    .color(COLOR_RED),
+                                );
+                            }
+                        });
+                    }
+                } else {
+                    // Empty row
+                    painter.text(
+                        rect.center(),
+                        Align2::CENTER_CENTER,
+                        "---",
+                        FontId::proportional(12.0),
+                        COLOR_DARK_GRAY,
+                    );
                 }
             }
         });
