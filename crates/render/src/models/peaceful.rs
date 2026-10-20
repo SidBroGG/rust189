@@ -1,5 +1,6 @@
 use super::{root_entity_matrix, ModelPart};
 use crate::entity_renderer::EntityVertex;
+use glam::{Mat4, Vec3};
 use std::f32::consts::PI;
 use world::entity::TrackedEntity;
 
@@ -324,80 +325,110 @@ pub fn build_horse_model(
     // Body (0, 34)
     let mut body = ModelPart::new(0.0, 34.0, 128.0, 128.0);
     body.set_rotation_point(0.0, 11.0, 9.0);
-    body.add_box(0.0, 34.0, -5.0, -8.0, -19.0, 10.0, 10.0, 22.0, 0.0);
+    body.add_box(0.0, 34.0, -5.0, -8.0, -19.0, 10.0, 10.0, 24.0, 0.0);
     body.render(root, vertices, indices, color);
 
-    // Neck (0, 12) + Head (0, 0)
+    // Neck and Head components all share pivot (0.0, 4.0, -10.0) with rot_x 0.5235988 (30 deg)
+    let neck_rot_x = 0.5235988 + head_pitch * 0.5;
+    let neck_rot_y = head_yaw;
+
     let mut neck = ModelPart::new(0.0, 12.0, 128.0, 128.0);
     neck.set_rotation_point(0.0, 4.0, -10.0);
-    neck.set_rotation(0.5235988 + head_pitch * 0.5, head_yaw, 0.0);
+    neck.set_rotation(neck_rot_x, neck_rot_y, 0.0);
     neck.add_box(0.0, 12.0, -2.05, -9.8, -2.0, 4.0, 14.0, 8.0, 0.0);
-
-    // Head on neck
-    let mut head = ModelPart::new(0.0, 0.0, 128.0, 128.0);
-    head.set_rotation_point(0.0, -10.0, 3.0);
-    head.add_box(0.0, 0.0, -2.5, -10.0, -1.5, 5.0, 5.0, 7.0, 0.0);
-    head.add_box(0.0, 13.0, -2.0, -10.0, -7.0, 4.0, 5.0, 5.0, 0.0);
+    // Head: (0, 0)
+    neck.add_box(0.0, 0.0, -2.5, -10.0, -1.5, 5.0, 5.0, 7.0, 0.0);
+    // Muzzle: (24, 18)
+    neck.add_box(24.0, 18.0, -2.0, -10.0, -7.0, 4.0, 3.0, 6.0, 0.0);
+    // Lower jaw: (24, 27)
+    neck.add_box(24.0, 27.0, -2.0, -7.0, -6.5, 4.0, 2.0, 5.0, 0.0);
+    // Mane: (56, 36)
+    neck.add_box(56.0, 36.0, -1.0, -11.5, 5.0, 2.0, 16.0, 4.0, 0.0);
 
     if is_mule_or_donkey {
-        // Long mule ears
-        head.add_box(0.0, 12.0, -2.5, -16.0, 4.0, 2.0, 7.0, 1.0, 0.0);
-        head.add_box(0.0, 12.0, 0.5, -16.0, 4.0, 2.0, 7.0, 1.0, 0.0);
+        // Mule long ears (0, 12)
+        neck.add_box(0.0, 12.0, -2.0, -16.0, 4.0, 2.0, 7.0, 1.0, 0.0);
+        neck.add_box(0.0, 12.0, 0.0, -16.0, 4.0, 2.0, 7.0, 1.0, 0.0);
     } else {
-        // Regular horse ears
-        head.add_box(0.0, 0.0, -2.45, -12.0, 4.0, 2.0, 3.0, 1.0, 0.0);
-        head.add_box(0.0, 0.0, 0.45, -12.0, 4.0, 2.0, 3.0, 1.0, 0.0);
+        // Horse ears (0, 0)
+        neck.add_box(0.0, 0.0, -2.45, -12.0, 4.0, 2.0, 3.0, 1.0, 0.0);
+        neck.add_box(0.0, 0.0, 0.45, -12.0, 4.0, 2.0, 3.0, 1.0, 0.0);
     }
-    neck.add_child(head);
     neck.render(root, vertices, indices, color);
 
     // Legs with leg swing
     let leg_rot1 = (limb_swing * 0.6662).cos() * 0.8 * limb_amount;
     let leg_rot2 = (limb_swing * 0.6662 + PI).cos() * 0.8 * limb_amount;
 
-    // Back legs (78, 29)
+    // Back Left Leg (78, 29), Shin (78, 43), Hoof (78, 51)
     let mut back_left = ModelPart::new(78.0, 29.0, 128.0, 128.0);
     back_left.set_rotation_point(4.0, 9.0, 11.0);
     back_left.set_rotation(leg_rot1, 0.0, 0.0);
-    back_left.add_box(78.0, 29.0, -2.5, -2.0, -2.5, 4.0, 15.0, 5.0, 0.0);
+    back_left.add_box(78.0, 29.0, -2.5, -2.0, -2.5, 4.0, 9.0, 5.0, 0.0);
+    back_left.add_box(78.0, 43.0, -2.0, 7.0, -1.5, 3.0, 5.0, 3.0, 0.0);
+    back_left.add_box(78.0, 51.0, -2.5, 12.1, -2.0, 4.0, 3.0, 4.0, 0.0);
     back_left.render(root, vertices, indices, color);
 
+    // Back Right Leg (96, 29), Shin (96, 43), Hoof (96, 51)
     let mut back_right = ModelPart::new(96.0, 29.0, 128.0, 128.0);
     back_right.set_rotation_point(-4.0, 9.0, 11.0);
     back_right.set_rotation(leg_rot2, 0.0, 0.0);
-    back_right.add_box(96.0, 29.0, -1.5, -2.0, -2.5, 4.0, 15.0, 5.0, 0.0);
+    back_right.add_box(96.0, 29.0, -1.5, -2.0, -2.5, 4.0, 9.0, 5.0, 0.0);
+    back_right.add_box(96.0, 43.0, -1.0, 7.0, -1.5, 3.0, 5.0, 3.0, 0.0);
+    back_right.add_box(96.0, 51.0, -1.5, 12.1, -2.0, 4.0, 3.0, 4.0, 0.0);
     back_right.render(root, vertices, indices, color);
 
-    // Front legs (44, 29)
+    // Front Left Leg (44, 29), Shin (44, 41), Hoof (44, 51)
     let mut front_left = ModelPart::new(44.0, 29.0, 128.0, 128.0);
     front_left.set_rotation_point(4.0, 9.0, -8.0);
     front_left.set_rotation(leg_rot2, 0.0, 0.0);
-    front_left.add_box(44.0, 29.0, -1.9, -1.0, -2.1, 4.0, 16.0, 4.0, 0.0);
+    front_left.add_box(44.0, 29.0, -1.9, -1.0, -2.1, 3.0, 8.0, 4.0, 0.0);
+    front_left.add_box(44.0, 41.0, -1.9, 7.0, -1.6, 3.0, 5.0, 3.0, 0.0);
+    front_left.add_box(44.0, 51.0, -2.4, 12.1, -2.1, 4.0, 3.0, 4.0, 0.0);
     front_left.render(root, vertices, indices, color);
 
+    // Front Right Leg (60, 29), Shin (60, 41), Hoof (60, 51)
     let mut front_right = ModelPart::new(60.0, 29.0, 128.0, 128.0);
     front_right.set_rotation_point(-4.0, 9.0, -8.0);
     front_right.set_rotation(leg_rot1, 0.0, 0.0);
-    front_right.add_box(60.0, 29.0, -2.1, -1.0, -2.1, 4.0, 16.0, 4.0, 0.0);
+    front_right.add_box(60.0, 29.0, -1.1, -1.0, -2.1, 3.0, 8.0, 4.0, 0.0);
+    front_right.add_box(60.0, 41.0, -1.1, 7.0, -1.6, 3.0, 5.0, 3.0, 0.0);
+    front_right.add_box(60.0, 51.0, -1.6, 12.1, -2.1, 4.0, 3.0, 4.0, 0.0);
     front_right.render(root, vertices, indices, color);
 
-    // Tail (44, 0)
-    let mut tail = ModelPart::new(44.0, 0.0, 128.0, 128.0);
-    tail.set_rotation_point(0.0, 3.0, 14.0);
-    tail.set_rotation(0.5235988, 0.0, 0.0);
-    tail.add_box(44.0, 0.0, -1.0, -1.0, 0.0, 2.0, 14.0, 2.0, 0.0);
-    tail.render(root, vertices, indices, color);
+    // 3-part Tail at (0.0, 3.0, 14.0) with wagging
+    let tail_wag = (limb_swing * 0.6662).cos() * 0.4 * limb_amount;
 
-    // Donkey/Mule Chests (26, 21)
+    let mut tail_base = ModelPart::new(44.0, 0.0, 128.0, 128.0);
+    tail_base.set_rotation_point(0.0, 3.0, 14.0);
+    tail_base.set_rotation(-1.134464, tail_wag, 0.0);
+    tail_base.add_box(44.0, 0.0, -1.0, -1.0, 0.0, 2.0, 2.0, 3.0, 0.0);
+    tail_base.render(root, vertices, indices, color);
+
+    let mut tail_middle = ModelPart::new(38.0, 7.0, 128.0, 128.0);
+    tail_middle.set_rotation_point(0.0, 3.0, 14.0);
+    tail_middle.set_rotation(-1.134464, tail_wag, 0.0);
+    tail_middle.add_box(38.0, 7.0, -1.5, -2.0, 3.0, 3.0, 4.0, 7.0, 0.0);
+    tail_middle.render(root, vertices, indices, color);
+
+    let mut tail_tip = ModelPart::new(24.0, 3.0, 128.0, 128.0);
+    tail_tip.set_rotation_point(0.0, 3.0, 14.0);
+    tail_tip.set_rotation(-1.40215, tail_wag, 0.0);
+    tail_tip.add_box(24.0, 3.0, -1.5, -4.5, 9.0, 3.0, 4.0, 7.0, 0.0);
+    tail_tip.render(root, vertices, indices, color);
+
+    // Mule Flank Chests (if mule or donkey)
     if is_mule_or_donkey {
-        let mut left_chest = ModelPart::new(26.0, 21.0, 128.0, 128.0);
-        left_chest.set_rotation_point(6.0, 4.0, 2.0);
-        left_chest.add_box(26.0, 21.0, 0.0, -2.0, -4.0, 3.0, 8.0, 8.0, 0.0);
+        let mut left_chest = ModelPart::new(0.0, 34.0, 128.0, 128.0);
+        left_chest.set_rotation_point(-7.5, 3.0, 10.0);
+        left_chest.set_rotation(0.0, PI / 2.0, 0.0);
+        left_chest.add_box(0.0, 34.0, -3.0, 0.0, 0.0, 8.0, 8.0, 3.0, 0.0);
         left_chest.render(root, vertices, indices, color);
 
-        let mut right_chest = ModelPart::new(26.0, 21.0, 128.0, 128.0);
-        right_chest.set_rotation_point(-6.0, 4.0, 2.0);
-        right_chest.add_box(26.0, 21.0, -3.0, -2.0, -4.0, 3.0, 8.0, 8.0, 0.0);
+        let mut right_chest = ModelPart::new(0.0, 47.0, 128.0, 128.0);
+        right_chest.set_rotation_point(4.5, 3.0, 10.0);
+        right_chest.set_rotation(0.0, PI / 2.0, 0.0);
+        right_chest.add_box(0.0, 47.0, -3.0, 0.0, 0.0, 8.0, 8.0, 3.0, 0.0);
         right_chest.render(root, vertices, indices, color);
     }
 }
@@ -415,65 +446,100 @@ pub fn build_wolf_model(
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
     let head_pitch = entity.interpolated_pitch(partial_ticks).to_radians();
 
+    let is_sitting = entity.metadata.iter().any(|m| m.index == 16 && match m.value {
+        world::entity::MetadataValue::Byte(b) => (b & 1) != 0,
+        _ => false,
+    });
+
     // Head (0, 0) + Ears (16, 14) + Snout (0, 10)
     let mut head = ModelPart::new(0.0, 0.0, 64.0, 32.0);
     head.set_rotation_point(-1.0, 13.5, -7.0);
     head.set_rotation(head_pitch, head_yaw, 0.0);
-    head.add_box(0.0, 0.0, -2.0, -3.0, -2.0, 6.0, 6.0, 4.0, 0.0);
-    head.add_box(16.0, 14.0, -2.0, -5.0, 0.0, 2.0, 2.0, 1.0, 0.0);
-    head.add_box(16.0, 14.0, 2.0, -5.0, 0.0, 2.0, 2.0, 1.0, 0.0);
-    head.add_box(0.0, 10.0, -0.5, 0.0, -5.0, 3.0, 3.0, 4.0, 0.0);
+    head.add_box(0.0, 0.0, -3.0, -3.0, -2.0, 6.0, 6.0, 4.0, 0.0);
+    head.add_box(16.0, 14.0, -3.0, -5.0, 0.0, 2.0, 2.0, 1.0, 0.0);
+    head.add_box(16.0, 14.0, 1.0, -5.0, 0.0, 2.0, 2.0, 1.0, 0.0);
+    head.add_box(0.0, 10.0, -1.5, 0.0, -5.0, 3.0, 3.0, 4.0, 0.0);
     head.render(root, vertices, indices, color);
 
-    // Mane / Collar area (21, 0)
-    let mut mane = ModelPart::new(21.0, 0.0, 64.0, 32.0);
-    mane.set_rotation_point(-1.0, 14.0, 2.0);
-    mane.set_rotation(PI / 2.0, 0.0, 0.0);
-    mane.add_box(21.0, 0.0, -3.0, -3.0, -3.0, 8.0, 6.0, 7.0, 0.0);
-    mane.render(root, vertices, indices, color);
-
-    // Body (18, 14)
-    let mut body = ModelPart::new(18.0, 14.0, 64.0, 32.0);
-    body.set_rotation_point(0.0, 14.0, 2.0);
-    body.set_rotation(PI / 2.0, 0.0, 0.0);
-    body.add_box(18.0, 14.0, -3.0, -2.0, -3.0, 6.0, 9.0, 6.0, 0.0);
-    body.render(root, vertices, indices, color);
-
-    // 4 Legs (0, 18)
     let leg_rot1 = (limb_swing * 0.6662).cos() * 1.4 * limb_amount;
     let leg_rot2 = (limb_swing * 0.6662 + PI).cos() * 1.4 * limb_amount;
 
-    let mut leg1 = ModelPart::new(0.0, 18.0, 64.0, 32.0);
-    leg1.set_rotation_point(-2.5, 16.0, 7.0);
-    leg1.set_rotation(leg_rot1, 0.0, 0.0);
-    leg1.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
-    leg1.render(root, vertices, indices, color);
-
-    let mut leg2 = ModelPart::new(0.0, 18.0, 64.0, 32.0);
-    leg2.set_rotation_point(0.5, 16.0, 7.0);
-    leg2.set_rotation(leg_rot2, 0.0, 0.0);
-    leg2.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
-    leg2.render(root, vertices, indices, color);
-
-    let mut leg3 = ModelPart::new(0.0, 18.0, 64.0, 32.0);
-    leg3.set_rotation_point(-2.5, 16.0, -4.0);
-    leg3.set_rotation(leg_rot2, 0.0, 0.0);
-    leg3.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
-    leg3.render(root, vertices, indices, color);
-
-    let mut leg4 = ModelPart::new(0.0, 18.0, 64.0, 32.0);
-    leg4.set_rotation_point(0.5, 16.0, -4.0);
-    leg4.set_rotation(leg_rot1, 0.0, 0.0);
-    leg4.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
-    leg4.render(root, vertices, indices, color);
-
-    // Tail (9, 18) wagging
-    let tail_wag = (limb_swing * 0.6662).cos() * 0.8 * limb_amount;
+    let mut mane = ModelPart::new(21.0, 0.0, 64.0, 32.0);
+    let mut body = ModelPart::new(18.0, 14.0, 64.0, 32.0);
     let mut tail = ModelPart::new(9.0, 18.0, 64.0, 32.0);
-    tail.set_rotation_point(-1.0, 12.0, 8.0);
-    tail.set_rotation(0.7853982, tail_wag, 0.0);
-    tail.add_box(9.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+    let mut leg1 = ModelPart::new(0.0, 18.0, 64.0, 32.0);
+    let mut leg2 = ModelPart::new(0.0, 18.0, 64.0, 32.0);
+    let mut leg3 = ModelPart::new(0.0, 18.0, 64.0, 32.0);
+    let mut leg4 = ModelPart::new(0.0, 18.0, 64.0, 32.0);
+
+    if is_sitting {
+        // Sitting posture per MCP ModelWolf.setLivingAnimations
+        mane.set_rotation_point(-1.0, 16.0, -3.0);
+        mane.set_rotation(PI * 2.0 / 5.0, 0.0, 0.0);
+        mane.add_box(21.0, 0.0, -4.0, -3.0, -3.0, 8.0, 6.0, 7.0, 0.0);
+
+        body.set_rotation_point(0.0, 18.0, 0.0);
+        body.set_rotation(PI / 4.0, 0.0, 0.0);
+        body.add_box(18.0, 14.0, -4.0, -2.0, -3.0, 6.0, 9.0, 6.0, 0.0);
+
+        tail.set_rotation_point(-1.0, 21.0, 6.0);
+        tail.set_rotation(0.7853982, 0.0, 0.0);
+        tail.add_box(9.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+
+        leg1.set_rotation_point(-2.5, 22.0, 2.0);
+        leg1.set_rotation(PI * 1.5, 0.0, 0.0);
+        leg1.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+
+        leg2.set_rotation_point(0.5, 22.0, 2.0);
+        leg2.set_rotation(PI * 1.5, 0.0, 0.0);
+        leg2.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+
+        leg3.set_rotation_point(-2.49, 17.0, -4.0);
+        leg3.set_rotation(5.811947, 0.0, 0.0);
+        leg3.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+
+        leg4.set_rotation_point(0.51, 17.0, -4.0);
+        leg4.set_rotation(5.811947, 0.0, 0.0);
+        leg4.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+    } else {
+        // Standing posture
+        mane.set_rotation_point(-1.0, 14.0, -3.0);
+        mane.set_rotation(PI / 2.0, 0.0, 0.0);
+        mane.add_box(21.0, 0.0, -4.0, -3.0, -3.0, 8.0, 6.0, 7.0, 0.0);
+
+        body.set_rotation_point(0.0, 14.0, 2.0);
+        body.set_rotation(PI / 2.0, 0.0, 0.0);
+        body.add_box(18.0, 14.0, -4.0, -2.0, -3.0, 6.0, 9.0, 6.0, 0.0);
+
+        let tail_wag = (limb_swing * 0.6662).cos() * 0.8 * limb_amount;
+        tail.set_rotation_point(-1.0, 12.0, 8.0);
+        tail.set_rotation(0.7853982, tail_wag, 0.0);
+        tail.add_box(9.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+
+        leg1.set_rotation_point(-2.5, 16.0, 7.0);
+        leg1.set_rotation(leg_rot1, 0.0, 0.0);
+        leg1.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+
+        leg2.set_rotation_point(0.5, 16.0, 7.0);
+        leg2.set_rotation(leg_rot2, 0.0, 0.0);
+        leg2.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+
+        leg3.set_rotation_point(-2.5, 16.0, -4.0);
+        leg3.set_rotation(leg_rot2, 0.0, 0.0);
+        leg3.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+
+        leg4.set_rotation_point(0.5, 16.0, -4.0);
+        leg4.set_rotation(leg_rot1, 0.0, 0.0);
+        leg4.add_box(0.0, 18.0, -1.0, 0.0, -1.0, 2.0, 8.0, 2.0, 0.0);
+    }
+
+    mane.render(root, vertices, indices, color);
+    body.render(root, vertices, indices, color);
     tail.render(root, vertices, indices, color);
+    leg1.render(root, vertices, indices, color);
+    leg2.render(root, vertices, indices, color);
+    leg3.render(root, vertices, indices, color);
+    leg4.render(root, vertices, indices, color);
 }
 
 /// Builds the Ocelot / Cat model (MCP ModelOcelot).
@@ -550,41 +616,108 @@ pub fn build_bat_model(
     partial_ticks: f32,
     color: [f32; 4],
 ) {
-    let root = root_entity_matrix(entity, partial_ticks);
+    let mut root = root_entity_matrix(entity, partial_ticks);
+    root *= Mat4::from_scale(Vec3::splat(0.35));
+
+    let is_hanging = entity.metadata.iter().any(|m| m.index == 16 && match m.value {
+        world::entity::MetadataValue::Byte(b) => (b & 1) != 0,
+        _ => false,
+    });
+
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
     let head_pitch = entity.interpolated_pitch(partial_ticks).to_radians();
     let age = entity.ticks_existed as f32 + partial_ticks;
 
-    // Head (0, 0) + Ears (24, 0)
-    let mut head = ModelPart::new(0.0, 0.0, 64.0, 64.0);
-    head.set_rotation_point(0.0, 0.0, 0.0);
-    head.set_rotation(head_pitch, head_yaw, 0.0);
-    head.add_box(0.0, 0.0, -3.0, -3.0, -3.0, 6.0, 6.0, 6.0, 0.0);
-    head.add_box(24.0, 0.0, -4.0, -6.0, -2.0, 3.0, 4.0, 1.0, 0.0);
-    head.add_box(24.0, 0.0, 1.0, -6.0, -2.0, 3.0, 4.0, 1.0, 0.0);
-    head.render(root, vertices, indices, color);
+    if is_hanging {
+        root *= Mat4::from_translation(Vec3::new(0.0, -0.1, 0.0));
 
-    // Body (0, 16)
-    let mut body = ModelPart::new(0.0, 16.0, 64.0, 64.0);
-    body.set_rotation_point(0.0, 0.0, 0.0);
-    body.add_box(0.0, 16.0, -3.0, 4.0, -3.0, 6.0, 12.0, 6.0, 0.0);
-    body.add_box(0.0, 34.0, -5.0, 16.0, 0.0, 10.0, 6.0, 1.0, 0.0);
-    body.render(root, vertices, indices, color);
+        let mut head = ModelPart::new(0.0, 0.0, 64.0, 64.0);
+        head.set_rotation_point(0.0, -2.0, 0.0);
+        head.set_rotation(head_pitch, PI - head_yaw, PI);
+        head.add_box(0.0, 0.0, -3.0, -3.0, -3.0, 6.0, 6.0, 6.0, 0.0);
+        head.add_box(24.0, 0.0, -4.0, -6.0, -2.0, 3.0, 4.0, 1.0, 0.0);
+        head.add_box(24.0, 0.0, 1.0, -6.0, -2.0, 3.0, 4.0, 1.0, 0.0);
+        head.render(root, vertices, indices, color);
 
-    // Flapping Wings (42, 0)
-    let wing_flap = (age * 1.3).cos() * PI * 0.25;
+        let mut body = ModelPart::new(0.0, 16.0, 64.0, 64.0);
+        body.set_rotation_point(0.0, 0.0, 0.0);
+        body.set_rotation(PI, 0.0, 0.0);
+        body.add_box(0.0, 16.0, -3.0, 4.0, -3.0, 6.0, 12.0, 6.0, 0.0);
+        body.add_box(0.0, 34.0, -5.0, 16.0, 0.0, 10.0, 6.0, 1.0, 0.0);
+        body.render(root, vertices, indices, color);
 
-    let mut right_wing = ModelPart::new(42.0, 0.0, 64.0, 64.0);
-    right_wing.set_rotation_point(0.0, 0.0, 0.0);
-    right_wing.set_rotation(0.0, -wing_flap, 0.0);
-    right_wing.add_box(42.0, 0.0, -12.0, 1.0, 1.5, 10.0, 16.0, 1.0, 0.0);
-    right_wing.render(root, vertices, indices, color);
+        let mut right_wing = ModelPart::new(42.0, 0.0, 64.0, 64.0);
+        right_wing.set_rotation_point(-3.0, 0.0, 3.0);
+        right_wing.set_rotation(-0.15707964, -(PI * 2.0 / 5.0), 0.0);
+        right_wing.add_box(42.0, 0.0, -12.0, 1.0, 1.5, 10.0, 16.0, 1.0, 0.0);
 
-    let mut left_wing = ModelPart::new(42.0, 0.0, 64.0, 64.0);
-    left_wing.set_rotation_point(0.0, 0.0, 0.0);
-    left_wing.set_rotation(0.0, wing_flap, 0.0);
-    left_wing.add_box(42.0, 0.0, 2.0, 1.0, 1.5, 10.0, 16.0, 1.0, 0.0);
-    left_wing.render(root, vertices, indices, color);
+        let mut outer_right = ModelPart::new(24.0, 16.0, 64.0, 64.0);
+        outer_right.set_rotation_point(-12.0, 1.0, 1.5);
+        outer_right.set_rotation(0.0, -1.7278761, 0.0);
+        outer_right.add_box(24.0, 16.0, -8.0, 1.0, 0.0, 8.0, 12.0, 1.0, 0.0);
+        right_wing.add_child(outer_right);
+        right_wing.render(root, vertices, indices, color);
+
+        let mut left_wing = ModelPart::new(42.0, 0.0, 64.0, 64.0);
+        left_wing.mirror = true;
+        left_wing.set_rotation_point(3.0, 0.0, 3.0);
+        left_wing.set_rotation(-0.15707964, PI * 2.0 / 5.0, 0.0);
+        left_wing.add_box(42.0, 0.0, 2.0, 1.0, 1.5, 10.0, 16.0, 1.0, 0.0);
+
+        let mut outer_left = ModelPart::new(24.0, 16.0, 64.0, 64.0);
+        outer_left.mirror = true;
+        outer_left.set_rotation_point(12.0, 1.0, 1.5);
+        outer_left.set_rotation(0.0, 1.7278761, 0.0);
+        outer_left.add_box(24.0, 16.0, 0.0, 1.0, 0.0, 8.0, 12.0, 1.0, 0.0);
+        left_wing.add_child(outer_left);
+        left_wing.render(root, vertices, indices, color);
+    } else {
+        let mut head = ModelPart::new(0.0, 0.0, 64.0, 64.0);
+        head.set_rotation_point(0.0, 0.0, 0.0);
+        head.set_rotation(head_pitch, head_yaw, 0.0);
+        head.add_box(0.0, 0.0, -3.0, -3.0, -3.0, 6.0, 6.0, 6.0, 0.0);
+        head.add_box(24.0, 0.0, -4.0, -6.0, -2.0, 3.0, 4.0, 1.0, 0.0);
+        head.add_box(24.0, 0.0, 1.0, -6.0, -2.0, 3.0, 4.0, 1.0, 0.0);
+        head.render(root, vertices, indices, color);
+
+        // Body with 45 degree forward tilt
+        let body_pitch = (PI / 4.0) + (age * 0.1).cos() * 0.15;
+        let mut body = ModelPart::new(0.0, 16.0, 64.0, 64.0);
+        body.set_rotation_point(0.0, 0.0, 0.0);
+        body.set_rotation(body_pitch, 0.0, 0.0);
+        body.add_box(0.0, 16.0, -3.0, 4.0, -3.0, 6.0, 12.0, 6.0, 0.0);
+        body.add_box(0.0, 34.0, -5.0, 16.0, 0.0, 10.0, 6.0, 1.0, 0.0);
+
+        let wing_rot_y = (age * 1.3).cos() * PI * 0.25;
+
+        let mut right_wing = ModelPart::new(42.0, 0.0, 64.0, 64.0);
+        right_wing.set_rotation_point(0.0, 0.0, 0.0);
+        right_wing.set_rotation(0.0, wing_rot_y, 0.0);
+        right_wing.add_box(42.0, 0.0, -12.0, 1.0, 1.5, 10.0, 16.0, 1.0, 0.0);
+
+        let mut outer_right = ModelPart::new(24.0, 16.0, 64.0, 64.0);
+        outer_right.set_rotation_point(-12.0, 1.0, 1.5);
+        outer_right.set_rotation(0.0, wing_rot_y * 0.5, 0.0);
+        outer_right.add_box(24.0, 16.0, -8.0, 1.0, 0.0, 8.0, 12.0, 1.0, 0.0);
+        right_wing.add_child(outer_right);
+        body.add_child(right_wing);
+
+        let mut left_wing = ModelPart::new(42.0, 0.0, 64.0, 64.0);
+        left_wing.mirror = true;
+        left_wing.set_rotation_point(0.0, 0.0, 0.0);
+        left_wing.set_rotation(0.0, -wing_rot_y, 0.0);
+        left_wing.add_box(42.0, 0.0, 2.0, 1.0, 1.5, 10.0, 16.0, 1.0, 0.0);
+
+        let mut outer_left = ModelPart::new(24.0, 16.0, 64.0, 64.0);
+        outer_left.mirror = true;
+        outer_left.set_rotation_point(12.0, 1.0, 1.5);
+        outer_left.set_rotation(0.0, -wing_rot_y * 0.5, 0.0);
+        outer_left.add_box(24.0, 16.0, 0.0, 1.0, 0.0, 8.0, 12.0, 1.0, 0.0);
+        left_wing.add_child(outer_left);
+        body.add_child(left_wing);
+
+        body.render(root, vertices, indices, color);
+    }
 }
 
 /// Builds the Squid model (MCP ModelSquid).
@@ -595,7 +728,17 @@ pub fn build_squid_model(
     partial_ticks: f32,
     color: [f32; 4],
 ) {
-    let root = root_entity_matrix(entity, partial_ticks);
+    let pos = entity.interpolated_pos(partial_ticks);
+    let render_yaw = entity.interpolated_render_yaw_offset(partial_ticks);
+    let pitch = entity.interpolated_pitch(partial_ticks).to_radians();
+
+    let mut root = Mat4::from_translation(pos.as_vec3());
+    root *= Mat4::from_translation(Vec3::new(0.0, 0.5, 0.0));
+    root *= Mat4::from_rotation_y((180.0 - render_yaw).to_radians());
+    root *= Mat4::from_rotation_x(pitch);
+    root *= Mat4::from_translation(Vec3::new(0.0, -1.2, 0.0));
+    root *= Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0));
+
     let age = entity.ticks_existed as f32 + partial_ticks;
 
     // Body (0, 0)

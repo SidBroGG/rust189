@@ -101,6 +101,12 @@ pub enum OutgoingPlayPacket {
         data: Vec<u8>,
     },
     Brand(String),
+    PlayerInput {
+        strafe: f32,
+        forward: f32,
+        jumping: bool,
+        sneaking: bool,
+    },
 }
 
 impl OutgoingPlayPacket {
@@ -294,6 +300,11 @@ impl OutgoingPlayPacket {
                 let pkt = ServerboundCustomPayloadPacket::brand(brand.as_str());
                 pkt.encode(buf)?;
                 Ok(ServerboundCustomPayloadPacket::PACKET_ID)
+            }
+            Self::PlayerInput { strafe, forward, jumping, sneaking } => {
+                let pkt = ServerboundPlayerInputPacket::new(*strafe, *forward, *jumping, *sneaking);
+                pkt.encode(buf)?;
+                Ok(ServerboundPlayerInputPacket::PACKET_ID)
             }
         }
     }

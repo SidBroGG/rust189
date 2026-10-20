@@ -81,6 +81,7 @@ pub struct TrackedEntity {
     pub custom_name_visible: bool,
     pub equipment: [Option<Slot>; 5],
     pub metadata: Vec<MetadataEntry>,
+    pub riding_entity_id: Option<i32>,
 }
 
 impl TrackedEntity {
@@ -128,6 +129,7 @@ impl TrackedEntity {
             custom_name_visible: false,
             equipment: [None, None, None, None, None],
             metadata: Vec::new(),
+            riding_entity_id: None,
         }
     }
 
@@ -271,6 +273,15 @@ impl TrackedEntity {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Returns whether this entity is a mountable vehicle (Boat, Minecart, Horse).
+    pub fn is_vehicle(&self) -> bool {
+        match &self.kind {
+            EntityKind::Object { object_type, .. } => *object_type == 1 || *object_type == 10,
+            EntityKind::Mob { mob_type } => *mob_type == 100,
+            _ => false,
         }
     }
 
@@ -565,6 +576,12 @@ impl EntityTracker {
         }
     }
 
+    pub fn attach(&mut self, entity_id: i32, vehicle_id: i32) {
+        if let Some(entity) = self.entities.get_mut(&entity_id) {
+            entity.riding_entity_id = if vehicle_id >= 0 { Some(vehicle_id) } else { None };
+        }
+    }
+
     pub fn rel_move(
         &mut self,
         entity_id: i32,
@@ -743,6 +760,19 @@ impl EntityTracker {
         }
     }
 
+/// Returns the (width, height) in pixels for a painting art title per MCP EntityPainting.
+pub fn painting_dimensions(title: &str) -> (i32, i32) {
+    match title.to_ascii_lowercase().as_str() {
+        "pool" | "courbet" | "sea" | "sunset" | "creebet" => (32, 16),
+        "wanderer" | "graham" => (16, 32),
+        "match" | "bust" | "stage" | "void" | "skullandroses" | "wither" => (32, 32),
+        "fighters" => (64, 32),
+        "pointer" | "pigscene" | "burningskull" => (64, 64),
+        "skeleton" | "donkeykong" => (64, 48),
+        _ => (16, 16),
+    }
+}
+
     pub fn spawn_painting(
         &mut self,
         entity_id: i32,
@@ -752,7 +782,28 @@ impl EntityTracker {
         z: i32,
         facing: u8,
     ) {
-        let pos = DVec3::new(x as f64, y as f64, z as f64);
+        let (w_pixels, h_pixels) = Self::painting_dimensions(&title);
+        let mut d0 = x as f64 + 0.5;
+        let mut d1 = y as f64 + 0.5;
+        let mut d2 = z as f64 + 0.5;
+        let d4 = if w_pixels % 32 == 0 { 0.5 } else { 0.0 };
+        let d5 = if h_pixels % 32 == 0 { 0.5 } else { 0.0 };
+
+        let (front_x, front_z, ccw_x, ccw_z) = match facing {
+            0 => (0.0, 1.0, 1.0, 0.0),    // SOUTH
+            1 => (-1.0, 0.0, 0.0, 1.0),   // WEST
+            2 => (0.0, -1.0, -1.0, 0.0),  // NORTH
+            3 => (1.0, 0.0, 0.0, -1.0),   // EAST
+            _ => (0.0, 1.0, 1.0, 0.0),
+        };
+
+        d0 -= front_x * 0.46875;
+        d2 -= front_z * 0.46875;
+        d1 += d5;
+        d0 += d4 * ccw_x;
+        d2 += d4 * ccw_z;
+
+        let pos = DVec3::new(d0, d1, d2);
         let yaw = match facing {
             0 => 180.0,
             1 => 270.0,

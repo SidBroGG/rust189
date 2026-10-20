@@ -1,5 +1,6 @@
 use super::{root_entity_matrix, ModelPart};
 use crate::entity_renderer::EntityVertex;
+use glam::{Mat4, Vec3};
 use std::f32::consts::PI;
 use world::entity::TrackedEntity;
 
@@ -11,7 +12,8 @@ pub fn build_wither_model(
     partial_ticks: f32,
     color: [f32; 4],
 ) {
-    let root = root_entity_matrix(entity, partial_ticks);
+    let mut root = root_entity_matrix(entity, partial_ticks);
+    root *= Mat4::from_scale(Vec3::splat(2.0));
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
     let head_pitch = entity.interpolated_pitch(partial_ticks).to_radians();
     let age = entity.ticks_existed as f32 + partial_ticks;
@@ -77,7 +79,11 @@ pub fn build_dragon_model(
     partial_ticks: f32,
     color: [f32; 4],
 ) {
-    let root = root_entity_matrix(entity, partial_ticks);
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let mut root = Mat4::from_translation(pos.as_vec3());
+    root *= Mat4::from_rotation_y((-yaw).to_radians());
+    root *= Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0));
     let age = entity.ticks_existed as f32 + partial_ticks;
     let flap_time = age * 0.2;
 
@@ -236,4 +242,23 @@ pub fn build_dragon_model(
     rr_tip.add_child(rr_foot);
     rr_leg.add_child(rr_tip);
     rr_leg.render(root, vertices, indices, color);
+
+    // 12 Tail Segments (MCP ModelDragon)
+    let mut tail_y = 4.0;
+    let mut tail_z = 48.0;
+    let mut tail_x = 0.0;
+    for j in 0..12 {
+        let tail_curve = ((j as f32) * 0.45 + flap_time * PI * 2.0).cos() * 0.08;
+        let tail_swing = ((j as f32) * 0.3 + flap_time * PI * 2.0).sin() * 0.1;
+        let mut tail_seg = ModelPart::new(192.0, 104.0, 256.0, 256.0);
+        tail_seg.set_rotation_point(tail_x, tail_y, tail_z);
+        tail_seg.set_rotation(tail_curve, tail_swing, 0.0);
+        tail_seg.add_box(192.0, 104.0, -5.0, -5.0, -5.0, 10.0, 10.0, 10.0, 0.0);
+        tail_seg.add_box(48.0, 0.0, -1.0, -9.0, -3.0, 2.0, 4.0, 6.0, 0.0);
+        tail_seg.render(root, vertices, indices, color);
+
+        tail_y += tail_curve.sin() * 10.0;
+        tail_z += tail_curve.cos() * 10.0;
+        tail_x += tail_swing.sin() * 10.0;
+    }
 }

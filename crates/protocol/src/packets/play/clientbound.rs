@@ -2229,3 +2229,39 @@ impl ClientboundSignEditorOpenPacket {
     }
 }
 
+/// Clientbound Attach Entity packet (0x1B).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundAttachEntityPacket {
+    pub entity_id: i32,
+    pub vehicle_id: i32,
+    pub leash: u8,
+}
+
+impl ClientboundAttachEntityPacket {
+    pub const PACKET_ID: i32 = 0x1B;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 9 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 9,
+                available: buf.remaining(),
+            });
+        }
+        let entity_id = buf.get_i32();
+        let vehicle_id = buf.get_i32();
+        let leash = buf.get_u8();
+        Ok(Self {
+            entity_id,
+            vehicle_id,
+            leash,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&self.entity_id.to_be_bytes());
+        buf.extend_from_slice(&self.vehicle_id.to_be_bytes());
+        buf.extend_from_slice(&[self.leash]);
+        Ok(())
+    }
+}
+

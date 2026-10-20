@@ -127,7 +127,9 @@ impl ScreenManager {
                 || ig.inventory_opened
                 || ig.container_ui_state.sign_pos.is_some()
                 || ig.container_ui_state.book_open
-                || ig.credits_screen.is_some();
+                || ig.credits_screen.is_some()
+                || ig.hud_data.health <= 0.0
+                || ig.death_ticks > 0;
         }
         true
     }

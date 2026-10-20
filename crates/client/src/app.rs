@@ -111,6 +111,7 @@ pub struct App {
     pub attacked_at_yaw: f32,
     pub death_time: u32,
     pub teleport_confirmed_ticks: u32,
+    pub riding_entity_id: Option<i32>,
 }
 
 impl App {
@@ -188,6 +189,7 @@ impl App {
             max_hurt_time: 10,
             attacked_at_yaw: 0.0,
             death_time: 0,
+            riding_entity_id: None,
         }
     }
 
@@ -431,6 +433,9 @@ impl App {
     }
 
     pub fn is_cursor_needed(&self) -> bool {
+        if self.player_health <= 0.0 {
+            return true;
+        }
         self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed())
     }
 
@@ -713,6 +718,11 @@ impl App {
         match self.current_target {
             TargetHit::Entity(eh) => {
                 let entity_id = eh.entity_id;
+                if let Some(ent) = self.world.entity_tracker.entities.get(&entity_id) {
+                    if ent.is_vehicle() {
+                        self.riding_entity_id = Some(entity_id);
+                    }
+                }
                 let rel_target = self.world.entity_tracker.entities.get(&entity_id).map(|ent| {
                     (
                         (eh.hit_pos.x - ent.pos.x) as f32,
@@ -2044,8 +2054,17 @@ impl App {
                     }
                     self.world.entity_tracker.update_metadata(em.entity_id, em.metadata);
                 }
+                ClientboundPlayPacket::AttachEntity(ae) => {
+                    if ae.leash == 0 {
+                        if ae.entity_id == self.player_entity_id {
+                            self.riding_entity_id = if ae.vehicle_id >= 0 { Some(ae.vehicle_id) } else { None };
+                        }
+                        self.world.entity_tracker.attach(ae.entity_id, ae.vehicle_id);
+                    }
+                }
                 ClientboundPlayPacket::Disconnect(dc) => {
                     warn!(reason = %dc.reason, "Disconnected from server");
+                    self.riding_entity_id = None;
                     self.session = None;
                     self.has_spawned = false;
                     self.world.clear();
@@ -2610,7 +2629,32 @@ impl App {
                     }
                 }
 
-                self.player.tick(&self.world, &input);
+                if let Some(riding_id) = self.riding_entity_id {
+                    let mut vehicle_exists = false;
+                    if let Some(ent) = self.world.entity_tracker.entities.get_mut(&riding_id) {
+                        vehicle_exists = true;
+                        // Boat steering parity
+                        if matches!(ent.kind, world::EntityKind::Object { object_type: 1, .. }) {
+                            let mut forward = 0.0f64;
+                            if input.move_forward > 0.0 { forward += 0.2; }
+                            if input.move_forward < 0.0 { forward -= 0.1; }
+                            if input.move_strafe > 0.0 { ent.yaw -= 4.0; }
+                            if input.move_strafe < 0.0 { ent.yaw += 4.0; }
+                            let rad = (ent.yaw as f64).to_radians();
+                            ent.pos.x -= rad.sin() * forward;
+                            ent.pos.z += rad.cos() * forward;
+                        }
+                        self.player.pos.x = ent.pos.x;
+                        self.player.pos.y = ent.pos.y + 0.35;
+                        self.player.pos.z = ent.pos.z;
+                        self.player.motion = glam::DVec3::ZERO;
+                    }
+                    if !vehicle_exists || input.sneak {
+                        self.riding_entity_id = None;
+                    }
+                } else {
+                    self.player.tick(&self.world, &input);
+                }
 
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                 self.player_look = (self.player.yaw, self.player.pitch);
@@ -2664,65 +2708,84 @@ impl App {
                             });
                         }
 
-                        // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
-                        let d0 = self.player_pos.0 - self.last_reported_pos.0;
-                        let d1 = self.player_pos.1 - self.last_reported_pos.1;
-                        let d2 = self.player_pos.2 - self.last_reported_pos.2;
-                        let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
-                        let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
-                        let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
-                        let flag3 = d3 != 0.0 || d4 != 0.0;
-
-                        if self.teleport_confirmed_ticks > 0 {
-                            self.teleport_confirmed_ticks -= 1;
-                            // Crucial Anticheat/Spigot Teleport Confirmation parity:
-                            // For the first ticks following a teleport/setback, always transmit full PlayerPositionAndLook
-                            // to avoid sending empty PlayerMovement (0x03) before the server's teleportPos queue clears,
-                            // which prevents the infinite setback loop and anticheat bans.
-                            s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                                x: self.player_pos.0,
-                                y: self.player_pos.1,
-                                z: self.player_pos.2,
-                                yaw: self.player_look.0,
-                                pitch: self.player_look.1,
-                                on_ground: self.player_on_ground,
-                            });
-                            self.last_reported_pos = self.player_pos;
-                            self.last_reported_look = self.player_look;
-                            self.position_update_ticks = 0;
-                        } else if flag2 && flag3 {
-                            s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                                x: self.player_pos.0,
-                                y: self.player_pos.1,
-                                z: self.player_pos.2,
-                                yaw: self.player_look.0,
-                                pitch: self.player_look.1,
-                                on_ground: self.player_on_ground,
-                            });
-                        } else if flag2 {
-                            s.send(OutgoingPlayPacket::PlayerPosition {
-                                x: self.player_pos.0,
-                                y: self.player_pos.1,
-                                z: self.player_pos.2,
-                                on_ground: self.player_on_ground,
-                            });
-                        } else if flag3 {
+                        if let Some(_riding_id) = self.riding_entity_id {
                             s.send(OutgoingPlayPacket::PlayerLook {
                                 yaw: self.player_look.0,
                                 pitch: self.player_look.1,
                                 on_ground: self.player_on_ground,
                             });
-                        } else {
-                            s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
-                        }
-
-                        self.position_update_ticks += 1;
-                        if flag2 {
-                            self.last_reported_pos = self.player_pos;
+                            let strafe = input.move_strafe;
+                            let forward = input.move_forward;
+                            s.send(OutgoingPlayPacket::PlayerInput {
+                                strafe,
+                                forward,
+                                jumping: input.jump,
+                                sneaking: input.sneak,
+                            });
                             self.position_update_ticks = 0;
-                        }
-                        if flag3 {
+                            self.last_reported_pos = self.player_pos;
                             self.last_reported_look = self.player_look;
+                        } else {
+                            // Transmit position and look to server in exact sync with physics tick (MCP `EntityPlayerSP.onUpdateWalkingPlayer`)
+                            let d0 = self.player_pos.0 - self.last_reported_pos.0;
+                            let d1 = self.player_pos.1 - self.last_reported_pos.1;
+                            let d2 = self.player_pos.2 - self.last_reported_pos.2;
+                            let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
+                            let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
+                            let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
+                            let flag3 = d3 != 0.0 || d4 != 0.0;
+
+                            if self.teleport_confirmed_ticks > 0 {
+                                self.teleport_confirmed_ticks -= 1;
+                                // Crucial Anticheat/Spigot Teleport Confirmation parity:
+                                // For the first ticks following a teleport/setback, always transmit full PlayerPositionAndLook
+                                // to avoid sending empty PlayerMovement (0x03) before the server's teleportPos queue clears,
+                                // which prevents the infinite setback loop and anticheat bans.
+                                s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                                    x: self.player_pos.0,
+                                    y: self.player_pos.1,
+                                    z: self.player_pos.2,
+                                    yaw: self.player_look.0,
+                                    pitch: self.player_look.1,
+                                    on_ground: self.player_on_ground,
+                                });
+                                self.last_reported_pos = self.player_pos;
+                                self.last_reported_look = self.player_look;
+                                self.position_update_ticks = 0;
+                            } else if flag2 && flag3 {
+                                s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                                    x: self.player_pos.0,
+                                    y: self.player_pos.1,
+                                    z: self.player_pos.2,
+                                    yaw: self.player_look.0,
+                                    pitch: self.player_look.1,
+                                    on_ground: self.player_on_ground,
+                                });
+                            } else if flag2 {
+                                s.send(OutgoingPlayPacket::PlayerPosition {
+                                    x: self.player_pos.0,
+                                    y: self.player_pos.1,
+                                    z: self.player_pos.2,
+                                    on_ground: self.player_on_ground,
+                                });
+                            } else if flag3 {
+                                s.send(OutgoingPlayPacket::PlayerLook {
+                                    yaw: self.player_look.0,
+                                    pitch: self.player_look.1,
+                                    on_ground: self.player_on_ground,
+                                });
+                            } else {
+                                s.send(OutgoingPlayPacket::PlayerMovement(self.player_on_ground));
+                            }
+
+                            self.position_update_ticks += 1;
+                            if flag2 {
+                                self.last_reported_pos = self.player_pos;
+                                self.position_update_ticks = 0;
+                            }
+                            if flag3 {
+                                self.last_reported_look = self.player_look;
+                            }
                         }
                     }
                 }

@@ -915,6 +915,60 @@ impl ServerboundUpdateSignPacket {
     }
 }
 
+/// Serverbound Player Input packet (0x0C).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerboundPlayerInputPacket {
+    pub strafe: f32,
+    pub forward: f32,
+    pub jumping: bool,
+    pub sneaking: bool,
+}
+
+impl ServerboundPlayerInputPacket {
+    pub const PACKET_ID: i32 = 0x0C;
+
+    pub fn new(strafe: f32, forward: f32, jumping: bool, sneaking: bool) -> Self {
+        Self {
+            strafe,
+            forward,
+            jumping,
+            sneaking,
+        }
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.extend_from_slice(&self.strafe.to_be_bytes());
+        buf.extend_from_slice(&self.forward.to_be_bytes());
+        let mut flags = 0u8;
+        if self.jumping {
+            flags |= 1;
+        }
+        if self.sneaking {
+            flags |= 2;
+        }
+        buf.extend_from_slice(&[flags]);
+        Ok(())
+    }
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        if buf.remaining() < 9 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 9,
+                available: buf.remaining(),
+            });
+        }
+        let strafe = buf.get_f32();
+        let forward = buf.get_f32();
+        let flags = buf.get_u8();
+        Ok(Self {
+            strafe,
+            forward,
+            jumping: (flags & 1) != 0,
+            sneaking: (flags & 2) != 0,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

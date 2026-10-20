@@ -310,9 +310,16 @@ fn test_layers_and_damage_effects() {
     // Glowing Spider Eyes Layer
     v.clear(); i.clear();
     let spider = create_dummy_entity(EntityKind::Mob { mob_type: 52 });
-    render_spider_eyes_layer(&mut v, &mut i, &spider, 0.5);
+    render_spider_eyes_layer(&mut v, &mut i, &spider, 0.5, false);
     assert_valid_mesh(&v, &i, 1);
     assert_eq!(v[0].color, [1.0, 1.0, 1.0, 1.0]); // Full-bright glowing
+
+    // Glowing Cave Spider Eyes Layer (0.7x scale)
+    v.clear(); i.clear();
+    let cave_spider = create_dummy_entity(EntityKind::Mob { mob_type: 59 });
+    render_spider_eyes_layer(&mut v, &mut i, &cave_spider, 0.5, true);
+    assert_valid_mesh(&v, &i, 1);
+    assert_eq!(v[0].color, [1.0, 1.0, 1.0, 1.0]);
 
     // Glowing Enderman Eyes Layer
     v.clear(); i.clear();
@@ -382,4 +389,133 @@ fn test_damage_flash_and_invisibility_effects() {
     let alpha_invis = if entity.is_invisible { 0.15 } else { 1.0 };
     let color_invis = if entity.hurt_time > 0 { [1.0, 0.35, 0.35, alpha_invis] } else { [1.0, 1.0, 1.0, alpha_invis] };
     assert_eq!(color_invis, [1.0, 1.0, 1.0, 0.15]);
+}
+
+#[test]
+fn test_user_reported_mob_and_object_fixes() {
+    let color = [1.0, 1.0, 1.0, 1.0];
+    let mut v = Vec::new();
+    let mut i = Vec::new();
+
+    // 1. Skeleton bow model
+    let skeleton = create_dummy_entity(EntityKind::Mob { mob_type: 51 });
+    build_skeleton_bow(&mut v, &mut i, &skeleton, 0.5);
+    assert_valid_mesh(&v, &i, 2); // 2 quads for front and back of bow
+
+    // 2. Slime scaling (size 4)
+    v.clear(); i.clear();
+    let mut slime = create_dummy_entity(EntityKind::Mob { mob_type: 55 });
+    slime.metadata.push(world::entity::MetadataEntry::new(16, world::entity::MetadataValue::Byte(4)));
+    build_slime_model(&mut v, &mut i, &slime, 0.5, color);
+    assert_valid_mesh(&v, &i, 3); // body + 2 eyes
+
+    // 3. Ghast (4.5x scale)
+    v.clear(); i.clear();
+    let ghast = create_dummy_entity(EntityKind::Mob { mob_type: 56 });
+    build_ghast_model(&mut v, &mut i, &ghast, 0.5, color);
+    assert_valid_mesh(&v, &i, 10); // body + 9 tentacles
+
+    // 4. Endermite 4 segments
+    v.clear(); i.clear();
+    let endermite = create_dummy_entity(EntityKind::Mob { mob_type: 67 });
+    build_endermite_model(&mut v, &mut i, &endermite, 0.5, color);
+    assert_valid_mesh(&v, &i, 4); // 4 body segments
+
+    // 5. Guardian (elder 2.35x scale)
+    v.clear(); i.clear();
+    let guardian = create_dummy_entity(EntityKind::Mob { mob_type: 68 });
+    build_guardian_model(&mut v, &mut i, &guardian, 0.5, true, color);
+    assert_valid_mesh(&v, &i, 15); // body + eye + 12 spikes + tail
+
+    // 6. Wolf (sitting posture)
+    v.clear(); i.clear();
+    let mut wolf = create_dummy_entity(EntityKind::Mob { mob_type: 95 });
+    wolf.metadata.push(world::entity::MetadataEntry::new(16, world::entity::MetadataValue::Byte(1))); // sitting
+    build_wolf_model(&mut v, &mut i, &wolf, 0.5, color);
+    assert_valid_mesh(&v, &i, 7); // head + snout + 2 ears + mane + body + tail
+
+    // 7. Bat (wings and flight tilt)
+    v.clear(); i.clear();
+    let bat = create_dummy_entity(EntityKind::Mob { mob_type: 65 });
+    build_bat_model(&mut v, &mut i, &bat, 0.5, color);
+    assert_valid_mesh(&v, &i, 4); // body + head + 2 wings
+
+    // 8. Squid (pitch tilt)
+    v.clear(); i.clear();
+    let squid = create_dummy_entity(EntityKind::Mob { mob_type: 94 });
+    build_squid_model(&mut v, &mut i, &squid, 0.5, color);
+    assert_valid_mesh(&v, &i, 9); // body + 8 tentacles
+
+    // 9. Mooshroom red mushroom crossed quads
+    v.clear(); i.clear();
+    let mooshroom = create_dummy_entity(EntityKind::Mob { mob_type: 96 });
+    render_mooshroom_mushroom_layer(&mut v, &mut i, &mooshroom, 0.5, color);
+    assert_valid_mesh(&v, &i, 12); // 3 mushrooms * 4 quads (2 crossed double-sided)
+
+    // 10. Horse & Mule (muzzle, long ears, flank chests, 3-part tail)
+    v.clear(); i.clear();
+    let horse = create_dummy_entity(EntityKind::Mob { mob_type: 100 });
+    build_horse_model(&mut v, &mut i, &horse, 0.5, false, color);
+    assert_valid_mesh(&v, &i, 10);
+
+    v.clear(); i.clear();
+    build_horse_model(&mut v, &mut i, &horse, 0.5, true, color);
+    assert_valid_mesh(&v, &i, 14); // with mule ears and chests
+
+    // 11. Wither (2.0x scale)
+    v.clear(); i.clear();
+    let wither = create_dummy_entity(EntityKind::Mob { mob_type: 64 });
+    build_wither_model(&mut v, &mut i, &wither, 0.5, color);
+    assert_valid_mesh(&v, &i, 7); // body + upper/lower body + 3 heads + tail
+
+    // 12. Ender Dragon (12 articulated tail segments)
+    v.clear(); i.clear();
+    let dragon = create_dummy_entity(EntityKind::Mob { mob_type: 63 });
+    build_dragon_model(&mut v, &mut i, &dragon, 0.5, color);
+    assert_valid_mesh(&v, &i, 20); // body + spine + 5 neck + head + jaws + 12 tail + wings + legs
+
+    // 13. Item Frame (borders, background, item)
+    v.clear(); i.clear();
+    let frame = create_dummy_entity(EntityKind::Object { object_type: 71, data: 0 });
+    build_item_frame_borders(&mut v, &mut i, &frame, 0.5, color);
+    assert_valid_mesh(&v, &i, 4); // 4 borders
+
+    v.clear(); i.clear();
+    build_item_frame_background(&mut v, &mut i, &frame, 0.5, color);
+    assert_valid_mesh(&v, &i, 1); // backplate
+
+    v.clear(); i.clear();
+    build_item_frame_item(&mut v, &mut i, &frame, 2, false, 0.5, color);
+    assert_valid_mesh(&v, &i, 2); // 2 double-sided item quads
+
+    // 14. Dropped item entity
+    v.clear(); i.clear();
+    let item_ent = create_dummy_entity(EntityKind::Object { object_type: 2, data: 0 });
+    build_dropped_item_model(&mut v, &mut i, &item_ent, false, 0.5, color);
+    assert_valid_mesh(&v, &i, 2); // double-sided quad
+
+    v.clear(); i.clear();
+    build_dropped_item_model(&mut v, &mut i, &item_ent, true, 0.5, color);
+    assert_valid_mesh(&v, &i, 1); // 3D block cube
+
+    // 15. Projectiles: Arrow, Throwable (snowball/egg/pearl/etc.), Wither Skull, Fishing Bobber
+    v.clear(); i.clear();
+    let arrow = create_dummy_entity(EntityKind::Object { object_type: 60, data: 0 });
+    build_arrow_model(&mut v, &mut i, &arrow, 0.5, color);
+    assert_valid_mesh(&v, &i, 3); // shaft + 2 fins
+
+    v.clear(); i.clear();
+    let snowball = create_dummy_entity(EntityKind::Object { object_type: 61, data: 0 });
+    build_throwable_model(&mut v, &mut i, &snowball, 0.35, 0.5, color);
+    assert_valid_mesh(&v, &i, 2); // double sided quad
+
+    v.clear(); i.clear();
+    let skull = create_dummy_entity(EntityKind::Object { object_type: 66, data: 0 });
+    build_wither_skull_model(&mut v, &mut i, &skull, 0.5, color);
+    assert_valid_mesh(&v, &i, 1); // 3D skull box
+
+    v.clear(); i.clear();
+    let bobber = create_dummy_entity(EntityKind::Object { object_type: 90, data: 0 });
+    build_fishing_bobber_model(&mut v, &mut i, &bobber, 0.5);
+    assert_valid_mesh(&v, &i, 2); // red top + white bottom
 }

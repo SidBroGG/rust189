@@ -444,12 +444,16 @@ impl EntityRenderer {
                             let key = if is_wither { "entity/skeleton/wither_skeleton" } else { "entity/skeleton/skeleton" };
                             let (verts, inds) = collector.entry(key.to_string()).or_default();
                             crate::models::hostile::build_skeleton_model(verts, inds, entity, partial_ticks, is_wither, color);
+                            if !is_wither {
+                                let (bverts, binds) = collector.entry("items/bow_standby".to_string()).or_default();
+                                crate::models::hostile::build_skeleton_bow(bverts, binds, entity, partial_ticks);
+                            }
                         }
                         52 => {
                             let (verts, inds) = collector.entry("entity/spider/spider".to_string()).or_default();
                             crate::models::hostile::build_spider_model(verts, inds, entity, partial_ticks, false, color);
                             let (everts, einds) = collector.entry("entity/spider_eyes".to_string()).or_default();
-                            crate::models::layers::render_spider_eyes_layer(everts, einds, entity, partial_ticks);
+                            crate::models::layers::render_spider_eyes_layer(everts, einds, entity, partial_ticks, false);
                         }
                         53 => {
                             let (verts, inds) = collector.entry("entity/zombie/zombie".to_string()).or_default();
@@ -482,7 +486,7 @@ impl EntityRenderer {
                             let (verts, inds) = collector.entry("entity/spider/cave_spider".to_string()).or_default();
                             crate::models::hostile::build_spider_model(verts, inds, entity, partial_ticks, true, color);
                             let (everts, einds) = collector.entry("entity/spider_eyes".to_string()).or_default();
-                            crate::models::layers::render_spider_eyes_layer(everts, einds, entity, partial_ticks);
+                            crate::models::layers::render_spider_eyes_layer(everts, einds, entity, partial_ticks, true);
                         }
                         60 => {
                             let (verts, inds) = collector.entry("entity/silverfish".to_string()).or_default();
@@ -574,7 +578,8 @@ impl EntityRenderer {
                         96 => {
                             let (verts, inds) = collector.entry("entity/cow/mooshroom".to_string()).or_default();
                             crate::models::peaceful::build_cow_model(verts, inds, entity, partial_ticks, color);
-                            crate::models::layers::render_mooshroom_mushroom_layer(verts, inds, entity, partial_ticks, color);
+                            let (mverts, minds) = collector.entry("blocks/mushroom_red".to_string()).or_default();
+                            crate::models::layers::render_mooshroom_mushroom_layer(mverts, minds, entity, partial_ticks, color);
                         }
                         97 => {
                             let (verts, inds) = collector.entry("entity/snowman".to_string()).or_default();
@@ -610,13 +615,28 @@ impl EntityRenderer {
                 }
                 EntityKind::Object { object_type, .. } => {
                     match *object_type {
-                        78 => {
-                            let (verts, inds) = collector.entry("entity/armorstand/wood".to_string()).or_default();
-                            crate::models::vehicles::build_armor_stand_model(verts, inds, entity, partial_ticks, color);
-                        }
                         1 => {
                             let (verts, inds) = collector.entry("entity/boat".to_string()).or_default();
                             crate::models::vehicles::build_boat_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        2 => {
+                            // Dropped item (EntityItem)
+                            let slot = entity.metadata.iter().find(|m| m.index == 10).and_then(|m| match &m.value {
+                                world::entity::MetadataValue::Slot(Some(s)) => Some((s.item_id, s.item_count, s.item_damage)),
+                                _ => None,
+                            });
+                            let item_id = slot.map_or(260, |(id, _, _)| id);
+                            let (tex_key, is_block) = if let Some(def) = world::item::get_item_def(item_id) {
+                                if def.is_block {
+                                    (format!("blocks/{}", def.name), true)
+                                } else {
+                                    (format!("items/{}", def.name), false)
+                                }
+                            } else {
+                                ("items/apple".to_string(), false)
+                            };
+                            let (verts, inds) = collector.entry(tex_key).or_default();
+                            crate::models::vehicles::build_dropped_item_model(verts, inds, entity, is_block, partial_ticks, color);
                         }
                         10 => {
                             let (verts, inds) = collector.entry("entity/minecart".to_string()).or_default();
@@ -626,21 +646,91 @@ impl EntityRenderer {
                             let (verts, inds) = collector.entry("entity/endercrystal/endercrystal".to_string()).or_default();
                             crate::models::vehicles::build_ender_crystal_model(verts, inds, entity, partial_ticks, color);
                         }
+                        60 => {
+                            let (verts, inds) = collector.entry("entity/arrow".to_string()).or_default();
+                            crate::models::vehicles::build_arrow_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        61 => {
+                            let (verts, inds) = collector.entry("items/snowball".to_string()).or_default();
+                            crate::models::vehicles::build_throwable_model(verts, inds, entity, 0.35, partial_ticks, color);
+                        }
+                        62 => {
+                            let (verts, inds) = collector.entry("items/egg".to_string()).or_default();
+                            crate::models::vehicles::build_throwable_model(verts, inds, entity, 0.35, partial_ticks, color);
+                        }
+                        63 => {
+                            let (verts, inds) = collector.entry("items/fireball".to_string()).or_default();
+                            crate::models::vehicles::build_throwable_model(verts, inds, entity, 0.8, partial_ticks, color);
+                        }
+                        64 => {
+                            let (verts, inds) = collector.entry("items/fireball".to_string()).or_default();
+                            crate::models::vehicles::build_throwable_model(verts, inds, entity, 0.4, partial_ticks, color);
+                        }
+                        65 => {
+                            let (verts, inds) = collector.entry("items/ender_pearl".to_string()).or_default();
+                            crate::models::vehicles::build_throwable_model(verts, inds, entity, 0.35, partial_ticks, color);
+                        }
+                        66 => {
+                            let (verts, inds) = collector.entry("entity/wither/wither".to_string()).or_default();
+                            crate::models::vehicles::build_wither_skull_model(verts, inds, entity, partial_ticks, color);
+                        }
                         71 => {
-                            let (verts, inds) = collector.entry("entity/sign".to_string()).or_default();
-                            crate::models::vehicles::build_item_frame_model(verts, inds, entity, partial_ticks, color);
+                            // Item Frame: wooden borders + birch background plate + optional item inside
+                            let (f_verts, f_inds) = collector.entry("blocks/planks_oak".to_string()).or_default();
+                            crate::models::vehicles::build_item_frame_borders(f_verts, f_inds, entity, partial_ticks, color);
+
+                            let (bg_verts, bg_inds) = collector.entry("blocks/itemframe_background".to_string()).or_default();
+                            crate::models::vehicles::build_item_frame_background(bg_verts, bg_inds, entity, partial_ticks, color);
+
+                            let item_slot = entity.metadata.iter().find(|m| m.index == 8).and_then(|m| match &m.value {
+                                world::entity::MetadataValue::Slot(Some(slot)) => Some((slot.item_id, slot.item_damage)),
+                                _ => None,
+                            });
+                            if let Some((item_id, _dmg)) = item_slot {
+                                let rot_steps = entity.metadata.iter().find(|m| m.index == 9).and_then(|m| match m.value {
+                                    world::entity::MetadataValue::Byte(b) => Some((b & 7) as u8),
+                                    _ => None,
+                                }).unwrap_or(0);
+                                let (tex_key, is_block) = if let Some(def) = world::item::get_item_def(item_id) {
+                                    if def.is_block {
+                                        (format!("blocks/{}", def.name), true)
+                                    } else {
+                                        (format!("items/{}", def.name), false)
+                                    }
+                                } else {
+                                    ("items/apple".to_string(), false)
+                                };
+                                let (i_verts, i_inds) = collector.entry(tex_key).or_default();
+                                crate::models::vehicles::build_item_frame_item(i_verts, i_inds, entity, rot_steps, is_block, partial_ticks, color);
+                            }
+                        }
+                        72 => {
+                            let (verts, inds) = collector.entry("items/ender_eye".to_string()).or_default();
+                            crate::models::vehicles::build_throwable_model(verts, inds, entity, 0.35, partial_ticks, color);
+                        }
+                        73 => {
+                            let (verts, inds) = collector.entry("items/potion_bottle_drinkable".to_string()).or_default();
+                            crate::models::vehicles::build_throwable_model(verts, inds, entity, 0.4, partial_ticks, color);
+                        }
+                        75 => {
+                            let (verts, inds) = collector.entry("items/experience_bottle".to_string()).or_default();
+                            crate::models::vehicles::build_throwable_model(verts, inds, entity, 0.35, partial_ticks, color);
                         }
                         77 => {
                             let (verts, inds) = collector.entry("entity/lead_knot".to_string()).or_default();
                             crate::models::vehicles::build_leash_knot_model(verts, inds, entity, partial_ticks, color);
                         }
-                        60 => {
-                            let (verts, inds) = collector.entry("arrow".to_string()).or_default();
-                            build_object_model(verts, inds, entity, 60, partial_ticks);
+                        78 => {
+                            let (verts, inds) = collector.entry("entity/armorstand/wood".to_string()).or_default();
+                            crate::models::vehicles::build_armor_stand_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        90 => {
+                            let (verts, inds) = collector.entry("particle/particles".to_string()).or_default();
+                            crate::models::vehicles::build_fishing_bobber_model(verts, inds, entity, partial_ticks);
                         }
                         _ => {
-                            let (verts, inds) = collector.entry("arrow".to_string()).or_default();
-                            build_object_model(verts, inds, entity, *object_type, partial_ticks);
+                            let (verts, inds) = collector.entry("entity/arrow".to_string()).or_default();
+                            crate::models::vehicles::build_arrow_model(verts, inds, entity, partial_ticks, color);
                         }
                     }
                 }

@@ -240,8 +240,8 @@ pub fn build_leash_knot_model(
     knot.render(root, vertices, indices, color);
 }
 
-/// Builds the Item Frame model (MCP RenderItemFrame).
-pub fn build_item_frame_model(
+/// Builds the Item Frame borders model (MCP RenderItemFrame, planks_oak).
+pub fn build_item_frame_borders(
     vertices: &mut Vec<EntityVertex>,
     indices: &mut Vec<u32>,
     entity: &TrackedEntity,
@@ -252,12 +252,270 @@ pub fn build_item_frame_model(
     let yaw = entity.interpolated_yaw(partial_ticks);
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
         * Mat4::from_rotation_y((180.0 - yaw).to_radians())
-        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0));
+        * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
 
-    // Outer wooden frame box (12x12x1)
-    let mut frame = ModelPart::new(0.0, 0.0, 64.0, 32.0);
-    frame.add_box(0.0, 0.0, -6.0, -6.0, -0.5, 12.0, 12.0, 1.0, 0.0);
+    let mut frame = ModelPart::new(0.0, 0.0, 16.0, 16.0);
+    // Top border: 12 wide, 1 high, 1 deep
+    frame.add_box(0.0, 0.0, -6.0, 5.0, -0.5, 12.0, 1.0, 1.0, 0.0);
+    // Bottom border: 12 wide, 1 high, 1 deep
+    frame.add_box(0.0, 0.0, -6.0, -6.0, -0.5, 12.0, 1.0, 1.0, 0.0);
+    // Left border: 1 wide, 10 high, 1 deep
+    frame.add_box(0.0, 0.0, -6.0, -5.0, -0.5, 1.0, 10.0, 1.0, 0.0);
+    // Right border: 1 wide, 10 high, 1 deep
+    frame.add_box(0.0, 0.0, 5.0, -5.0, -0.5, 1.0, 10.0, 1.0, 0.0);
     frame.render(root, vertices, indices, color);
+}
+
+/// Builds the Item Frame background plate (MCP RenderItemFrame, itemframe_background).
+pub fn build_item_frame_background(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+
+    let mut back = ModelPart::new(0.0, 0.0, 16.0, 16.0);
+    // Recessed plate: 10 wide, 10 high, 0.5 deep
+    back.add_box(0.0, 0.0, -5.0, -5.0, 0.0, 10.0, 10.0, 0.5, 0.0);
+    back.render(root, vertices, indices, color);
+}
+
+/// Builds the Item inside the Item Frame (MCP RenderItemFrame).
+pub fn build_item_frame_item(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    rotation_steps: u8,
+    is_block: bool,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let item_rot = (rotation_steps as f32) * 45.0;
+
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_rotation_z(item_rot.to_radians())
+        * Mat4::from_translation(Vec3::new(0.0, 0.0, -0.05));
+
+    if is_block {
+        let mut block = ModelPart::new(0.0, 0.0, 16.0, 16.0);
+        block.add_box(0.0, 0.0, -2.5, -2.5, -2.5, 5.0, 5.0, 5.0, 0.0);
+        block.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+    } else {
+        let s = 0.225;
+        let base_idx = vertices.len() as u32;
+        let p0 = (root * Vec3::new(-s, -s, 0.0).extend(1.0)).truncate();
+        let p1 = (root * Vec3::new(s, -s, 0.0).extend(1.0)).truncate();
+        let p2 = (root * Vec3::new(s, s, 0.0).extend(1.0)).truncate();
+        let p3 = (root * Vec3::new(-s, s, 0.0).extend(1.0)).truncate();
+
+        let norm_f = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+        let norm_b = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+
+        // Front
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_f, color });
+        indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+
+        // Back
+        let b_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_b, color });
+        indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
+    }
+}
+
+/// Builds the Item Frame model (MCP RenderItemFrame).
+pub fn build_item_frame_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    build_item_frame_borders(vertices, indices, entity, partial_ticks, color);
+    build_item_frame_background(vertices, indices, entity, partial_ticks, color);
+}
+
+/// Builds the dropped item model (MCP RenderEntityItem).
+pub fn build_dropped_item_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    is_block: bool,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let age = entity.ticks_existed as f32 + partial_ticks;
+    let bob = ((age / 10.0 + (entity.id as f32 * 0.1)).sin() * 0.1 + 0.1) as f32;
+    let spin = (age / 20.0 * 360.0).to_radians();
+
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32 + bob, pos.z as f32))
+        * Mat4::from_rotation_y(spin);
+
+    if is_block {
+        let mut block = ModelPart::new(0.0, 0.0, 16.0, 16.0);
+        block.add_box(0.0, 0.0, -2.0, -2.0, -2.0, 4.0, 4.0, 4.0, 0.0);
+        block.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+    } else {
+        let s = 0.2;
+        let base_idx = vertices.len() as u32;
+        let p0 = (root * Vec3::new(-s, -s, 0.0).extend(1.0)).truncate();
+        let p1 = (root * Vec3::new(s, -s, 0.0).extend(1.0)).truncate();
+        let p2 = (root * Vec3::new(s, s, 0.0).extend(1.0)).truncate();
+        let p3 = (root * Vec3::new(-s, s, 0.0).extend(1.0)).truncate();
+
+        let norm_f = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+        let norm_b = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+
+        // Front
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_f, color });
+        indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+
+        // Back
+        let b_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_b, color });
+        indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
+    }
+}
+
+/// Builds the 3D Arrow projectile model (MCP RenderArrow).
+pub fn build_arrow_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let pitch = entity.interpolated_pitch(partial_ticks);
+
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_rotation_x(pitch.to_radians());
+
+    // Arrow shaft: thin 3D rod (0.05 x 0.05 x 0.8)
+    let mut shaft = ModelPart::new(0.0, 0.0, 32.0, 32.0);
+    shaft.add_box(0.0, 5.0, -0.5, -0.5, -8.0, 1.0, 1.0, 16.0, 0.0);
+    shaft.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+
+    // Fletching fins: 2 crossed quads at the back
+    let mut fin1 = ModelPart::new(0.0, 0.0, 32.0, 32.0);
+    fin1.add_box(0.0, 0.0, -2.5, 0.0, -8.0, 5.0, 0.1, 5.0, 0.0);
+    fin1.set_rotation(0.0, 0.0, PI / 4.0);
+    fin1.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+
+    let mut fin2 = ModelPart::new(0.0, 0.0, 32.0, 32.0);
+    fin2.add_box(0.0, 0.0, -2.5, 0.0, -8.0, 5.0, 0.1, 5.0, 0.0);
+    fin2.set_rotation(0.0, 0.0, -PI / 4.0);
+    fin2.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+}
+
+/// Builds a throwable 2D double-sided quad projectile (MCP RenderSnowball).
+pub fn build_throwable_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    size: f32,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let pitch = entity.interpolated_pitch(partial_ticks);
+
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_rotation_x(pitch.to_radians());
+
+    let s = size * 0.5;
+    let base_idx = vertices.len() as u32;
+    let p0 = (root * Vec3::new(-s, -s, 0.0).extend(1.0)).truncate();
+    let p1 = (root * Vec3::new(s, -s, 0.0).extend(1.0)).truncate();
+    let p2 = (root * Vec3::new(s, s, 0.0).extend(1.0)).truncate();
+    let p3 = (root * Vec3::new(-s, s, 0.0).extend(1.0)).truncate();
+
+    let norm_f = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+    let norm_b = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+
+    // Front
+    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_f, color });
+    vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_f, color });
+    vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_f, color });
+    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_f, color });
+    indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+
+    // Back
+    let b_idx = vertices.len() as u32;
+    vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_b, color });
+    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_b, color });
+    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_b, color });
+    vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_b, color });
+    indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
+}
+
+/// Builds the Wither Skull projectile (MCP RenderWitherSkull).
+pub fn build_wither_skull_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let pitch = entity.interpolated_pitch(partial_ticks);
+
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_rotation_x(pitch.to_radians())
+        * Mat4::from_scale(Vec3::splat(1.0 / 16.0 * 0.5));
+
+    let mut head = ModelPart::new(0.0, 0.0, 64.0, 64.0);
+    head.add_box(0.0, 0.0, -4.0, -4.0, -4.0, 8.0, 8.0, 8.0, 0.0);
+    head.render(root, vertices, indices, color);
+}
+
+/// Builds the Fishing Bobber model (MCP RenderFish).
+pub fn build_fishing_bobber_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+
+    // Top half (red)
+    let mut top = ModelPart::new(0.0, 0.0, 16.0, 16.0);
+    top.add_box(0.0, 0.0, -1.0, 0.0, -1.0, 2.0, 1.0, 2.0, 0.0);
+    top.render(root, vertices, indices, [0.9, 0.15, 0.15, 1.0]);
+
+    // Bottom half (white)
+    let mut bottom = ModelPart::new(0.0, 0.0, 16.0, 16.0);
+    bottom.add_box(0.0, 0.0, -1.0, -1.0, -1.0, 2.0, 1.0, 2.0, 0.0);
+    bottom.render(root, vertices, indices, [0.95, 0.95, 0.95, 1.0]);
 }
 
 /// Painting artwork definitions from MCP EntityPainting.EnumArt.

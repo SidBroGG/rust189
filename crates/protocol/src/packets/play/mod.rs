@@ -59,6 +59,7 @@ pub enum ClientboundPlayPacket {
     RemoveEntityEffect(ClientboundRemoveEntityEffectPacket),
     ChangeGameState(ClientboundChangeGameStatePacket),
     CustomPayload(ClientboundCustomPayloadPacket),
+    AttachEntity(ClientboundAttachEntityPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -212,6 +213,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundCustomPayloadPacket::PACKET_ID => {
                 Ok(Self::CustomPayload(ClientboundCustomPayloadPacket::decode(payload)?))
+            }
+            ClientboundAttachEntityPacket::PACKET_ID => {
+                Ok(Self::AttachEntity(ClientboundAttachEntityPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,

@@ -1,5 +1,6 @@
 use super::{root_entity_matrix, ModelPart};
 use crate::entity_renderer::EntityVertex;
+use glam::{Mat4, Vec3};
 use std::f32::consts::PI;
 use world::entity::TrackedEntity;
 
@@ -145,7 +146,49 @@ pub fn render_snowman_head_layer(
     pumpkin.render(root, vertices, indices, color);
 }
 
-/// Renders Mooshroom Mushroom layer (MCP LayerMooshroomMushroom).
+fn render_crossed_quads(
+    matrix: Mat4,
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    color: [f32; 4],
+) {
+    let s = 0.5f32;
+    let q1 = [
+        Vec3::new(-s, -s, -s),
+        Vec3::new(s, -s, s),
+        Vec3::new(s, s, s),
+        Vec3::new(-s, s, -s),
+    ];
+    let q2 = [
+        Vec3::new(-s, -s, s),
+        Vec3::new(s, -s, -s),
+        Vec3::new(s, s, -s),
+        Vec3::new(-s, s, s),
+    ];
+    for q in &[q1, q2] {
+        let base_idx = vertices.len() as u32;
+        let p0 = (matrix * q[0].extend(1.0)).truncate();
+        let p1 = (matrix * q[1].extend(1.0)).truncate();
+        let p2 = (matrix * q[2].extend(1.0)).truncate();
+        let p3 = (matrix * q[3].extend(1.0)).truncate();
+        let normal = [0.0, 1.0, 0.0];
+
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal, color });
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal, color });
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal, color });
+        indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+
+        let b_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal, color });
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal, color });
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal, color });
+        indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
+    }
+}
+
+/// Renders Mooshroom Mushroom layer (MCP LayerMooshroomMushroom - crossed quads).
 pub fn render_mooshroom_mushroom_layer(
     vertices: &mut Vec<EntityVertex>,
     indices: &mut Vec<u32>,
@@ -155,26 +198,31 @@ pub fn render_mooshroom_mushroom_layer(
 ) {
     let root = root_entity_matrix(entity, partial_ticks);
 
-    // Mushroom 1 on back
-    let mut shroom1 = ModelPart::new(0.0, 0.0, 64.0, 32.0);
-    shroom1.set_rotation_point(-2.0, -3.0, 5.0);
-    shroom1.add_box(0.0, 0.0, -4.0, -4.0, -4.0, 8.0, 8.0, 8.0, 0.0);
-    shroom1.render(root, vertices, indices, color);
+    // Shroom 1 on back right
+    let m1 = root
+        * Mat4::from_translation(Vec3::new(0.2, 0.75, 0.3))
+        * Mat4::from_rotation_y((42.0_f32).to_radians())
+        * Mat4::from_scale(Vec3::splat(0.8));
+    render_crossed_quads(m1, vertices, indices, color);
 
-    // Mushroom 2 on back
-    let mut shroom2 = ModelPart::new(0.0, 0.0, 64.0, 32.0);
-    shroom2.set_rotation_point(3.0, -5.0, -1.0);
-    shroom2.add_box(0.0, 0.0, -3.0, -3.0, -3.0, 6.0, 6.0, 6.0, 0.0);
-    shroom2.render(root, vertices, indices, color);
+    // Shroom 2 on back left
+    let m2 = root
+        * Mat4::from_translation(Vec3::new(-0.2, 0.75, -0.3))
+        * Mat4::from_rotation_y((42.0_f32).to_radians())
+        * Mat4::from_scale(Vec3::splat(0.8));
+    render_crossed_quads(m2, vertices, indices, color);
 
-    // Mushroom 3 on head
+    // Shroom 3 on head
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
     let head_pitch = entity.interpolated_pitch(partial_ticks).to_radians();
-    let mut shroom3 = ModelPart::new(0.0, 0.0, 64.0, 32.0);
-    shroom3.set_rotation_point(0.0, 0.0, -8.0);
-    shroom3.set_rotation(head_pitch, head_yaw, 0.0);
-    shroom3.add_box(0.0, 0.0, -3.0, -9.0, -3.0, 6.0, 6.0, 6.0, 0.0);
-    shroom3.render(root, vertices, indices, color);
+    let m3 = root
+        * Mat4::from_translation(Vec3::new(0.0, 0.25, -0.5))
+        * Mat4::from_rotation_y(head_yaw)
+        * Mat4::from_rotation_x(head_pitch)
+        * Mat4::from_translation(Vec3::new(0.0, 0.5, 0.0))
+        * Mat4::from_rotation_y((12.0_f32).to_radians())
+        * Mat4::from_scale(Vec3::splat(0.8));
+    render_crossed_quads(m3, vertices, indices, color);
 }
 
 /// Renders Iron Golem Poppy Flower layer (MCP LayerIronGolemFlower).
@@ -198,8 +246,12 @@ pub fn render_spider_eyes_layer(
     indices: &mut Vec<u32>,
     entity: &TrackedEntity,
     partial_ticks: f32,
+    is_cave_spider: bool,
 ) {
-    let root = root_entity_matrix(entity, partial_ticks);
+    let mut root = root_entity_matrix(entity, partial_ticks);
+    if is_cave_spider {
+        root *= Mat4::from_scale(Vec3::splat(0.7));
+    }
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
     let head_pitch = entity.interpolated_pitch(partial_ticks).to_radians();
 
@@ -302,7 +354,13 @@ pub fn render_slime_gel_layer(
     partial_ticks: f32,
     color: [f32; 4],
 ) {
-    let root = root_entity_matrix(entity, partial_ticks);
+    let slime_size = entity.metadata.iter().find(|m| m.index == 16).and_then(|m| match m.value {
+        world::entity::MetadataValue::Byte(b) => Some(b.max(1) as f32),
+        world::entity::MetadataValue::Int(i) => Some((i as f32).max(1.0)),
+        _ => None,
+    }).unwrap_or(1.0);
+    let mut root = root_entity_matrix(entity, partial_ticks);
+    root *= Mat4::from_scale(Vec3::splat(slime_size));
     let mut gel_color = color;
     gel_color[3] = 0.6; // Translucent outer cube
 
