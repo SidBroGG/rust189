@@ -170,6 +170,44 @@ impl TrackedEntity {
             self.head_yaw += diff_head / (steps as f32);
 
             self.interpolation_steps -= 1;
+        } else {
+            // Ballistic dead reckoning between server position updates (MCP EntityItem, EntityArrow, EntityThrowable)
+            if let EntityKind::Object { object_type, .. } = self.kind {
+                match object_type {
+                    2 => {
+                        // Dropped item: gravity 0.04, friction 0.98
+                        if !self.on_ground {
+                            self.velocity.y -= 0.04;
+                            self.velocity *= 0.98;
+                            self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                        }
+                    }
+                    60 => {
+                        // Arrow: gravity 0.05, drag 0.99
+                        if !self.on_ground {
+                            self.velocity.y -= 0.05;
+                            self.velocity *= 0.99;
+                            self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                            let horiz = (self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z).sqrt();
+                            self.yaw = self.velocity.x.atan2(self.velocity.z).to_degrees();
+                            self.pitch = self.velocity.y.atan2(horiz).to_degrees();
+                        }
+                    }
+                    61 | 62 | 65 | 73 | 75 => {
+                        // Throwables (Snowball, Egg, Pearl, Potion, ExpBottle): gravity 0.03, drag 0.99
+                        self.velocity.y -= 0.03;
+                        self.velocity *= 0.99;
+                        self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                    }
+                    90 => {
+                        // Fishing Bobber: gravity 0.03, drag 0.92
+                        self.velocity.y -= 0.03;
+                        self.velocity *= 0.92;
+                        self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                    }
+                    _ => {}
+                }
+            }
         }
 
         // Update limb swing (walking animation)
@@ -550,7 +588,11 @@ impl EntityTracker {
             fixed_y as f64 / 32.0,
             fixed_z as f64 / 32.0,
         );
-        let yaw = (yaw_byte as f32 * 360.0) / 256.0;
+        let yaw = if object_type == 71 && (0..=3).contains(&data) {
+            (data as f32) * 90.0
+        } else {
+            (yaw_byte as f32 * 360.0) / 256.0
+        };
         let pitch = (pitch_byte as f32 * 360.0) / 256.0;
 
         let mut entity = TrackedEntity::new(

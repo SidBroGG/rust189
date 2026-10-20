@@ -47,6 +47,9 @@ pub struct InGameScreen {
     pub chat_messages: Vec<ChatMessageEntry>,
     pub chat_input: String,
     pub chat_opened: bool,
+    pub chat_history: Vec<String>,
+    pub chat_history_index: Option<usize>,
+    pub chat_uncommitted: String,
     pub escape_menu_opened: bool,
     pub hud_editor_opened: bool,
     pub show_fps: bool,
@@ -107,6 +110,9 @@ impl InGameScreen {
             chat_messages: Vec::new(),
             chat_input: String::new(),
             chat_opened: false,
+            chat_history: Vec::new(),
+            chat_history_index: None,
+            chat_uncommitted: String::new(),
             escape_menu_opened: false,
             hud_editor_opened: false,
             show_fps: false,
@@ -306,6 +312,8 @@ impl InGameScreen {
             } else if self.chat_opened {
                 self.chat_opened = false;
                 self.chat_input.clear();
+                self.chat_uncommitted.clear();
+                self.chat_history_index = None;
             } else {
                 self.escape_menu_opened = !self.escape_menu_opened;
             }
@@ -350,9 +358,13 @@ impl InGameScreen {
         if !self.chat_opened && !self.escape_menu_opened && !self.inventory_opened && self.active_container.is_none() {
             if ctx.input(|i| i.key_pressed(Key::T) || i.key_pressed(Key::Enter)) {
                 self.chat_opened = true;
+                self.chat_history_index = None;
+                self.chat_uncommitted.clear();
                 self.request_chat_focus = true;
             } else if ctx.input(|i| i.key_pressed(Key::Slash)) {
                 self.chat_opened = true;
+                self.chat_history_index = None;
+                self.chat_uncommitted.clear();
                 self.chat_input = "/".to_string();
                 self.request_chat_focus = true;
             }
@@ -613,7 +625,7 @@ impl InGameScreen {
                                         }
                                     });
 
-                                // Chat Input Box with Tab Autocompletion and Font Size Controls
+                                // Chat Input Box with Tab Autocompletion, History Navigation, and Font Size Controls
                                 if self.chat_opened {
                                     ui.separator();
 
@@ -641,6 +653,37 @@ impl InGameScreen {
                                         self.request_chat_focus = true;
                                     }
 
+                                    // Arrow Up / Down Chat History Navigation (MCP GuiChat.getSentHistory)
+                                    let up_pressed = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowUp));
+                                    let down_pressed = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::ArrowDown));
+
+                                    if up_pressed && !self.chat_history.is_empty() {
+                                        let next_idx = match self.chat_history_index {
+                                            None => {
+                                                self.chat_uncommitted = self.chat_input.clone();
+                                                self.chat_history.len() - 1
+                                            }
+                                            Some(idx) => {
+                                                if idx > 0 { idx - 1 } else { 0 }
+                                            }
+                                        };
+                                        self.chat_history_index = Some(next_idx);
+                                        self.chat_input = self.chat_history[next_idx].clone();
+                                        self.request_chat_focus = true;
+                                    } else if down_pressed {
+                                        if let Some(idx) = self.chat_history_index {
+                                            if idx + 1 < self.chat_history.len() {
+                                                let next_idx = idx + 1;
+                                                self.chat_history_index = Some(next_idx);
+                                                self.chat_input = self.chat_history[next_idx].clone();
+                                            } else {
+                                                self.chat_history_index = None;
+                                                self.chat_input = self.chat_uncommitted.clone();
+                                            }
+                                            self.request_chat_focus = true;
+                                        }
+                                    }
+
                                     ui.horizontal(|ui| {
                                         let edit = TextEdit::singleline(&mut self.chat_input)
                                             .hint_text("Press Enter to send, Tab to autocomplete...")
@@ -650,7 +693,7 @@ impl InGameScreen {
 
                                         let output = edit.show(ui);
                                         let response = output.response;
-                                        if self.request_chat_focus || tab_pressed {
+                                        if self.request_chat_focus || tab_pressed || up_pressed || down_pressed {
                                             response.request_focus();
                                             let mut state = TextEdit::load_state(ui.ctx(), response.id).unwrap_or_default();
                                             let char_len = self.chat_input.chars().count();
@@ -664,9 +707,17 @@ impl InGameScreen {
                                         {
                                             let trimmed = self.chat_input.trim().to_string();
                                             if !trimmed.is_empty() {
+                                                if self.chat_history.last().map_or(true, |last| last != &trimmed) {
+                                                    if self.chat_history.len() >= 100 {
+                                                        self.chat_history.remove(0);
+                                                    }
+                                                    self.chat_history.push(trimmed.clone());
+                                                }
                                                 action = InGameAction::SendChat(trimmed);
                                             }
                                             self.chat_input.clear();
+                                            self.chat_uncommitted.clear();
+                                            self.chat_history_index = None;
                                             self.chat_opened = false;
                                         }
                                     });

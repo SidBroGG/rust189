@@ -22,8 +22,8 @@ pub use item::{
 };
 
 pub use block::{
-    get_block_pick_item, is_interactive_block, is_placeable_block_item, is_replaceable_block,
-    BlockState,
+    calculate_placed_block_meta, get_block_pick_item, is_interactive_block,
+    is_placeable_block_item, is_replaceable_block, BlockState,
 };
 pub use chat::{parse_chat_message, parse_spans, strip_formatting, ChatSpan};
 pub use chunk::{ChunkColumn, WorldError};

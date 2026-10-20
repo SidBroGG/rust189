@@ -85,6 +85,9 @@ pub struct EntityRenderer {
     index_buffer: wgpu::Buffer,
     vertex_capacity: usize,
     index_capacity: usize,
+
+    pub camera_yaw: std::cell::Cell<f32>,
+    pub camera_pitch: std::cell::Cell<f32>,
 }
 
 impl EntityRenderer {
@@ -265,6 +268,8 @@ impl EntityRenderer {
             index_buffer,
             vertex_capacity,
             index_capacity,
+            camera_yaw: std::cell::Cell::new(0.0),
+            camera_pitch: std::cell::Cell::new(0.0),
         }
     }
 
@@ -385,6 +390,9 @@ impl EntityRenderer {
         camera: &Camera,
         render_distance_blocks: f32,
     ) {
+        self.camera_yaw.set(camera.yaw);
+        self.camera_pitch.set(camera.pitch);
+
         let view_proj = camera.view_proj_matrix();
         let uniforms = EntityUniforms {
             view_proj: view_proj.to_cols_array_2d(),
@@ -639,7 +647,7 @@ impl EntityRenderer {
                             crate::models::vehicles::build_ender_crystal_model(verts, inds, entity, partial_ticks, color);
                         }
                         60 => {
-                            let (verts, inds) = collector.entry("entity/arrow".to_string()).or_default();
+                            let (verts, inds) = collector.entry("arrow".to_string()).or_default();
                             crate::models::vehicles::build_arrow_model(verts, inds, entity, partial_ticks, color);
                         }
                         61 => {
@@ -710,10 +718,17 @@ impl EntityRenderer {
                         }
                         90 => {
                             let (verts, inds) = collector.entry("particle/particles".to_string()).or_default();
-                            crate::models::vehicles::build_fishing_bobber_model(verts, inds, entity, partial_ticks);
+                            crate::models::vehicles::build_fishing_bobber_model_oriented(
+                                verts,
+                                inds,
+                                entity,
+                                self.camera_yaw.get(),
+                                self.camera_pitch.get(),
+                                partial_ticks,
+                            );
                         }
                         _ => {
-                            let (verts, inds) = collector.entry("entity/arrow".to_string()).or_default();
+                            let (verts, inds) = collector.entry("arrow".to_string()).or_default();
                             crate::models::vehicles::build_arrow_model(verts, inds, entity, partial_ticks, color);
                         }
                     }
@@ -763,7 +778,7 @@ impl EntityRenderer {
 
         // Ensure GPU textures are loaded
         for batch in &batches {
-            if !batch.texture_key.starts_with("player_") && batch.texture_key != "arrow" {
+            if !batch.texture_key.starts_with("player_") && batch.texture_key != "arrow" && batch.texture_key != "entity/arrow" {
                 self.ensure_texture(device, queue, &batch.texture_key);
             }
         }
@@ -799,7 +814,7 @@ impl EntityRenderer {
         rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
         for batch in batches {
-            let bg = if batch.texture_key == "arrow" {
+            let bg = if batch.texture_key == "arrow" || batch.texture_key == "entity/arrow" {
                 &self.arrow_skin.bind_group
             } else if let Some(uuid_str) = batch.texture_key.strip_prefix("player_") {
                 if let Ok(uuid) = Uuid::parse_str(uuid_str) {

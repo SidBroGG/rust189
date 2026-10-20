@@ -255,15 +255,15 @@ pub fn build_item_frame_borders(
         * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
 
     let mut frame = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-    // Matching vanilla item_frame.json elements (z from 7.0 to 8.0 against the wall):
+    // Matching vanilla item_frame.json elements (resting against wall surface at z = 0, sticking forward to z = -1):
     // Top border: 12 wide, 1 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, 5.0, 7.0, 12.0, 1.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, 5.0, -1.0, 12.0, 1.0, 1.0, 0.0);
     // Bottom border: 12 wide, 1 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, -6.0, 7.0, 12.0, 1.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, -6.0, -1.0, 12.0, 1.0, 1.0, 0.0);
     // Left border: 1 wide, 10 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, -5.0, 7.0, 1.0, 10.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, -5.0, -1.0, 1.0, 10.0, 1.0, 0.0);
     // Right border: 1 wide, 10 high, 1 deep
-    frame.add_box(0.0, 0.0, 5.0, -5.0, 7.0, 1.0, 10.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, 5.0, -5.0, -1.0, 1.0, 10.0, 1.0, 0.0);
     frame.render(root, vertices, indices, color);
 }
 
@@ -282,8 +282,8 @@ pub fn build_item_frame_background(
         * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
 
     let mut back = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-    // Recessed plate: 10 wide, 10 high, 0.5 deep (z from 7.5 to 8.0)
-    back.add_box(0.0, 0.0, -5.0, -5.0, 7.5, 10.0, 10.0, 0.5, 0.0);
+    // Recessed plate: 10 wide, 10 high, 0.5 deep (resting on wall z = 0 to z = -0.5)
+    back.add_box(0.0, 0.0, -5.0, -5.0, -0.5, 10.0, 10.0, 0.5, 0.0);
     back.render(root, vertices, indices, color);
 }
 
@@ -303,7 +303,7 @@ pub fn build_item_frame_item(
 
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
         * Mat4::from_rotation_y((180.0 - yaw).to_radians())
-        * Mat4::from_translation(Vec3::new(0.0, 0.0, 7.0 / 16.0 - 0.01))
+        * Mat4::from_translation(Vec3::new(0.0, 0.0, -0.0625))
         * Mat4::from_rotation_z(item_rot.to_radians());
 
     if is_block {
@@ -459,25 +459,72 @@ pub fn build_arrow_model(
     let yaw = entity.interpolated_yaw(partial_ticks);
     let pitch = entity.interpolated_pitch(partial_ticks);
 
+    let f8 = 0.05625f32;
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
-        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
-        * Mat4::from_rotation_x(pitch.to_radians());
+        * Mat4::from_rotation_y((yaw - 90.0).to_radians())
+        * Mat4::from_rotation_z(pitch.to_radians())
+        * Mat4::from_rotation_x(45.0f32.to_radians())
+        * Mat4::from_scale(Vec3::splat(f8))
+        * Mat4::from_translation(Vec3::new(-4.0, 0.0, 0.0));
 
-    // Arrow shaft: thin 3D rod (0.05 x 0.05 x 0.8)
-    let mut shaft = ModelPart::new(0.0, 0.0, 32.0, 32.0);
-    shaft.add_box(0.0, 5.0, -0.5, -0.5, -8.0, 1.0, 1.0, 16.0, 0.0);
-    shaft.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+    // Tail fin (double-sided quad at x = -7)
+    let tail_norm_f = (root * Vec3::new(1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+    let tail_norm_b = (root * Vec3::new(-1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
 
-    // Fletching fins: 2 crossed quads at the back
-    let mut fin1 = ModelPart::new(0.0, 0.0, 32.0, 32.0);
-    fin1.add_box(0.0, 0.0, -2.5, 0.0, -8.0, 5.0, 0.1, 5.0, 0.0);
-    fin1.set_rotation(0.0, 0.0, PI / 4.0);
-    fin1.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+    let tp0 = (root * Vec3::new(-7.0, -2.0, -2.0).extend(1.0)).truncate();
+    let tp1 = (root * Vec3::new(-7.0, -2.0, 2.0).extend(1.0)).truncate();
+    let tp2 = (root * Vec3::new(-7.0, 2.0, 2.0).extend(1.0)).truncate();
+    let tp3 = (root * Vec3::new(-7.0, 2.0, -2.0).extend(1.0)).truncate();
 
-    let mut fin2 = ModelPart::new(0.0, 0.0, 32.0, 32.0);
-    fin2.add_box(0.0, 0.0, -2.5, 0.0, -8.0, 5.0, 0.1, 5.0, 0.0);
-    fin2.set_rotation(0.0, 0.0, -PI / 4.0);
-    fin2.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+    let f4 = 0.0f32;
+    let f5 = 0.15625f32; // 5/32
+    let f6 = 5.0 / 32.0f32;
+    let f7 = 10.0 / 32.0f32;
+
+    let t_idx = vertices.len() as u32;
+    vertices.push(EntityVertex { position: tp0.to_array(), uv: [f4, f6], normal: tail_norm_f, color });
+    vertices.push(EntityVertex { position: tp1.to_array(), uv: [f5, f6], normal: tail_norm_f, color });
+    vertices.push(EntityVertex { position: tp2.to_array(), uv: [f5, f7], normal: tail_norm_f, color });
+    vertices.push(EntityVertex { position: tp3.to_array(), uv: [f4, f7], normal: tail_norm_f, color });
+    indices.extend_from_slice(&[t_idx, t_idx + 1, t_idx + 2, t_idx, t_idx + 2, t_idx + 3]);
+
+    let tb_idx = vertices.len() as u32;
+    vertices.push(EntityVertex { position: tp3.to_array(), uv: [f4, f6], normal: tail_norm_b, color });
+    vertices.push(EntityVertex { position: tp2.to_array(), uv: [f5, f6], normal: tail_norm_b, color });
+    vertices.push(EntityVertex { position: tp1.to_array(), uv: [f5, f7], normal: tail_norm_b, color });
+    vertices.push(EntityVertex { position: tp0.to_array(), uv: [f4, f7], normal: tail_norm_b, color });
+    indices.extend_from_slice(&[tb_idx, tb_idx + 1, tb_idx + 2, tb_idx, tb_idx + 2, tb_idx + 3]);
+
+    // 4 crossed shaft quads rotated around X
+    let f = 0.0f32;
+    let f1 = 0.5f32;
+    let f2 = 0.0f32;
+    let f3 = 5.0 / 32.0f32;
+
+    for j in 0..4 {
+        let rot_m = root * Mat4::from_rotation_x((j as f32 * 90.0).to_radians());
+        let shaft_norm_f = (rot_m * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+        let shaft_norm_b = (rot_m * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+
+        let sp0 = (rot_m * Vec3::new(-8.0, -2.0, 0.0).extend(1.0)).truncate();
+        let sp1 = (rot_m * Vec3::new(8.0, -2.0, 0.0).extend(1.0)).truncate();
+        let sp2 = (rot_m * Vec3::new(8.0, 2.0, 0.0).extend(1.0)).truncate();
+        let sp3 = (rot_m * Vec3::new(-8.0, 2.0, 0.0).extend(1.0)).truncate();
+
+        let s_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: sp0.to_array(), uv: [f, f2], normal: shaft_norm_f, color });
+        vertices.push(EntityVertex { position: sp1.to_array(), uv: [f1, f2], normal: shaft_norm_f, color });
+        vertices.push(EntityVertex { position: sp2.to_array(), uv: [f1, f3], normal: shaft_norm_f, color });
+        vertices.push(EntityVertex { position: sp3.to_array(), uv: [f, f3], normal: shaft_norm_f, color });
+        indices.extend_from_slice(&[s_idx, s_idx + 1, s_idx + 2, s_idx, s_idx + 2, s_idx + 3]);
+
+        let sb_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: sp1.to_array(), uv: [f1, f2], normal: shaft_norm_b, color });
+        vertices.push(EntityVertex { position: sp0.to_array(), uv: [f, f2], normal: shaft_norm_b, color });
+        vertices.push(EntityVertex { position: sp3.to_array(), uv: [f, f3], normal: shaft_norm_b, color });
+        vertices.push(EntityVertex { position: sp2.to_array(), uv: [f1, f3], normal: shaft_norm_b, color });
+        indices.extend_from_slice(&[sb_idx, sb_idx + 1, sb_idx + 2, sb_idx, sb_idx + 2, sb_idx + 3]);
+    }
 }
 
 /// Builds a throwable 2D double-sided quad projectile (MCP RenderSnowball).
@@ -552,19 +599,47 @@ pub fn build_fishing_bobber_model(
     entity: &TrackedEntity,
     partial_ticks: f32,
 ) {
+    build_fishing_bobber_model_oriented(vertices, indices, entity, 0.0, 0.0, partial_ticks);
+}
+
+/// Builds the oriented billboard Fishing Bobber model (MCP RenderFish).
+pub fn build_fishing_bobber_model_oriented(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    cam_yaw: f32,
+    cam_pitch: f32,
+    partial_ticks: f32,
+) {
     let pos = entity.interpolated_pos(partial_ticks);
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
-        * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+        * Mat4::from_rotation_y((180.0 - cam_yaw).to_radians())
+        * Mat4::from_rotation_x((-cam_pitch).to_radians())
+        * Mat4::from_scale(Vec3::splat(0.5));
 
-    // Top half (red)
-    let mut top = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-    top.add_box(0.0, 0.0, -1.0, 0.0, -1.0, 2.0, 1.0, 2.0, 0.0);
-    top.render(root, vertices, indices, [0.9, 0.15, 0.15, 1.0]);
+    let norm_f = (root * Vec3::new(0.0, 1.0, 0.0).extend(0.0)).truncate().to_array();
+    let norm_b = (root * Vec3::new(0.0, -1.0, 0.0).extend(0.0)).truncate().to_array();
 
-    // Bottom half (white)
-    let mut bottom = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-    bottom.add_box(0.0, 0.0, -1.0, -1.0, -1.0, 2.0, 1.0, 2.0, 0.0);
-    bottom.render(root, vertices, indices, [0.95, 0.95, 0.95, 1.0]);
+    let p0 = (root * Vec3::new(-0.5, -0.5, 0.0).extend(1.0)).truncate();
+    let p1 = (root * Vec3::new(0.5, -0.5, 0.0).extend(1.0)).truncate();
+    let p2 = (root * Vec3::new(0.5, 0.5, 0.0).extend(1.0)).truncate();
+    let p3 = (root * Vec3::new(-0.5, 0.5, 0.0).extend(1.0)).truncate();
+
+    let base_idx = vertices.len() as u32;
+    // Front face
+    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0625, 0.1875], normal: norm_f, color: [1.0, 1.0, 1.0, 1.0] });
+    vertices.push(EntityVertex { position: p1.to_array(), uv: [0.125, 0.1875], normal: norm_f, color: [1.0, 1.0, 1.0, 1.0] });
+    vertices.push(EntityVertex { position: p2.to_array(), uv: [0.125, 0.125], normal: norm_f, color: [1.0, 1.0, 1.0, 1.0] });
+    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0625, 0.125], normal: norm_f, color: [1.0, 1.0, 1.0, 1.0] });
+    indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+
+    // Back face
+    let b_idx = vertices.len() as u32;
+    vertices.push(EntityVertex { position: p1.to_array(), uv: [0.125, 0.1875], normal: norm_b, color: [1.0, 1.0, 1.0, 1.0] });
+    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0625, 0.1875], normal: norm_b, color: [1.0, 1.0, 1.0, 1.0] });
+    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0625, 0.125], normal: norm_b, color: [1.0, 1.0, 1.0, 1.0] });
+    vertices.push(EntityVertex { position: p2.to_array(), uv: [0.125, 0.125], normal: norm_b, color: [1.0, 1.0, 1.0, 1.0] });
+    indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
 }
 
 /// Painting artwork definitions from MCP EntityPainting.EnumArt.

@@ -145,6 +145,107 @@ pub fn get_block_pick_item(block_id: u16, meta: u8) -> Option<(i16, i16)> {
     }
 }
 
+/// Calculates the metadata for a newly placed block based on its ID, item damage,
+/// target block face, cursor coordinates, and player view angles (MCP 1.8.9 Block.onBlockPlaced).
+pub fn calculate_placed_block_meta(
+    block_id: u16,
+    item_damage: i16,
+    face: u8,
+    cursor_y: u8,
+    player_yaw: f32,
+    _player_pitch: f32,
+) -> u8 {
+    // Player horizontal facing index: 0 = South, 1 = West, 2 = North, 3 = East
+    let yaw_idx = (((player_yaw * 4.0 / 360.0).round() as i32).rem_euclid(4)) as u8;
+
+    match block_id {
+        // End Portal Frame (120): Facing opposite of player, eye bit = 0
+        120 => (yaw_idx + 2) % 4,
+
+        // Ladder (65): Face attached (2 = North, 3 = South, 4 = West, 5 = East)
+        65 => {
+            if (2..=5).contains(&face) {
+                face
+            } else {
+                match yaw_idx {
+                    0 => 3, // South
+                    1 => 4, // West
+                    2 => 2, // North
+                    _ => 5, // East
+                }
+            }
+        }
+
+        // Torch (50) and Redstone Torch (76)
+        50 | 76 => match face {
+            1 => 5, // Placed on top of block (floor torch)
+            2 => 4, // Placed on North face of attached block (facing South)
+            3 => 3, // Placed on South face of attached block (facing North)
+            4 => 2, // Placed on West face of attached block (facing East)
+            5 => 1, // Placed on East face of attached block (facing West)
+            _ => 5, // Fallback floor
+        },
+
+        // Stairs (53, 67, 108, 109, 114, 128, 134, 135, 136, 156, 163, 164, 180)
+        53 | 67 | 108 | 109 | 114 | 128 | 134 | 135 | 136 | 156 | 163 | 164 | 180 => {
+            let facing_meta = match yaw_idx {
+                0 => 2, // South
+                1 => 1, // West
+                2 => 3, // North
+                _ => 0, // East
+            };
+            let upside_down = if face == 0 || (face != 1 && cursor_y > 8) {
+                4
+            } else {
+                0
+            };
+            facing_meta | upside_down
+        }
+
+        // Wood Logs (17, 162): bits 0..1 wood variant, bits 2..3 axis
+        17 | 162 => {
+            let variant = (item_damage as u8) & 3;
+            let axis = match face {
+                0 | 1 => 0,  // Y-axis (vertical)
+                2 | 3 => 8,  // Z-axis (north-south)
+                4 | 5 => 4,  // X-axis (east-west)
+                _ => 0,
+            };
+            variant | axis
+        }
+
+        // Single Slabs (44, 126): bit 3 is top slab
+        44 | 126 => {
+            let variant = (item_damage as u8) & 7;
+            let top_bit = if face == 0 || (face != 1 && cursor_y > 8) {
+                8
+            } else {
+                0
+            };
+            variant | top_bit
+        }
+
+        // Furnaces (61), Chests (54, 146), Dispensers (23), Droppers (158)
+        61 | 54 | 146 | 23 | 158 => match yaw_idx {
+            0 => 2, // Facing North (opposite of player facing South)
+            1 => 5, // Facing East
+            2 => 3, // Facing South
+            _ => 4, // Facing West
+        },
+
+        // Hay block (170): axis
+        170 => match face {
+            0 | 1 => 0,
+            2 | 3 => 8,
+            4 | 5 => 4,
+            _ => 0,
+        },
+
+        // Default: use item damage as metadata
+        _ => (item_damage as u8) & 0x0F,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +295,26 @@ mod tests {
         assert_eq!(get_block_pick_item(62, 0), Some((61, 0))); // Lit furnace -> Furnace
         assert_eq!(get_block_pick_item(64, 0), Some((324, 0))); // Wooden door block -> item
         assert_eq!(get_block_pick_item(43, 0), Some((44, 0))); // Double slab -> single slab
+    }
+
+    #[test]
+    fn test_calculate_placed_block_meta() {
+        // End portal frame (120): opposite of horizontal facing
+        assert_eq!(calculate_placed_block_meta(120, 0, 1, 0, 0.0, 0.0), 2);   // Player faces South (0) -> opposite is North (2)
+        assert_eq!(calculate_placed_block_meta(120, 0, 1, 0, 180.0, 0.0), 0); // Player faces North (2) -> opposite is South (0)
+
+        // Ladder (65): Face attached
+        assert_eq!(calculate_placed_block_meta(65, 0, 2, 8, 0.0, 0.0), 2); // North face
+        assert_eq!(calculate_placed_block_meta(65, 0, 3, 8, 0.0, 0.0), 3); // South face
+        assert_eq!(calculate_placed_block_meta(65, 0, 4, 8, 0.0, 0.0), 4); // West face
+        assert_eq!(calculate_placed_block_meta(65, 0, 5, 8, 0.0, 0.0), 5); // East face
+
+        // Torch (50)
+        assert_eq!(calculate_placed_block_meta(50, 0, 1, 0, 0.0, 0.0), 5); // Floor
+        assert_eq!(calculate_placed_block_meta(50, 0, 2, 8, 0.0, 0.0), 4); // Wall North
+
+        // Stairs (53): Upside-down check
+        assert_eq!(calculate_placed_block_meta(53, 0, 1, 4, 0.0, 0.0), 2); // Normal
+        assert_eq!(calculate_placed_block_meta(53, 0, 0, 4, 0.0, 0.0), 6); // Upside-down (2 | 4)
     }
 }

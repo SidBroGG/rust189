@@ -28,8 +28,9 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Fullscreen, Icon, Window, WindowId};
 use world::{
-    block_blocks_movement, get_block_selection_box, get_player_relative_block_hardness, is_critical_hit,
-    is_interactive_block, is_placeable_block_item, is_replaceable_block, is_water_block, pick_target, BlockState,
+    block_blocks_movement, calculate_placed_block_meta, get_block_selection_box,
+    get_player_relative_block_hardness, is_critical_hit, is_interactive_block,
+    is_placeable_block_item, is_replaceable_block, is_water_block, pick_target, BlockState,
     CameraController, CameraPerspective, ClickTracker, EntityKind, EntitySpatialHash, FrameStage,
     ItemUseAction, ItemUseState, PerformanceProfiler, PlayerInput, PlayerMovement, TargetHit,
     TrackedEntity, World, AABB,
@@ -866,7 +867,8 @@ impl App {
                         place_pos.2 as f64 + 1.0,
                     );
 
-                    // Strictly prevent solid block placement if intersecting player's feet/head or living entities
+                    // Check solid collision with player or entities
+                    let mut can_predict_locally = true;
                     let has_solid_collision = block_blocks_movement(self.held_item_id as u16);
                     if has_solid_collision {
                         let (px, py, pz) = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
@@ -883,11 +885,12 @@ impl App {
                         });
 
                         if collides_player || collides_entity {
-                            // Block placement inside player feet/head or entity aborted
-                            return;
+                            // If colliding with player or entity, server decides placement: skip local prediction
+                            can_predict_locally = false;
                         }
                     }
 
+                    // Always send PlayerBlockPlacement to server regardless of local collision
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
                             position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
@@ -900,28 +903,38 @@ impl App {
                         s.send(OutgoingPlayPacket::Animation);
                     }
 
-                    self.world.set_block(
-                        place_pos.0,
-                        place_pos.1,
-                        place_pos.2,
-                        BlockState::new(self.held_item_id as u16, 0),
-                    );
-                    let chunk_x = place_pos.0 >> 4;
-                    let chunk_z = place_pos.2 >> 4;
-                    let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
-                    if let Some(cm) = &mut self.chunk_manager {
-                        cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
-                    }
+                    if can_predict_locally {
+                        let meta = calculate_placed_block_meta(
+                            self.held_item_id as u16,
+                            held_slot.as_ref().map_or(0, |s| s.item_damage),
+                            bh.face as u8,
+                            cursor_y,
+                            self.player.yaw,
+                            self.player.pitch,
+                        );
+                        self.world.set_block(
+                            place_pos.0,
+                            place_pos.1,
+                            place_pos.2,
+                            BlockState::new(self.held_item_id as u16, meta),
+                        );
+                        let chunk_x = place_pos.0 >> 4;
+                        let chunk_z = place_pos.2 >> 4;
+                        let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
+                        if let Some(cm) = &mut self.chunk_manager {
+                            cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                        }
 
-                    // Immediate client-side inventory prediction for zero-latency HUD responsiveness
-                    let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
-                    if !is_creative {
-                        if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
-                            if item.count <= 1 {
-                                self.hotbar_items[self.selected_hotbar_slot] = None;
-                                self.held_item_id = 0;
-                            } else {
-                                item.count -= 1;
+                        // Immediate client-side inventory prediction for zero-latency HUD responsiveness
+                        let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                        if !is_creative {
+                            if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+                                if item.count <= 1 {
+                                    self.hotbar_items[self.selected_hotbar_slot] = None;
+                                    self.held_item_id = 0;
+                                } else {
+                                    item.count -= 1;
+                                }
                             }
                         }
                     }
@@ -2182,6 +2195,12 @@ impl App {
                     if ae.leash == 0 {
                         if ae.entity_id == self.player_entity_id {
                             self.riding_entity_id = if ae.vehicle_id >= 0 { Some(ae.vehicle_id) } else { None };
+                            if let Some(veh_id) = self.riding_entity_id {
+                                if let Some(ent) = self.world.entity_tracker.entities.get(&veh_id) {
+                                    self.player.pos = glam::DVec3::new(ent.pos.x, ent.pos.y + 0.35, ent.pos.z);
+                                    self.player.prev_pos = self.player.pos;
+                                }
+                            }
                         }
                         self.world.entity_tracker.attach(ae.entity_id, ae.vehicle_id);
                     }
@@ -2589,6 +2608,14 @@ impl App {
                 self.right_click_delay_timer -= 1;
             }
 
+            // Decrement active potion durations every tick (20 TPS) and expire finished effects
+            for potion in &mut self.active_potions {
+                if potion.duration_ticks > 0 {
+                    potion.duration_ticks -= 1;
+                }
+            }
+            self.active_potions.retain(|p| p.duration_ticks > 0);
+
             if self.is_right_clicking {
                 let finished = self.item_use_state.tick();
                 if finished {
@@ -2768,6 +2795,7 @@ impl App {
                             ent.pos.x -= rad.sin() * forward;
                             ent.pos.z += rad.cos() * forward;
                         }
+                        self.player.prev_pos = self.player.pos;
                         self.player.pos.x = ent.pos.x;
                         self.player.pos.y = ent.pos.y + 0.35;
                         self.player.pos.z = ent.pos.z;
@@ -3142,7 +3170,7 @@ impl ApplicationHandler for App {
                 button,
                 state,
                 ..
-            } if !consumed => {
+            } if (!consumed || (self.mouse_grabbed && !self.is_cursor_needed())) => {
                 let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
                 let cursor_needed = self.is_cursor_needed();
 
@@ -3832,6 +3860,16 @@ impl ApplicationHandler for App {
                 if self.has_spawned {
                     let dt_secs = self.last_physics_tick.elapsed().as_secs_f32();
                     let partial_ticks = (dt_secs / 0.05).clamp(0.0, 1.0);
+
+                    // Smooth vehicle camera positioning
+                    if let Some(rid) = self.riding_entity_id {
+                        if let Some(ent) = self.world.entity_tracker.entities.get(&rid) {
+                            let v_pos = ent.interpolated_pos(partial_ticks);
+                            self.player.pos = glam::DVec3::new(v_pos.x, v_pos.y + 0.35, v_pos.z);
+                            self.player.prev_pos = self.player.pos;
+                        }
+                    }
+
                     let pose = self.camera_controller.compute_camera_pose(
                         &self.world,
                         &self.player,
@@ -3845,6 +3883,16 @@ impl ApplicationHandler for App {
                     self.camera.roll = pose.roll + hurt_roll;
                     self.camera.bob_x = pose.bob_x;
                     self.camera.bob_y = pose.bob_y;
+
+                    // Smooth bow draw zoom (MCP AbstractClientPlayer FOV modifier)
+                    if self.item_use_state.is_bow_drawing() {
+                        let pull = (self.item_use_state.ticks_used as f32 + partial_ticks) / 20.0;
+                        let pull = (pull * pull + pull * 2.0) / 3.0;
+                        let pull = pull.min(1.0);
+                        self.camera.fov = self.config.video.fov * (1.0 - pull * pull * 0.15);
+                    } else {
+                        self.camera.fov = self.config.video.fov;
+                    }
                 }
 
                 // Acquire next swapchain surface texture
