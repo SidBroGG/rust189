@@ -50,9 +50,23 @@ impl ItemUseState {
         }
     }
 
+    /// Determines the action when right-clicking with an item, taking damage/metadata into account (e.g. splash potions).
+    pub fn get_action_for_item_with_damage(item_id: i16, damage: i16) -> ItemUseAction {
+        if item_id == 373 && (damage & 0x4000) != 0 {
+            // Splash potion is throwable (MCP ItemPotion.isSplash), not drinkable
+            return ItemUseAction::None;
+        }
+        Self::get_action_for_item(item_id)
+    }
+
     /// Starts using an item.
     pub fn start_using(&mut self, item_id: i16) {
-        let action = Self::get_action_for_item(item_id);
+        self.start_using_with_damage(item_id, 0);
+    }
+
+    /// Starts using an item taking damage/metadata into account.
+    pub fn start_using_with_damage(&mut self, item_id: i16, damage: i16) {
+        let action = Self::get_action_for_item_with_damage(item_id, damage);
         if action == ItemUseAction::None {
             self.stop();
             return;

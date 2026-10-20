@@ -756,9 +756,10 @@ impl App {
                 }
 
                 // If holding usable item (food, sword blocking, bow), start using it
-                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                let held_damage = held_slot.as_ref().map_or(0, |s| s.item_damage);
+                let action = ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
                 if action != ItemUseAction::None {
-                    self.item_use_state.start_using(self.held_item_id);
+                    self.item_use_state.start_using_with_damage(self.held_item_id, held_damage);
                 }
             }
             TargetHit::Block(bh) => {
@@ -868,7 +869,7 @@ impl App {
                     );
 
                     // Check solid collision with player or entities
-                    let mut can_predict_locally = true;
+                    let can_predict_locally = true;
                     let has_solid_collision = block_blocks_movement(self.held_item_id as u16);
                     if has_solid_collision {
                         let (px, py, pz) = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
@@ -885,8 +886,8 @@ impl App {
                         });
 
                         if collides_player || collides_entity {
-                            // If colliding with player or entity, server decides placement: skip local prediction
-                            can_predict_locally = false;
+                            // MCP 1.8.9 ItemBlock.canPlaceBlockAt: strictly prevent placing blocks inside player (feet/head) or entity
+                            return;
                         }
                     }
 
@@ -985,7 +986,8 @@ impl App {
                 }
 
                 // 4. Usable items (Bow, Swords blocking, Food, Potions/Milk)
-                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                let held_damage = held_slot.as_ref().map_or(0, |s| s.item_damage);
+                let action = ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
                 if action != ItemUseAction::None {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
@@ -998,15 +1000,16 @@ impl App {
                         });
                         // DO NOT send Animation: swinging arm cancels bow drawing & eating in MCP / Spigot!
                     }
-                    self.item_use_state.start_using(self.held_item_id);
+                    self.item_use_state.start_using_with_damage(self.held_item_id, held_damage);
                     return;
                 }
 
-                // 5. Throwables / Projectiles / Instant-use items (Snowball, Egg, Ender Pearl, Exp Bottle, Fishing Rod, Eye of Ender, Boat)
+                // 5. Throwables / Projectiles / Instant-use items (Snowball, Egg, Ender Pearl, Exp Bottle, Splash Potion, Fishing Rod, Eye of Ender, Boat)
+                let is_splash_potion = self.held_item_id == 373 && (held_damage & 0x4000) != 0;
                 let is_throwable = matches!(
                     self.held_item_id,
                     332 | 344 | 368 | 384 | 346 | 381 | 333
-                );
+                ) || is_splash_potion;
                 if is_throwable {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
@@ -1021,6 +1024,10 @@ impl App {
                     }
 
                     let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    if self.held_item_id == 368 && is_creative {
+                        self.launch_creative_pearl();
+                    }
+
                     if !is_creative && self.held_item_id != 346 { // fishing rod is not consumed on cast
                         if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
                             if item.count <= 1 {
@@ -1056,7 +1063,8 @@ impl App {
                 }
             }
             TargetHit::Miss => {
-                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                let held_damage = held_slot.as_ref().map_or(0, |s| s.item_damage);
+                let action = ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
                 if action != ItemUseAction::None {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
@@ -1068,14 +1076,15 @@ impl App {
                             cursor_z: 0,
                         });
                     }
-                    self.item_use_state.start_using(self.held_item_id);
+                    self.item_use_state.start_using_with_damage(self.held_item_id, held_damage);
                     return;
                 }
 
+                let is_splash_potion = self.held_item_id == 373 && (held_damage & 0x4000) != 0;
                 let is_throwable = matches!(
                     self.held_item_id,
                     332 | 344 | 368 | 384 | 346 | 381 | 333
-                );
+                ) || is_splash_potion;
                 if is_throwable {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
@@ -1090,6 +1099,10 @@ impl App {
                     }
 
                     let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    if self.held_item_id == 368 && is_creative {
+                        self.launch_creative_pearl();
+                    }
+
                     if !is_creative && self.held_item_id != 346 {
                         if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
                             if item.count <= 1 {
@@ -1153,6 +1166,37 @@ impl App {
                 });
             }
         }
+    }
+
+    /// Spawns a client-side simulated ender pearl in creative mode.
+    pub fn launch_creative_pearl(&mut self) {
+        let yaw_rad = (self.player.yaw as f32).to_radians();
+        let pitch_rad = (self.player.pitch as f32).to_radians();
+        let vx = -yaw_rad.sin() * pitch_rad.cos();
+        let vy = -pitch_rad.sin();
+        let vz = yaw_rad.cos() * pitch_rad.cos();
+        let dir = glam::Vec3::new(vx, vy, vz).normalize_or_zero();
+
+        let eye_height = self.player.get_eye_height();
+        let spawn_pos = glam::DVec3::new(
+            self.player.pos.x,
+            self.player.pos.y + (eye_height as f64) - 0.1,
+            self.player.pos.z,
+        );
+
+        let mut pearl = TrackedEntity::new(
+            -9999,
+            EntityKind::Object {
+                object_type: 65,
+                data: 0,
+            },
+            spawn_pos,
+            self.player.yaw,
+            self.player.pitch,
+        );
+        pearl.velocity = dir * 1.5;
+        pearl.on_ground = false;
+        self.world.entity_tracker.entities.insert(-9999, pearl);
     }
 
     /// Handles Pick Block (Pipette) on mouse wheel / middle click according to MCP 1.8.9 (Minecraft.middleClickMouse).
@@ -2592,6 +2636,46 @@ impl App {
             self.world.entity_tracker.tick();
             self.spatial_hash.rebuild(&self.world.entity_tracker);
 
+            // Client-side creative ender pearl trajectory simulation
+            let mut pearl_tp = None;
+            if let Some(pearl) = self.world.entity_tracker.entities.get(&-9999) {
+                let from = pearl.prev_pos;
+                let to = pearl.pos;
+                let dir = to - from;
+                let dist = dir.length();
+                if dist > 1e-4 {
+                    if let Some(hit) = world::physics::raycast::ray_trace_voxels(&self.world, from, dir, dist) {
+                        pearl_tp = Some(hit.hit_pos);
+                    }
+                }
+                if pearl_tp.is_none() && pearl.ticks_existed > 100 {
+                    pearl_tp = Some(pearl.pos);
+                }
+            }
+            if let Some(tp_pos) = pearl_tp {
+                self.world.entity_tracker.entities.remove(&-9999);
+                self.player.pos = tp_pos;
+                self.player.prev_pos = tp_pos;
+                self.player.motion = glam::DVec3::ZERO;
+                if let Some(s) = &self.session {
+                    s.send(OutgoingPlayPacket::PlayerPositionAndLook {
+                        x: tp_pos.x,
+                        y: tp_pos.y,
+                        z: tp_pos.z,
+                        yaw: self.player.yaw,
+                        pitch: self.player.pitch,
+                        on_ground: true,
+                    });
+                }
+                if let Some(ir) = &mut self.interaction_renderer {
+                    ir.spawn_crit_particles(
+                        glam::Vec3::new(tp_pos.x as f32, tp_pos.y as f32, tp_pos.z as f32),
+                        false,
+                        16,
+                    );
+                }
+            }
+
             // Hurt & death timer ticking (MCP EntityLivingBase.onLivingUpdate)
             if self.hurt_time > 0 {
                 self.hurt_time -= 1;
@@ -2623,19 +2707,23 @@ impl App {
                         self.item_use_state.active_action,
                         ItemUseAction::Eat | ItemUseAction::Drink
                     ) {
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::PlayerDigging {
-                                status: DiggingAction::ReleaseUseItem,
-                                position: Position::new(0, 0, 0),
-                                facing: BlockFace::Down,
-                            });
-                        }
+                        // Do NOT send ReleaseUseItem on completion; server finishes drinking/eating automatically!
                         let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
                         if !is_creative {
                             if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+                                let was_potion = self.item_use_state.item_id == 373;
                                 if item.count <= 1 {
-                                    self.hotbar_items[self.selected_hotbar_slot] = None;
-                                    self.held_item_id = 0;
+                                    if was_potion {
+                                        // Give empty glass bottle (item id 374)
+                                        item.item_id = 374;
+                                        item.count = 1;
+                                        item.damage = 0;
+                                        item.name = "Glass Bottle".to_string();
+                                        self.held_item_id = 374;
+                                    } else {
+                                        self.hotbar_items[self.selected_hotbar_slot] = None;
+                                        self.held_item_id = 0;
+                                    }
                                 } else {
                                     item.count -= 1;
                                 }
@@ -2782,26 +2870,29 @@ impl App {
 
                 if let Some(riding_id) = self.riding_entity_id {
                     let mut vehicle_exists = false;
-                    if let Some(ent) = self.world.entity_tracker.entities.get_mut(&riding_id) {
+                    if let Some(ent) = self.world.entity_tracker.entities.get(&riding_id) {
                         vehicle_exists = true;
-                        // Boat steering parity
-                        if matches!(ent.kind, world::EntityKind::Object { object_type: 1, .. }) {
-                            let mut forward = 0.0f64;
-                            if input.move_forward > 0.0 { forward += 0.2; }
-                            if input.move_forward < 0.0 { forward -= 0.1; }
-                            if input.move_strafe > 0.0 { ent.yaw -= 4.0; }
-                            if input.move_strafe < 0.0 { ent.yaw += 4.0; }
-                            let rad = (ent.yaw as f64).to_radians();
-                            ent.pos.x -= rad.sin() * forward;
-                            ent.pos.z += rad.cos() * forward;
-                        }
-                        self.player.prev_pos = self.player.pos;
-                        self.player.pos.x = ent.pos.x;
-                        self.player.pos.y = ent.pos.y + 0.35;
-                        self.player.pos.z = ent.pos.z;
+                        let (offset_x, offset_y, offset_z) = match &ent.kind {
+                            world::EntityKind::Object { object_type: 1, .. } => {
+                                let rad = (ent.yaw as f64).to_radians();
+                                (rad.cos() * 0.4, -0.3, rad.sin() * 0.4)
+                            }
+                            world::EntityKind::Object { object_type: 10, .. } => (0.0, 0.0, 0.0),
+                            _ => (0.0, 0.75, 0.0),
+                        };
+                        self.player.prev_pos = glam::DVec3::new(
+                            ent.prev_pos.x + offset_x,
+                            ent.prev_pos.y + offset_y,
+                            ent.prev_pos.z + offset_z,
+                        );
+                        self.player.pos = glam::DVec3::new(
+                            ent.pos.x + offset_x,
+                            ent.pos.y + offset_y,
+                            ent.pos.z + offset_z,
+                        );
                         self.player.motion = glam::DVec3::ZERO;
                     }
-                    if !vehicle_exists || input.sneak {
+                    if !vehicle_exists {
                         self.riding_entity_id = None;
                     }
                 } else {
@@ -3283,6 +3374,34 @@ impl ApplicationHandler for App {
                     match key_event.state {
                         winit::event::ElementState::Pressed => {
                             self.pressed_keys.insert(code);
+
+                            // Fullscreen toggle keybind works globally (in menus, chat, and in-game)
+                            let matches_fullscreen = matches_winit_key(
+                                &self.config.keybinds.fullscreen_toggle,
+                                &key_event.logical_key,
+                                &key_event.physical_key,
+                            );
+
+                            if matches_fullscreen {
+                                self.config.video.fullscreen = !self.config.video.fullscreen;
+                                if let Some(window) = self.window.as_ref() {
+                                    if self.config.video.fullscreen {
+                                        window.set_fullscreen(Some(Fullscreen::Borderless(None)));
+                                    } else {
+                                        window.set_fullscreen(None);
+                                    }
+                                }
+                                if let Some(sm) = &mut self.screen_manager {
+                                    sm.force_sync_fullscreen(self.config.video.fullscreen);
+                                }
+                                let _ = self.config.save(&self.config_path);
+                                info!(
+                                    fullscreen = self.config.video.fullscreen,
+                                    "Toggled fullscreen mode via keybind"
+                                );
+                                return;
+                            }
+
                             if code == KeyCode::Escape && self.mouse_grabbed {
                                 self.is_left_clicking = false;
                                 self.is_right_clicking = false;
@@ -3355,30 +3474,6 @@ impl ApplicationHandler for App {
                                 }
                             }
                         }
-                    }
-
-                    let matches_fullscreen = matches_winit_key(
-                        &self.config.keybinds.fullscreen_toggle,
-                        &key_event.logical_key,
-                        &key_event.physical_key,
-                    );
-
-                    if matches_fullscreen {
-                        self.config.video.fullscreen = !self.config.video.fullscreen;
-                        let window = self.window.as_ref().unwrap();
-                        if self.config.video.fullscreen {
-                            window.set_fullscreen(Some(Fullscreen::Borderless(None)));
-                        } else {
-                            window.set_fullscreen(None);
-                        }
-                        if let Some(sm) = &mut self.screen_manager {
-                            sm.force_sync_fullscreen(self.config.video.fullscreen);
-                        }
-                        let _ = self.config.save(&self.config_path);
-                        info!(
-                            fullscreen = self.config.video.fullscreen,
-                            "Toggled fullscreen mode via keybind"
-                        );
                     }
 
                     let matches_perspective = matches_winit_key(
@@ -3864,8 +3959,20 @@ impl ApplicationHandler for App {
                     // Smooth vehicle camera positioning
                     if let Some(rid) = self.riding_entity_id {
                         if let Some(ent) = self.world.entity_tracker.entities.get(&rid) {
+                            let (offset_x, offset_y, offset_z) = match &ent.kind {
+                                world::EntityKind::Object { object_type: 1, .. } => {
+                                    let rad = (ent.yaw as f64).to_radians();
+                                    (rad.cos() * 0.4, -0.3, rad.sin() * 0.4)
+                                }
+                                world::EntityKind::Object { object_type: 10, .. } => (0.0, 0.0, 0.0),
+                                _ => (0.0, 0.75, 0.0),
+                            };
                             let v_pos = ent.interpolated_pos(partial_ticks);
-                            self.player.pos = glam::DVec3::new(v_pos.x, v_pos.y + 0.35, v_pos.z);
+                            self.player.pos = glam::DVec3::new(
+                                v_pos.x + offset_x,
+                                v_pos.y + offset_y,
+                                v_pos.z + offset_z,
+                            );
                             self.player.prev_pos = self.player.pos;
                         }
                     }

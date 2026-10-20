@@ -74,7 +74,7 @@ impl ChunkMesher {
                         };
 
                         let block = section.block_at(lx, ly, lz);
-                        if block.is_air() {
+                        if block.is_air() || matches!(block.id(), 8 | 9 | 10 | 11) {
                             continue;
                         }
 
@@ -216,9 +216,28 @@ impl ChunkMesher {
                         continue;
                     }
 
+                    let block_id = block.id();
                     let wx = base_x + lx as i32;
                     let wy = base_y + ly as i32;
                     let wz = base_z + lz as i32;
+
+                    // Specialized vanilla liquid meshing with authentic layer heights (MCP BlockFluidRenderer)
+                    if matches!(block_id, 8 | 9 | 10 | 11) {
+                        Self::mesh_liquid_block(
+                            block,
+                            wx,
+                            wy,
+                            wz,
+                            lx as f32,
+                            ly as f32,
+                            lz as f32,
+                            world,
+                            atlas,
+                            &mut mesh.translucent_vertices,
+                            &mut mesh.translucent_indices,
+                        );
+                        continue;
+                    }
 
                     let model = match atlas.models.get_model(block, wx, wy, wz, world) {
                         Some(m) => m,
@@ -642,6 +661,204 @@ impl ChunkMesher {
     #[inline]
     pub fn is_lava(id: u16) -> bool {
         matches!(id, 10 | 11)
+    }
+
+    #[inline]
+    pub fn is_same_fluid(id1: u16, id2: u16) -> bool {
+        (Self::is_water(id1) && Self::is_water(id2)) || (Self::is_lava(id1) && Self::is_lava(id2))
+    }
+
+    fn get_fluid_corner_height<W: BlockWorldAccessor>(
+        world: &W,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        cx: i32,
+        cz: i32,
+        fluid_id: u16,
+    ) -> f32 {
+        let mut sum = 0.0f32;
+        let mut count = 0;
+
+        for dx in (cx - 1)..=cx {
+            for dz in (cz - 1)..=cz {
+                let sx = wx + dx;
+                let sz = wz + dz;
+
+                let above = world.block_at(sx, wy + 1, sz);
+                if Self::is_same_fluid(fluid_id, above.id()) {
+                    return 1.0;
+                }
+
+                let curr = world.block_at(sx, wy, sz);
+                if Self::is_same_fluid(fluid_id, curr.id()) {
+                    let meta = curr.meta();
+                    let h = if meta >= 8 {
+                        8.0 / 9.0
+                    } else {
+                        (8.0 - (meta & 7) as f32) / 9.0
+                    };
+                    sum += h;
+                    count += 1;
+                } else if !curr.is_opaque() {
+                    sum += 1.0 / 9.0;
+                    count += 1;
+                }
+            }
+        }
+
+        if count > 0 {
+            (sum / count as f32).clamp(0.08, 1.0)
+        } else {
+            8.0 / 9.0
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn mesh_liquid_block<W: BlockWorldAccessor>(
+        block: BlockState,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        lx: f32,
+        ly: f32,
+        lz: f32,
+        world: &W,
+        atlas: &TextureAtlas,
+        target_vertices: &mut Vec<BlockVertex>,
+        target_indices: &mut Vec<u32>,
+    ) {
+        let block_id = block.id();
+        let is_water = Self::is_water(block_id);
+        let meta = block.meta();
+
+        let region = if is_water {
+            if meta == 0 && block_id == 9 {
+                atlas.get_region("water_still")
+            } else {
+                atlas.get_region("water_flow")
+            }
+        } else if meta == 0 && block_id == 11 {
+            atlas.get_region("lava_still")
+        } else {
+            atlas.get_region("lava_flow")
+        };
+
+        let tint = if is_water {
+            BakedModelRegistry::get_block_tint(block)
+        } else {
+            [1.0, 1.0, 1.0]
+        };
+
+        let h_nw = Self::get_fluid_corner_height(world, wx, wy, wz, 0, 0, block_id);
+        let h_sw = Self::get_fluid_corner_height(world, wx, wy, wz, 0, 1, block_id);
+        let h_se = Self::get_fluid_corner_height(world, wx, wy, wz, 1, 1, block_id);
+        let h_ne = Self::get_fluid_corner_height(world, wx, wy, wz, 1, 0, block_id);
+
+        let bl = world.block_light_at(wx, wy, wz);
+        let sl = world.sky_light_at(wx, wy, wz);
+        let light = [bl as f32 / 15.0, sl as f32 / 15.0];
+
+        let bl_up = world.block_light_at(wx, wy + 1, wz);
+        let sl_up = world.sky_light_at(wx, wy + 1, wz);
+        let light_up = [bl_up as f32 / 15.0, sl_up as f32 / 15.0];
+
+        let emit_quad = |verts: &[[f32; 3]; 4], uvs: &[[f32; 2]; 4], norm_idx: u32, face_light: [f32; 2], target_verts: &mut Vec<BlockVertex>, target_inds: &mut Vec<u32>| {
+            let base = target_verts.len() as u32;
+            for i in 0..4 {
+                target_verts.push(BlockVertex::pack(
+                    verts[i],
+                    uvs[i],
+                    face_light,
+                    3,
+                    tint,
+                    norm_idx,
+                    (0, 0),
+                    false,
+                    false,
+                ));
+            }
+            target_inds.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        };
+
+        let uv_standard = [
+            [region.u_min, region.v_min],
+            [region.u_min, region.v_max],
+            [region.u_max, region.v_max],
+            [region.u_max, region.v_min],
+        ];
+
+        // 1. Up Face
+        let above_id = world.block_at(wx, wy + 1, wz).id();
+        if !Self::is_same_fluid(block_id, above_id) {
+            let up_verts = [
+                [lx, ly + h_nw, lz],
+                [lx, ly + h_sw, lz + 1.0],
+                [lx + 1.0, ly + h_se, lz + 1.0],
+                [lx + 1.0, ly + h_ne, lz],
+            ];
+            emit_quad(&up_verts, &uv_standard, BlockFace::Up.index(), light_up, target_vertices, target_indices);
+        }
+
+        // 2. Down Face
+        let below_block = world.block_at(wx, wy - 1, wz);
+        if !Self::is_same_fluid(block_id, below_block.id()) && !below_block.is_opaque() {
+            let down_verts = [
+                [lx, ly, lz + 1.0],
+                [lx, ly, lz],
+                [lx + 1.0, ly, lz],
+                [lx + 1.0, ly, lz + 1.0],
+            ];
+            emit_quad(&down_verts, &uv_standard, BlockFace::Down.index(), light, target_vertices, target_indices);
+        }
+
+        // 3. North Face (Z - 1)
+        let north_block = world.block_at(wx, wy, wz - 1);
+        if !Self::is_same_fluid(block_id, north_block.id()) && !north_block.is_opaque() {
+            let north_verts = [
+                [lx + 1.0, ly + h_ne, lz],
+                [lx + 1.0, ly, lz],
+                [lx, ly, lz],
+                [lx, ly + h_nw, lz],
+            ];
+            emit_quad(&north_verts, &uv_standard, BlockFace::North.index(), light, target_vertices, target_indices);
+        }
+
+        // 4. South Face (Z + 1)
+        let south_block = world.block_at(wx, wy, wz + 1);
+        if !Self::is_same_fluid(block_id, south_block.id()) && !south_block.is_opaque() {
+            let south_verts = [
+                [lx, ly + h_sw, lz + 1.0],
+                [lx, ly, lz + 1.0],
+                [lx + 1.0, ly, lz + 1.0],
+                [lx + 1.0, ly + h_se, lz + 1.0],
+            ];
+            emit_quad(&south_verts, &uv_standard, BlockFace::South.index(), light, target_vertices, target_indices);
+        }
+
+        // 5. West Face (X - 1)
+        let west_block = world.block_at(wx - 1, wy, wz);
+        if !Self::is_same_fluid(block_id, west_block.id()) && !west_block.is_opaque() {
+            let west_verts = [
+                [lx, ly + h_nw, lz],
+                [lx, ly, lz],
+                [lx, ly, lz + 1.0],
+                [lx, ly + h_sw, lz + 1.0],
+            ];
+            emit_quad(&west_verts, &uv_standard, BlockFace::West.index(), light, target_vertices, target_indices);
+        }
+
+        // 6. East Face (X + 1)
+        let east_block = world.block_at(wx + 1, wy, wz);
+        if !Self::is_same_fluid(block_id, east_block.id()) && !east_block.is_opaque() {
+            let east_verts = [
+                [lx + 1.0, ly + h_se, lz + 1.0],
+                [lx + 1.0, ly, lz + 1.0],
+                [lx + 1.0, ly, lz],
+                [lx + 1.0, ly + h_ne, lz],
+            ];
+            emit_quad(&east_verts, &uv_standard, BlockFace::East.index(), light, target_vertices, target_indices);
+        }
     }
 
     #[inline]

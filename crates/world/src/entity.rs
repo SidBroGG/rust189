@@ -171,42 +171,65 @@ impl TrackedEntity {
 
             self.interpolation_steps -= 1;
         } else {
-            // Ballistic dead reckoning between server position updates (MCP EntityItem, EntityArrow, EntityThrowable)
-            if let EntityKind::Object { object_type, .. } = self.kind {
-                match object_type {
-                    2 => {
-                        // Dropped item: gravity 0.04, friction 0.98
-                        if !self.on_ground {
-                            self.velocity.y -= 0.04;
-                            self.velocity *= 0.98;
-                            self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
-                        }
+            // Ballistic dead reckoning between server position updates (MCP EntityItem, EntityArrow, EntityThrowable, EntityLivingBase)
+            match self.kind {
+                EntityKind::Player { .. } | EntityKind::Mob { .. } => {
+                    // Living entities carry physics momentum and gravity between server packets
+                    if !self.on_ground {
+                        self.velocity.y -= 0.08;
                     }
-                    60 => {
-                        // Arrow: gravity 0.05, drag 0.99
-                        if !self.on_ground {
-                            self.velocity.y -= 0.05;
+                    self.velocity.y *= 0.98;
+                    self.velocity.x *= 0.91;
+                    self.velocity.z *= 0.91;
+                    if self.velocity.length_squared() > 0.0001 {
+                        self.pos += glam::DVec3::new(
+                            self.velocity.x as f64,
+                            self.velocity.y as f64,
+                            self.velocity.z as f64,
+                        );
+                    }
+                }
+                EntityKind::Object { object_type, .. } => {
+                    match object_type {
+                        2 => {
+                            // Dropped item: gravity 0.04, friction 0.98
+                            if !self.on_ground {
+                                self.velocity.y -= 0.04;
+                                self.velocity *= 0.98;
+                                self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                            }
+                        }
+                        60 => {
+                            // Arrow: gravity 0.05, drag 0.99. When stuck in block/ground, zero velocity to eliminate flicker
+                            if !self.on_ground && self.velocity.length_squared() > 0.001 {
+                                self.velocity.y -= 0.05;
+                                self.velocity *= 0.99;
+                                self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                                let horiz = (self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z).sqrt();
+                                if horiz > 0.001 {
+                                    self.yaw = self.velocity.x.atan2(self.velocity.z).to_degrees();
+                                    self.pitch = self.velocity.y.atan2(horiz).to_degrees();
+                                }
+                            } else {
+                                self.velocity = glam::Vec3::ZERO;
+                            }
+                        }
+                        61 | 62 | 65 | 73 | 75 => {
+                            // Throwables (Snowball, Egg, Pearl, Potion, ExpBottle): gravity 0.03, drag 0.99
+                            self.velocity.y -= 0.03;
                             self.velocity *= 0.99;
                             self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
-                            let horiz = (self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z).sqrt();
-                            self.yaw = self.velocity.x.atan2(self.velocity.z).to_degrees();
-                            self.pitch = self.velocity.y.atan2(horiz).to_degrees();
                         }
+                        90 => {
+                            // Fishing Bobber: gravity 0.03, drag 0.92
+                            self.velocity.y -= 0.03;
+                            self.velocity *= 0.92;
+                            self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                        }
+                        _ => {}
                     }
-                    61 | 62 | 65 | 73 | 75 => {
-                        // Throwables (Snowball, Egg, Pearl, Potion, ExpBottle): gravity 0.03, drag 0.99
-                        self.velocity.y -= 0.03;
-                        self.velocity *= 0.99;
-                        self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
-                    }
-                    90 => {
-                        // Fishing Bobber: gravity 0.03, drag 0.92
-                        self.velocity.y -= 0.03;
-                        self.velocity *= 0.92;
-                        self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
         }
 
@@ -642,6 +665,29 @@ impl EntityTracker {
                 entity.server_pos_fixed.1 as f64 / 32.0,
                 entity.server_pos_fixed.2 as f64 / 32.0,
             );
+
+            // MCP EntityArrow parity: arrows stuck in obstacles have no interpolation and zero velocity
+            if let EntityKind::Object { object_type: 60, .. } = entity.kind {
+                if on_ground || (delta_x == 0 && delta_y == 0 && delta_z == 0) {
+                    entity.pos = target;
+                    entity.prev_pos = target;
+                    entity.target_pos = target;
+                    entity.velocity = glam::Vec3::ZERO;
+                    entity.interpolation_steps = 0;
+                    entity.on_ground = true;
+                    return;
+                }
+            }
+
+            let delta = target - entity.pos;
+            if entity.kind.is_player() || matches!(entity.kind, EntityKind::Mob { .. }) {
+                entity.velocity = glam::Vec3::new(
+                    (delta.x / 3.0) as f32,
+                    (delta.y / 3.0) as f32,
+                    (delta.z / 3.0) as f32,
+                );
+            }
+
             entity.target_pos = target;
             entity.interpolation_steps = 3;
             entity.on_ground = on_ground;
@@ -683,6 +729,33 @@ impl EntityTracker {
             let yaw = (yaw_byte as f32 * 360.0) / 256.0;
             let pitch = (pitch_byte as f32 * 360.0) / 256.0;
 
+            if let EntityKind::Object { object_type: 60, .. } = entity.kind {
+                if on_ground || (delta_x == 0 && delta_y == 0 && delta_z == 0) {
+                    entity.pos = target;
+                    entity.prev_pos = target;
+                    entity.target_pos = target;
+                    entity.yaw = yaw;
+                    entity.prev_yaw = yaw;
+                    entity.target_yaw = yaw;
+                    entity.pitch = pitch;
+                    entity.prev_pitch = pitch;
+                    entity.target_pitch = pitch;
+                    entity.velocity = glam::Vec3::ZERO;
+                    entity.interpolation_steps = 0;
+                    entity.on_ground = true;
+                    return;
+                }
+            }
+
+            let delta = target - entity.pos;
+            if entity.kind.is_player() || matches!(entity.kind, EntityKind::Mob { .. }) {
+                entity.velocity = glam::Vec3::new(
+                    (delta.x / 3.0) as f32,
+                    (delta.y / 3.0) as f32,
+                    (delta.z / 3.0) as f32,
+                );
+            }
+
             entity.target_pos = target;
             entity.target_yaw = yaw;
             entity.target_pitch = pitch;
@@ -711,6 +784,22 @@ impl EntityTracker {
             let yaw = (yaw_byte as f32 * 360.0) / 256.0;
             let pitch = (pitch_byte as f32 * 360.0) / 256.0;
 
+            if let EntityKind::Object { object_type: 60, .. } = entity.kind {
+                entity.pos = target;
+                entity.prev_pos = target;
+                entity.target_pos = target;
+                entity.yaw = yaw;
+                entity.prev_yaw = yaw;
+                entity.target_yaw = yaw;
+                entity.pitch = pitch;
+                entity.prev_pitch = pitch;
+                entity.target_pitch = pitch;
+                entity.velocity = glam::Vec3::ZERO;
+                entity.interpolation_steps = 0;
+                entity.on_ground = on_ground;
+                return;
+            }
+
             let dist_sq = (entity.pos - target).length_squared();
             if dist_sq > 16.0 {
                 // Large jump / instant teleport
@@ -725,6 +814,14 @@ impl EntityTracker {
                 entity.target_pitch = pitch;
                 entity.interpolation_steps = 0;
             } else {
+                let delta = target - entity.pos;
+                if entity.kind.is_player() || matches!(entity.kind, EntityKind::Mob { .. }) {
+                    entity.velocity = glam::Vec3::new(
+                        (delta.x / 3.0) as f32,
+                        (delta.y / 3.0) as f32,
+                        (delta.z / 3.0) as f32,
+                    );
+                }
                 entity.target_pos = target;
                 entity.target_yaw = yaw;
                 entity.target_pitch = pitch;
