@@ -307,9 +307,35 @@ pub fn build_item_frame_item(
         * Mat4::from_rotation_z(item_rot.to_radians());
 
     if is_block {
-        let mut block = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-        block.add_box(0.0, 0.0, -2.5, -2.5, -2.5, 5.0, 5.0, 5.0, 0.0);
-        block.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+        let s = 0.16;
+        let p_000 = (root * Vec3::new(-s, -s, -s).extend(1.0)).truncate().to_array();
+        let p_100 = (root * Vec3::new(s, -s, -s).extend(1.0)).truncate().to_array();
+        let p_110 = (root * Vec3::new(s, s, -s).extend(1.0)).truncate().to_array();
+        let p_010 = (root * Vec3::new(-s, s, -s).extend(1.0)).truncate().to_array();
+        let p_001 = (root * Vec3::new(-s, -s, s).extend(1.0)).truncate().to_array();
+        let p_101 = (root * Vec3::new(s, -s, s).extend(1.0)).truncate().to_array();
+        let p_111 = (root * Vec3::new(s, s, s).extend(1.0)).truncate().to_array();
+        let p_011 = (root * Vec3::new(-s, s, s).extend(1.0)).truncate().to_array();
+
+        let norm_n = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+        let norm_s = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+        let norm_w = (root * Vec3::new(-1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_e = (root * Vec3::new(1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_u = (root * Vec3::new(0.0, 1.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_d = (root * Vec3::new(0.0, -1.0, 0.0).extend(0.0)).truncate().to_array();
+
+        // North face (-Z)
+        add_cube_face(vertices, indices, [p_100, p_000, p_010, p_110], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_n, color);
+        // South face (+Z)
+        add_cube_face(vertices, indices, [p_001, p_101, p_111, p_011], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_s, color);
+        // West face (-X)
+        add_cube_face(vertices, indices, [p_000, p_001, p_011, p_010], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_w, color);
+        // East face (+X)
+        add_cube_face(vertices, indices, [p_101, p_100, p_110, p_111], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_e, color);
+        // Top face (+Y)
+        add_cube_face(vertices, indices, [p_011, p_111, p_110, p_010], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_u, color);
+        // Bottom face (-Y)
+        add_cube_face(vertices, indices, [p_000, p_100, p_101, p_001], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_d, color);
     } else {
         let s = 0.225;
         let tz = 0.015;
@@ -376,9 +402,35 @@ pub fn build_dropped_item_model(
         * Mat4::from_rotation_y(spin);
 
     if is_block {
-        let mut block = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-        block.add_box(0.0, 0.0, -2.0, -2.0, -2.0, 4.0, 4.0, 4.0, 0.0);
-        block.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
+        let s = 0.25;
+        let p_000 = (root * Vec3::new(-s, -s, -s).extend(1.0)).truncate().to_array();
+        let p_100 = (root * Vec3::new(s, -s, -s).extend(1.0)).truncate().to_array();
+        let p_110 = (root * Vec3::new(s, s, -s).extend(1.0)).truncate().to_array();
+        let p_010 = (root * Vec3::new(-s, s, -s).extend(1.0)).truncate().to_array();
+        let p_001 = (root * Vec3::new(-s, -s, s).extend(1.0)).truncate().to_array();
+        let p_101 = (root * Vec3::new(s, -s, s).extend(1.0)).truncate().to_array();
+        let p_111 = (root * Vec3::new(s, s, s).extend(1.0)).truncate().to_array();
+        let p_011 = (root * Vec3::new(-s, s, s).extend(1.0)).truncate().to_array();
+
+        let norm_n = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+        let norm_s = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+        let norm_w = (root * Vec3::new(-1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_e = (root * Vec3::new(1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_u = (root * Vec3::new(0.0, 1.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_d = (root * Vec3::new(0.0, -1.0, 0.0).extend(0.0)).truncate().to_array();
+
+        // North face (-Z)
+        add_cube_face(vertices, indices, [p_100, p_000, p_010, p_110], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_n, color);
+        // South face (+Z)
+        add_cube_face(vertices, indices, [p_001, p_101, p_111, p_011], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_s, color);
+        // West face (-X)
+        add_cube_face(vertices, indices, [p_000, p_001, p_011, p_010], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_w, color);
+        // East face (+X)
+        add_cube_face(vertices, indices, [p_101, p_100, p_110, p_111], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_e, color);
+        // Top face (+Y)
+        add_cube_face(vertices, indices, [p_011, p_111, p_110, p_010], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_u, color);
+        // Bottom face (-Y)
+        add_cube_face(vertices, indices, [p_000, p_100, p_101, p_001], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_d, color);
     } else {
         let s = 0.2;
         let tz = 0.015625; // 3D extruded slab thickness (1/16th block)
