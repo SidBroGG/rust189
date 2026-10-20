@@ -270,6 +270,27 @@ fn test_vehicle_and_object_geometry_and_uvs() {
     build_item_frame_model(&mut v, &mut i, &entity, 0.5, color);
     assert_valid_mesh(&v, &i, 1);
 
+    // Primed TNT (object_type: 50)
+    let mut tnt_entity = create_dummy_entity(EntityKind::Object { object_type: 50, data: 0 });
+    tnt_entity.ticks_existed = 1; // fuse = 79, (79 / 5) % 2 == 1 (non-flashing phase)
+    v.clear(); i.clear();
+    build_tnt_primed_model(&mut v, &mut i, TntFace::Sides, &tnt_entity, 0.5, color);
+    assert_valid_mesh(&v, &i, 4); // 4 side quads
+
+    v.clear(); i.clear();
+    build_tnt_primed_model(&mut v, &mut i, TntFace::Top, &tnt_entity, 0.5, color);
+    assert_valid_mesh(&v, &i, 1); // 1 top quad
+
+    v.clear(); i.clear();
+    build_tnt_primed_model(&mut v, &mut i, TntFace::Bottom, &tnt_entity, 0.5, color);
+    assert_valid_mesh(&v, &i, 1); // 1 bottom quad
+
+    // Falling Block (object_type: 70)
+    let falling_entity = create_dummy_entity(EntityKind::Object { object_type: 70, data: 12 });
+    v.clear(); i.clear();
+    build_falling_block_model(&mut v, &mut i, &falling_entity, 0.5, color);
+    assert_valid_mesh(&v, &i, 6); // 6 faces of the cube
+
     // All 26 Paintings
     assert_eq!(ALL_PAINTINGS.len(), 26);
     for art in ALL_PAINTINGS {

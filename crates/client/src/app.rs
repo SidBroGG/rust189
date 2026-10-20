@@ -1211,10 +1211,16 @@ impl App {
             TargetHit::Entity(eh) => {
                 if let Some(ent) = self.world.entity_tracker.entities.get(&eh.entity_id) {
                     match &ent.kind {
-                        EntityKind::Object { object_type, .. } => match *object_type {
+                        EntityKind::Object { object_type, data } => match *object_type {
                             78 => Some((416, 0)), // Armor Stand
                             1 => Some((333, 0)),  // Boat
                             10 => Some((328, 0)), // Minecart
+                            50 => Some((46, 0)),  // TNT
+                            70 => {
+                                let id = (*data & 4095) as i16;
+                                let meta = ((*data >> 12) & 15) as i16;
+                                Some((if id == 0 { 12 } else { id }, meta))
+                            }
                             _ => None,
                         },
                         EntityKind::Mob { mob_type } => {
@@ -2686,6 +2692,40 @@ impl App {
                                 if world::block_blocks_movement(self.world.block_at(floor_bx, floor_by, floor_bz).id()) {
                                     let land_pos = glam::DVec3::new(next_pos.x, (floor_by + 1) as f64, next_pos.z);
                                     physics_updates.push((entity.id, land_pos, glam::Vec3::ZERO, true));
+                                } else {
+                                    physics_updates.push((entity.id, next_pos, vel, false));
+                                }
+                            }
+                        }
+                        50 | 70 => {
+                            if !entity.on_ground && entity.ticks_existed > 0 {
+                                let mut vel = entity.velocity;
+                                vel.y -= 0.04;
+                                vel *= 0.98;
+
+                                let next_pos = entity.pos + glam::DVec3::new(
+                                    vel.x as f64,
+                                    vel.y as f64,
+                                    vel.z as f64,
+                                );
+
+                                let floor_bx = entity.pos.x.floor() as i32;
+                                let floor_by = next_pos.y.floor() as i32;
+                                let floor_bz = entity.pos.z.floor() as i32;
+
+                                if world::block_blocks_movement(self.world.block_at(floor_bx, floor_by, floor_bz).id()) {
+                                    let land_pos = glam::DVec3::new(next_pos.x, (floor_by + 1) as f64, next_pos.z);
+                                    let final_vel = if object_type == 50 {
+                                        glam::Vec3::new(
+                                            vel.x * 0.7,
+                                            if vel.y.abs() > 0.1 { -vel.y * 0.5 } else { 0.0 },
+                                            vel.z * 0.7,
+                                        )
+                                    } else {
+                                        glam::Vec3::ZERO
+                                    };
+                                    let on_ground = object_type == 70 || final_vel.y == 0.0;
+                                    physics_updates.push((entity.id, land_pos, final_vel, on_ground));
                                 } else {
                                     physics_updates.push((entity.id, next_pos, vel, false));
                                 }

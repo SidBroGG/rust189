@@ -835,3 +835,213 @@ pub fn build_painting_model(
         }
     }
 }
+
+/// Helper to append a textured quad to vertex and index buffers.
+fn add_cube_face(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    positions: [[f32; 3]; 4],
+    uvs: [[f32; 2]; 4],
+    normal: [f32; 3],
+    color: [f32; 4],
+) {
+    let base = vertices.len() as u32;
+    for i in 0..4 {
+        vertices.push(EntityVertex {
+            position: positions[i],
+            uv: uvs[i],
+            normal,
+            color,
+        });
+    }
+    indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+}
+
+/// Face selector for Primed TNT rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TntFace {
+    Sides,
+    Top,
+    Bottom,
+}
+
+/// Builds Primed TNT model (MCP RenderTNTPrimed).
+pub fn build_tnt_primed_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    face: TntFace,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    base_color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let fuse_ticks = (80i32 - entity.ticks_existed as i32).max(0);
+    let remaining = (fuse_ticks as f32) - partial_ticks + 1.0;
+
+    let mut scale = 1.0f32;
+    if remaining < 10.0 {
+        let mut f = (1.0 - remaining / 10.0).clamp(0.0, 1.0);
+        f = f * f * f * f;
+        scale = 1.0 + f * 0.3;
+    }
+
+    let is_flashing = (fuse_ticks / 5) % 2 == 0;
+    let color = if is_flashing {
+        [2.8, 2.8, 2.8, base_color[3]]
+    } else {
+        base_color
+    };
+
+    let x_c = pos.x;
+    let y_c = pos.y + 0.5;
+    let z_c = pos.z;
+    let h = 0.5 * (scale as f64);
+
+    let x0 = (x_c - h) as f32;
+    let x1 = (x_c + h) as f32;
+    let y0 = (y_c - h) as f32;
+    let y1 = (y_c + h) as f32;
+    let z0 = (z_c - h) as f32;
+    let z1 = (z_c + h) as f32;
+
+    match face {
+        TntFace::Sides => {
+            // North face (-Z)
+            add_cube_face(
+                vertices,
+                indices,
+                [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]],
+                [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+                [0.0, 0.0, -1.0],
+                color,
+            );
+            // South face (+Z)
+            add_cube_face(
+                vertices,
+                indices,
+                [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
+                [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+                [0.0, 0.0, 1.0],
+                color,
+            );
+            // West face (-X)
+            add_cube_face(
+                vertices,
+                indices,
+                [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
+                [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+                [-1.0, 0.0, 0.0],
+                color,
+            );
+            // East face (+X)
+            add_cube_face(
+                vertices,
+                indices,
+                [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]],
+                [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+                [1.0, 0.0, 0.0],
+                color,
+            );
+        }
+        TntFace::Top => {
+            // Top face (+Y)
+            add_cube_face(
+                vertices,
+                indices,
+                [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]],
+                [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+                [0.0, 1.0, 0.0],
+                color,
+            );
+        }
+        TntFace::Bottom => {
+            // Bottom face (-Y)
+            add_cube_face(
+                vertices,
+                indices,
+                [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
+                [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+                [0.0, -1.0, 0.0],
+                color,
+            );
+        }
+    }
+}
+
+/// Builds Falling Block model (MCP RenderFallingBlock).
+pub fn build_falling_block_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let x_c = pos.x;
+    let y_c = pos.y + 0.5;
+    let z_c = pos.z;
+    let h = 0.5f64;
+
+    let x0 = (x_c - h) as f32;
+    let x1 = (x_c + h) as f32;
+    let y0 = (y_c - h) as f32;
+    let y1 = (y_c + h) as f32;
+    let z0 = (z_c - h) as f32;
+    let z1 = (z_c + h) as f32;
+
+    // North face (-Z)
+    add_cube_face(
+        vertices,
+        indices,
+        [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]],
+        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+        [0.0, 0.0, -1.0],
+        color,
+    );
+    // South face (+Z)
+    add_cube_face(
+        vertices,
+        indices,
+        [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
+        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+        [0.0, 0.0, 1.0],
+        color,
+    );
+    // West face (-X)
+    add_cube_face(
+        vertices,
+        indices,
+        [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
+        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+        [-1.0, 0.0, 0.0],
+        color,
+    );
+    // East face (+X)
+    add_cube_face(
+        vertices,
+        indices,
+        [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]],
+        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+        [1.0, 0.0, 0.0],
+        color,
+    );
+    // Top face (+Y)
+    add_cube_face(
+        vertices,
+        indices,
+        [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]],
+        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+        [0.0, 1.0, 0.0],
+        color,
+    );
+    // Bottom face (-Y)
+    add_cube_face(
+        vertices,
+        indices,
+        [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
+        [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+        [0.0, -1.0, 0.0],
+        color,
+    );
+}
+

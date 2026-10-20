@@ -621,7 +621,7 @@ impl EntityRenderer {
                         }
                     }
                 }
-                EntityKind::Object { object_type, .. } => {
+                EntityKind::Object { object_type, data } => {
                     match *object_type {
                         1 => {
                             let (verts, inds) = collector.entry("entity/boat".to_string()).or_default();
@@ -641,6 +641,38 @@ impl EntityRenderer {
                         10 => {
                             let (verts, inds) = collector.entry("entity/minecart".to_string()).or_default();
                             crate::models::vehicles::build_minecart_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        50 => {
+                            // Primed TNT (EntityTNTPrimed)
+                            let (sverts, sinds) = collector.entry("blocks/tnt_side".to_string()).or_default();
+                            crate::models::vehicles::build_tnt_primed_model(
+                                sverts,
+                                sinds,
+                                crate::models::vehicles::TntFace::Sides,
+                                entity,
+                                partial_ticks,
+                                color,
+                            );
+
+                            let (tverts, tinds) = collector.entry("blocks/tnt_top".to_string()).or_default();
+                            crate::models::vehicles::build_tnt_primed_model(
+                                tverts,
+                                tinds,
+                                crate::models::vehicles::TntFace::Top,
+                                entity,
+                                partial_ticks,
+                                color,
+                            );
+
+                            let (bverts, binds) = collector.entry("blocks/tnt_bottom".to_string()).or_default();
+                            crate::models::vehicles::build_tnt_primed_model(
+                                bverts,
+                                binds,
+                                crate::models::vehicles::TntFace::Bottom,
+                                entity,
+                                partial_ticks,
+                                color,
+                            );
                         }
                         51 => {
                             let (verts, inds) = collector.entry("entity/endercrystal/endercrystal".to_string()).or_default();
@@ -673,6 +705,53 @@ impl EntityRenderer {
                         66 => {
                             let (verts, inds) = collector.entry("entity/wither/wither".to_string()).or_default();
                             crate::models::vehicles::build_wither_skull_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        70 => {
+                            // Falling Block (EntityFallingBlock)
+                            let block_id = (*data & 4095) as u16;
+                            let block_meta = ((*data >> 12) & 15) as u8;
+                            let effective_id = if block_id == 0 { 12 } else { block_id };
+                            if effective_id == 46 {
+                                let (sverts, sinds) = collector.entry("blocks/tnt_side".to_string()).or_default();
+                                crate::models::vehicles::build_tnt_primed_model(
+                                    sverts,
+                                    sinds,
+                                    crate::models::vehicles::TntFace::Sides,
+                                    entity,
+                                    partial_ticks,
+                                    color,
+                                );
+
+                                let (tverts, tinds) = collector.entry("blocks/tnt_top".to_string()).or_default();
+                                crate::models::vehicles::build_tnt_primed_model(
+                                    tverts,
+                                    tinds,
+                                    crate::models::vehicles::TntFace::Top,
+                                    entity,
+                                    partial_ticks,
+                                    color,
+                                );
+
+                                let (bverts, binds) = collector.entry("blocks/tnt_bottom".to_string()).or_default();
+                                crate::models::vehicles::build_tnt_primed_model(
+                                    bverts,
+                                    binds,
+                                    crate::models::vehicles::TntFace::Bottom,
+                                    entity,
+                                    partial_ticks,
+                                    color,
+                                );
+                            } else {
+                                let (tex_key, _) = get_item_render_texture_key(effective_id as i16, block_meta as i16);
+                                let (verts, inds) = collector.entry(tex_key).or_default();
+                                crate::models::vehicles::build_falling_block_model(
+                                    verts,
+                                    inds,
+                                    entity,
+                                    partial_ticks,
+                                    color,
+                                );
+                            }
                         }
                         71 => {
                             // Item Frame: wooden borders + birch background plate + optional item inside
@@ -875,6 +954,7 @@ pub fn get_item_render_texture_key(item_id: i16, damage: i16) -> (String, bool) 
             _ => ("blocks/sapling_oak".to_string(), true),
         },
         12 => if damage == 1 { ("blocks/red_sand".to_string(), true) } else { ("blocks/sand".to_string(), true) },
+        13 => ("blocks/gravel".to_string(), true),
         17 => match damage {
             1 => ("blocks/log_spruce".to_string(), true),
             2 => ("blocks/log_birch".to_string(), true),
@@ -903,6 +983,7 @@ pub fn get_item_render_texture_key(item_id: i16, damage: i16) -> (String, bool) 
             (format!("blocks/wool_colored_{}", name), true)
         }
         44 => ("blocks/stone_slab_top".to_string(), true),
+        46 => ("blocks/tnt_side".to_string(), true),
         53 => ("blocks/planks_oak".to_string(), true),
         54 => ("entity/chest/normal".to_string(), true),
         67 => ("blocks/cobblestone".to_string(), true),
@@ -914,8 +995,14 @@ pub fn get_item_render_texture_key(item_id: i16, damage: i16) -> (String, bool) 
             let name = names.get((damage & 15) as usize).unwrap_or(&"white");
             (format!("blocks/glass_{}", name), true)
         }
+        122 => ("blocks/dragon_egg".to_string(), true),
         125 | 126 => ("blocks/planks_oak".to_string(), true),
         134..=136 | 163 | 164 => ("blocks/planks_oak".to_string(), true),
+        145 => match damage {
+            1 => ("blocks/anvil_top_damaged_1".to_string(), true),
+            2 => ("blocks/anvil_top_damaged_2".to_string(), true),
+            _ => ("blocks/anvil_top_damaged_0".to_string(), true),
+        },
         161 => ("blocks/leaves_acacia".to_string(), true),
         162 => ("blocks/log_acacia".to_string(), true),
         171 => {

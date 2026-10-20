@@ -174,6 +174,14 @@ impl TrackedEntity {
             // Ballistic dead reckoning between server position updates for in-flight projectiles
             if let EntityKind::Object { object_type, .. } = self.kind {
                 match object_type {
+                    50 | 70 => {
+                        // Primed TNT / Falling Block: gravity 0.04, drag 0.98 matching MCP EntityTNTPrimed / EntityFallingBlock
+                        if !self.on_ground && (self.velocity.length_squared() > 0.0001 || self.velocity.y.abs() > 0.0001) {
+                            self.velocity.y -= 0.04;
+                            self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                            self.velocity *= 0.98;
+                        }
+                    }
                     60 => {
                         // Arrow: in flight (!on_ground), update ballistic trajectory matching MCP EntityArrow
                         if !self.on_ground && self.velocity.length_squared() > 0.001 {
@@ -337,8 +345,8 @@ impl TrackedEntity {
             EntityKind::Object { object_type, .. } => match object_type {
                 // ArmorStand: cannot be collided with if it has the marker flag (e.g. floating holograms)
                 78 => !self.is_armor_stand_marker,
-                // Boat, Minecart, Item Frame, Ender Crystal
-                1 | 10 | 71 | 51 => true,
+                // Boat, Minecart, Item Frame, Ender Crystal, Primed TNT, Falling Block
+                1 | 10 | 71 | 51 | 50 | 70 => true,
                 // Items, arrows, snowballs, potions, xp orbs, etc. cannot be clicked
                 _ => false,
             },
@@ -449,6 +457,7 @@ impl TrackedEntity {
                 71 => (0.5, 0.5),   // Item Frame
                 77 => (0.25, 0.25), // Leash Knot
                 51 => (2.0, 2.0),   // Ender Crystal
+                50 | 70 => (0.98, 0.98), // Primed TNT / Falling Block: setSize(0.98F, 0.98F)
                 60 | 61 | 62 => (0.5, 0.5), // Projectiles
                 2 => (0.25, 0.25),  // Item drop
                 _ => (0.5, 0.5),
@@ -600,7 +609,7 @@ impl EntityTracker {
         };
         let pitch = (pitch_byte as f32 * 360.0) / 256.0;
 
-        let is_in_air_object = matches!(object_type, 2 | 60..=65 | 72 | 73 | 75 | 90);
+        let is_in_air_object = matches!(object_type, 2 | 50 | 60..=65 | 70 | 72 | 73 | 75 | 90);
         let mut entity = TrackedEntity::new(
             entity_id,
             EntityKind::Object { object_type, data },
@@ -709,6 +718,20 @@ impl EntityTracker {
                             entity.on_ground = on_ground;
                             return;
                         }
+                    }
+                    50 | 70 => {
+                        let delta = target - entity.pos;
+                        if delta.length_squared() > 4.0 {
+                            entity.pos = target;
+                            entity.prev_pos = target;
+                            entity.target_pos = target;
+                            entity.interpolation_steps = 0;
+                        } else {
+                            entity.target_pos = target;
+                            entity.interpolation_steps = 3;
+                        }
+                        entity.on_ground = on_ground;
+                        return;
                     }
                     _ => {}
                 }
@@ -845,6 +868,28 @@ impl EntityTracker {
                             return;
                         }
                     }
+                    50 | 70 => {
+                        let delta = target - entity.pos;
+                        if delta.length_squared() > 4.0 {
+                            entity.pos = target;
+                            entity.prev_pos = target;
+                            entity.target_pos = target;
+                            entity.yaw = yaw;
+                            entity.prev_yaw = yaw;
+                            entity.target_yaw = yaw;
+                            entity.pitch = pitch;
+                            entity.prev_pitch = pitch;
+                            entity.target_pitch = pitch;
+                            entity.interpolation_steps = 0;
+                        } else {
+                            entity.target_pos = target;
+                            entity.target_yaw = yaw;
+                            entity.target_pitch = pitch;
+                            entity.interpolation_steps = 3;
+                        }
+                        entity.on_ground = on_ground;
+                        return;
+                    }
                     _ => {}
                 }
             }
@@ -912,6 +957,23 @@ impl EntityTracker {
                         return;
                     }
                     2 => {
+                        entity.pos = target;
+                        entity.prev_pos = target;
+                        entity.target_pos = target;
+                        entity.yaw = yaw;
+                        entity.prev_yaw = yaw;
+                        entity.target_yaw = yaw;
+                        entity.pitch = pitch;
+                        entity.prev_pitch = pitch;
+                        entity.target_pitch = pitch;
+                        entity.interpolation_steps = 0;
+                        entity.on_ground = on_ground;
+                        if on_ground {
+                            entity.velocity = glam::Vec3::ZERO;
+                        }
+                        return;
+                    }
+                    50 | 70 => {
                         entity.pos = target;
                         entity.prev_pos = target;
                         entity.target_pos = target;
@@ -1233,5 +1295,35 @@ mod tests {
         tracker.rel_move(30, 32, 10, 0, false);
         let snowball = tracker.get(30).unwrap();
         assert_eq!(snowball.velocity, initial_vel);
+    }
+
+    #[test]
+    fn test_tnt_primed_and_falling_block_initial_state_and_physics() {
+        let mut tracker = EntityTracker::new();
+
+        // Spawn TNT Primed (object_type = 50)
+        tracker.spawn_object(50, 50, 10 * 32, 70 * 32, 10 * 32, 0, 0, 0, 0, 1600, 0);
+        let tnt = tracker.get(50).unwrap();
+        assert!(!tnt.on_ground, "TNT must spawn in-air");
+        assert!(tnt.can_be_collided_with(), "TNT must be targetable");
+        let bb = tnt.bounding_box();
+        assert!(((bb.max_x - bb.min_x) - 0.98).abs() < 1e-4);
+        assert!(((bb.max_y - bb.min_y) - 0.98).abs() < 1e-4);
+
+        // Tick dead reckoning: gravity -0.04, drag 0.98
+        let initial_vy = tnt.velocity.y;
+        tracker.tick();
+        let tnt = tracker.get(50).unwrap();
+        let expected_vy = (initial_vy - 0.04) * 0.98;
+        assert!((tnt.velocity.y - expected_vy).abs() < 1e-4);
+
+        // Spawn Falling Block (object_type = 70, data encodes Sand = block_id 12)
+        tracker.spawn_object(70, 70, 15 * 32, 80 * 32, 15 * 32, 0, 0, 12, 0, 0, 0);
+        let falling_block = tracker.get(70).unwrap();
+        assert!(!falling_block.on_ground, "Falling block must spawn in-air");
+        assert!(falling_block.can_be_collided_with(), "Falling block must be targetable");
+        let bb = falling_block.bounding_box();
+        assert!(((bb.max_x - bb.min_x) - 0.98).abs() < 1e-4);
+        assert!(((bb.max_y - bb.min_y) - 0.98).abs() < 1e-4);
     }
 }
