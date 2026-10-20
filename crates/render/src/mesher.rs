@@ -668,49 +668,50 @@ impl ChunkMesher {
         (Self::is_water(id1) && Self::is_water(id2)) || (Self::is_lava(id1) && Self::is_lava(id2))
     }
 
-    fn get_fluid_corner_height<W: BlockWorldAccessor>(
+    fn get_fluid_height<W: BlockWorldAccessor>(
         world: &W,
         wx: i32,
         wy: i32,
         wz: i32,
-        cx: i32,
-        cz: i32,
         fluid_id: u16,
     ) -> f32 {
-        let mut sum = 0.0f32;
-        let mut count = 0;
+        let mut i = 0;
+        let mut f = 0.0f32;
 
-        for dx in (cx - 1)..=cx {
-            for dz in (cz - 1)..=cz {
-                let sx = wx + dx;
-                let sz = wz + dz;
+        for j in 0..4 {
+            let sx = wx - (j & 1);
+            let sz = wz - ((j >> 1) & 1);
 
-                let above = world.block_at(sx, wy + 1, sz);
-                if Self::is_same_fluid(fluid_id, above.id()) {
-                    return 1.0;
+            let above = world.block_at(sx, wy + 1, sz);
+            if Self::is_same_fluid(fluid_id, above.id()) {
+                return 1.0;
+            }
+
+            let curr = world.block_at(sx, wy, sz);
+            if !Self::is_same_fluid(fluid_id, curr.id()) {
+                if !curr.is_opaque() {
+                    f += 1.0;
+                    i += 1;
                 }
-
-                let curr = world.block_at(sx, wy, sz);
-                if Self::is_same_fluid(fluid_id, curr.id()) {
-                    let meta = curr.meta();
-                    let h = if meta >= 8 {
-                        8.0 / 9.0
-                    } else {
-                        (8.0 - (meta & 7) as f32) / 9.0
-                    };
-                    sum += h;
-                    count += 1;
-                } else if !curr.is_opaque() {
-                    sum += 1.0 / 9.0;
-                    count += 1;
+            } else {
+                let mut meta = curr.meta();
+                if meta >= 8 {
+                    meta = 0;
                 }
+                let percent = (meta as f32 + 1.0) / 9.0;
+                if curr.meta() >= 8 || curr.meta() == 0 {
+                    f += percent * 10.0;
+                    i += 10;
+                }
+                f += percent;
+                i += 1;
             }
         }
 
-        if count > 0 {
-            (sum / count as f32).clamp(0.08, 1.0)
-        } else {
+        if i == 0 {
             8.0 / 9.0
+        } else {
+            (1.0 - (f / i as f32)).clamp(0.1, 1.0)
         }
     }
 
@@ -733,12 +734,12 @@ impl ChunkMesher {
         let meta = block.meta();
 
         let region = if is_water {
-            if meta == 0 && block_id == 9 {
+            if block_id == 9 || (block_id == 8 && meta == 0) {
                 atlas.get_region("water_still")
             } else {
                 atlas.get_region("water_flow")
             }
-        } else if meta == 0 && block_id == 11 {
+        } else if block_id == 11 || (block_id == 10 && meta == 0) {
             atlas.get_region("lava_still")
         } else {
             atlas.get_region("lava_flow")
@@ -750,10 +751,11 @@ impl ChunkMesher {
             [1.0, 1.0, 1.0]
         };
 
-        let h_nw = Self::get_fluid_corner_height(world, wx, wy, wz, 0, 0, block_id);
-        let h_sw = Self::get_fluid_corner_height(world, wx, wy, wz, 0, 1, block_id);
-        let h_se = Self::get_fluid_corner_height(world, wx, wy, wz, 1, 1, block_id);
-        let h_ne = Self::get_fluid_corner_height(world, wx, wy, wz, 1, 0, block_id);
+        // Exact 4 corner heights matching MCP BlockFluidRenderer.renderFluid (f7, f8, f9, f10)
+        let h_nw = Self::get_fluid_height(world, wx, wy, wz, block_id);
+        let h_sw = Self::get_fluid_height(world, wx, wy, wz + 1, block_id);
+        let h_se = Self::get_fluid_height(world, wx + 1, wy, wz + 1, block_id);
+        let h_ne = Self::get_fluid_height(world, wx + 1, wy, wz, block_id);
 
         let bl = world.block_light_at(wx, wy, wz);
         let sl = world.sky_light_at(wx, wy, wz);

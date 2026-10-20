@@ -2873,10 +2873,7 @@ impl App {
                     if let Some(ent) = self.world.entity_tracker.entities.get(&riding_id) {
                         vehicle_exists = true;
                         let (offset_x, offset_y, offset_z) = match &ent.kind {
-                            world::EntityKind::Object { object_type: 1, .. } => {
-                                let rad = (ent.yaw as f64).to_radians();
-                                (rad.cos() * 0.4, -0.3, rad.sin() * 0.4)
-                            }
+                            world::EntityKind::Object { object_type: 1, .. } => (0.0, -0.3, 0.0),
                             world::EntityKind::Object { object_type: 10, .. } => (0.0, 0.0, 0.0),
                             _ => (0.0, 0.75, 0.0),
                         };
@@ -3960,10 +3957,7 @@ impl ApplicationHandler for App {
                     if let Some(rid) = self.riding_entity_id {
                         if let Some(ent) = self.world.entity_tracker.entities.get(&rid) {
                             let (offset_x, offset_y, offset_z) = match &ent.kind {
-                                world::EntityKind::Object { object_type: 1, .. } => {
-                                    let rad = (ent.yaw as f64).to_radians();
-                                    (rad.cos() * 0.4, -0.3, rad.sin() * 0.4)
-                                }
+                                world::EntityKind::Object { object_type: 1, .. } => (0.0, -0.3, 0.0),
                                 world::EntityKind::Object { object_type: 10, .. } => (0.0, 0.0, 0.0),
                                 _ => (0.0, 0.75, 0.0),
                             };
@@ -4141,8 +4135,10 @@ impl ApplicationHandler for App {
                             occlusion_query_set: None,
                         });
 
-                        tr.render(&mut rpass, &visible_opaque, &visible_translucent);
+                        // 1. Render opaque terrain
+                        tr.render_opaque(&mut rpass, &visible_opaque);
 
+                        // 2. Render entities with depth writes and testing
                         if let Some(er) = &mut self.entity_renderer {
                             let dt_ms = (self.last_physics_tick.elapsed().as_millis() as f32).clamp(0.0, 50.0);
                             let partial_ticks = (dt_ms / 50.0).clamp(0.0, 1.0);
@@ -4194,9 +4190,13 @@ impl ApplicationHandler for App {
                             er.render(&gpu.device, &gpu.queue, &mut rpass, &self.world.entity_tracker, partial_ticks, local_player_entity.as_ref());
                         }
 
+                        // 3. Render block breaking outline & particles
                         if let Some(ir) = &self.interaction_renderer {
                             ir.render(&mut rpass);
                         }
+
+                        // 4. Render translucent terrain (water, stained glass) alpha-blended on top of terrain and entities
+                        tr.render_translucent(&mut rpass, &visible_translucent);
                     }
                 } else {
                     let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

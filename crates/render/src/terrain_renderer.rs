@@ -473,6 +473,50 @@ impl TerrainRenderer {
         }
     }
 
+    /// Draws all visible opaque section meshes into the active render pass.
+    pub fn render_opaque<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        visible_opaque: &[&'a GpuSectionMesh],
+    ) {
+        if visible_opaque.is_empty() {
+            return;
+        }
+        rpass.set_bind_group(0, &self.uniform_bind_group, &[]);
+        rpass.set_bind_group(1, &self.atlas_bind_group, &[]);
+        rpass.set_pipeline(&self.opaque_pipeline);
+        for mesh in visible_opaque {
+            if let (Some(vbuf), Some(ibuf), Some(inst_buf)) = (&mesh.opaque_vbuf, &mesh.opaque_ibuf, &mesh.instance_buf) {
+                rpass.set_vertex_buffer(0, vbuf.slice(..));
+                rpass.set_vertex_buffer(1, inst_buf.slice(..));
+                rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                rpass.draw_indexed(0..mesh.opaque_index_count, 0, 0..1);
+            }
+        }
+    }
+
+    /// Draws all visible translucent section meshes into the active render pass.
+    pub fn render_translucent<'a>(
+        &'a self,
+        rpass: &mut wgpu::RenderPass<'a>,
+        visible_translucent: &[&'a GpuSectionMesh],
+    ) {
+        if visible_translucent.is_empty() {
+            return;
+        }
+        rpass.set_bind_group(0, &self.uniform_bind_group, &[]);
+        rpass.set_bind_group(1, &self.atlas_bind_group, &[]);
+        rpass.set_pipeline(&self.translucent_pipeline);
+        for mesh in visible_translucent {
+            if let (Some(vbuf), Some(ibuf), Some(inst_buf)) = (&mesh.translucent_vbuf, &mesh.translucent_ibuf, &mesh.instance_buf) {
+                rpass.set_vertex_buffer(0, vbuf.slice(..));
+                rpass.set_vertex_buffer(1, inst_buf.slice(..));
+                rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                rpass.draw_indexed(0..mesh.translucent_index_count, 0, 0..1);
+            }
+        }
+    }
+
     /// Draws all visible opaque and translucent section meshes into the active render pass.
     pub fn render<'a>(
         &'a self,
@@ -480,34 +524,8 @@ impl TerrainRenderer {
         visible_opaque: &[&'a GpuSectionMesh],
         visible_translucent: &[&'a GpuSectionMesh],
     ) {
-        rpass.set_bind_group(0, &self.uniform_bind_group, &[]);
-        rpass.set_bind_group(1, &self.atlas_bind_group, &[]);
-
-        // 1. Opaque Pass
-        if !visible_opaque.is_empty() {
-            rpass.set_pipeline(&self.opaque_pipeline);
-            for mesh in visible_opaque {
-                if let (Some(vbuf), Some(ibuf), Some(inst_buf)) = (&mesh.opaque_vbuf, &mesh.opaque_ibuf, &mesh.instance_buf) {
-                    rpass.set_vertex_buffer(0, vbuf.slice(..));
-                    rpass.set_vertex_buffer(1, inst_buf.slice(..));
-                    rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                    rpass.draw_indexed(0..mesh.opaque_index_count, 0, 0..1);
-                }
-            }
-        }
-
-        // 2. Translucent Pass
-        if !visible_translucent.is_empty() {
-            rpass.set_pipeline(&self.translucent_pipeline);
-            for mesh in visible_translucent {
-                if let (Some(vbuf), Some(ibuf), Some(inst_buf)) = (&mesh.translucent_vbuf, &mesh.translucent_ibuf, &mesh.instance_buf) {
-                    rpass.set_vertex_buffer(0, vbuf.slice(..));
-                    rpass.set_vertex_buffer(1, inst_buf.slice(..));
-                    rpass.set_index_buffer(ibuf.slice(..), wgpu::IndexFormat::Uint32);
-                    rpass.draw_indexed(0..mesh.translucent_index_count, 0, 0..1);
-                }
-            }
-        }
+        self.render_opaque(rpass, visible_opaque);
+        self.render_translucent(rpass, visible_translucent);
     }
 }
 

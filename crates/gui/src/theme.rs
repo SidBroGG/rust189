@@ -273,6 +273,36 @@ pub fn setup_minecraft_theme(ctx: &egui::Context) {
     style.interaction.show_tooltips_only_when_still = false;
     style.spacing.window_margin = egui::Margin::symmetric(6, 4);
     ctx.set_style(style);
+
+    // Setup fallback fonts to render unicode icons, stars, swords, hearts, etc. without tofu squares
+    let mut fonts = egui::FontDefinitions::default();
+    let symbol_candidates = [
+        "C:\\Windows\\Fonts\\seguisym.ttf",
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ];
+    for path in symbol_candidates {
+        if let Ok(bytes) = std::fs::read(path) {
+            let font_name = std::path::Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("symbol_font")
+                .to_string();
+            fonts.font_data.insert(
+                font_name.clone(),
+                egui::FontData::from_owned(bytes).into(),
+            );
+            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                family.push(font_name.clone());
+            }
+            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                family.push(font_name);
+            }
+        }
+    }
+    ctx.set_fonts(fonts);
 }
 
 #[cfg(test)]
