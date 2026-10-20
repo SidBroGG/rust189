@@ -625,16 +625,8 @@ impl EntityRenderer {
                                 world::entity::MetadataValue::Slot(Some(s)) => Some((s.item_id, s.item_count, s.item_damage)),
                                 _ => None,
                             });
-                            let item_id = slot.map_or(260, |(id, _, _)| id);
-                            let (tex_key, is_block) = if let Some(def) = world::item::get_item_def(item_id) {
-                                if def.is_block {
-                                    (format!("blocks/{}", def.name), true)
-                                } else {
-                                    (format!("items/{}", def.name), false)
-                                }
-                            } else {
-                                ("items/apple".to_string(), false)
-                            };
+                            let (item_id, dmg) = slot.map_or((260, 0), |(id, _, d)| (id, d));
+                            let (tex_key, is_block) = get_item_render_texture_key(item_id, dmg);
                             let (verts, inds) = collector.entry(tex_key).or_default();
                             crate::models::vehicles::build_dropped_item_model(verts, inds, entity, is_block, partial_ticks, color);
                         }
@@ -676,7 +668,7 @@ impl EntityRenderer {
                         }
                         71 => {
                             // Item Frame: wooden borders + birch background plate + optional item inside
-                            let (f_verts, f_inds) = collector.entry("blocks/planks_oak".to_string()).or_default();
+                            let (f_verts, f_inds) = collector.entry("blocks/planks_birch".to_string()).or_default();
                             crate::models::vehicles::build_item_frame_borders(f_verts, f_inds, entity, partial_ticks, color);
 
                             let (bg_verts, bg_inds) = collector.entry("blocks/itemframe_background".to_string()).or_default();
@@ -686,20 +678,12 @@ impl EntityRenderer {
                                 world::entity::MetadataValue::Slot(Some(slot)) => Some((slot.item_id, slot.item_damage)),
                                 _ => None,
                             });
-                            if let Some((item_id, _dmg)) = item_slot {
+                            if let Some((item_id, dmg)) = item_slot {
                                 let rot_steps = entity.metadata.iter().find(|m| m.index == 9).and_then(|m| match m.value {
                                     world::entity::MetadataValue::Byte(b) => Some((b & 7) as u8),
                                     _ => None,
                                 }).unwrap_or(0);
-                                let (tex_key, is_block) = if let Some(def) = world::item::get_item_def(item_id) {
-                                    if def.is_block {
-                                        (format!("blocks/{}", def.name), true)
-                                    } else {
-                                        (format!("items/{}", def.name), false)
-                                    }
-                                } else {
-                                    ("items/apple".to_string(), false)
-                                };
+                                let (tex_key, is_block) = get_item_render_texture_key(item_id, dmg);
                                 let (i_verts, i_inds) = collector.entry(tex_key).or_default();
                                 crate::models::vehicles::build_item_frame_item(i_verts, i_inds, entity, rot_steps, is_block, partial_ticks, color);
                             }
@@ -839,6 +823,126 @@ impl EntityRenderer {
     }
 }
 
+/// Maps item ID and metadata to texture asset key and whether it renders as a 3D block or flat 3D slab.
+pub fn get_item_render_texture_key(item_id: i16, damage: i16) -> (String, bool) {
+    match item_id {
+        // Blocks (1..255)
+        1 => match damage {
+            1 => ("blocks/stone_granite".to_string(), true),
+            2 => ("blocks/stone_granite_smooth".to_string(), true),
+            3 => ("blocks/stone_diorite".to_string(), true),
+            4 => ("blocks/stone_diorite_smooth".to_string(), true),
+            5 => ("blocks/stone_andesite".to_string(), true),
+            6 => ("blocks/stone_andesite_smooth".to_string(), true),
+            _ => ("blocks/stone".to_string(), true),
+        },
+        2 => ("blocks/grass_top".to_string(), true),
+        3 => match damage {
+            1 => ("blocks/coarse_dirt".to_string(), true),
+            2 => ("blocks/dirt_podzol_top".to_string(), true),
+            _ => ("blocks/dirt".to_string(), true),
+        },
+        4 => ("blocks/cobblestone".to_string(), true),
+        5 => match damage {
+            1 => ("blocks/planks_spruce".to_string(), true),
+            2 => ("blocks/planks_birch".to_string(), true),
+            3 => ("blocks/planks_jungle".to_string(), true),
+            4 => ("blocks/planks_acacia".to_string(), true),
+            5 => ("blocks/planks_big_oak".to_string(), true),
+            _ => ("blocks/planks_oak".to_string(), true),
+        },
+        6 => match damage {
+            1 => ("blocks/sapling_spruce".to_string(), true),
+            2 => ("blocks/sapling_birch".to_string(), true),
+            3 => ("blocks/sapling_jungle".to_string(), true),
+            4 => ("blocks/sapling_acacia".to_string(), true),
+            5 => ("blocks/sapling_roofed_oak".to_string(), true),
+            _ => ("blocks/sapling_oak".to_string(), true),
+        },
+        12 => if damage == 1 { ("blocks/red_sand".to_string(), true) } else { ("blocks/sand".to_string(), true) },
+        17 => match damage {
+            1 => ("blocks/log_spruce".to_string(), true),
+            2 => ("blocks/log_birch".to_string(), true),
+            3 => ("blocks/log_jungle".to_string(), true),
+            _ => ("blocks/log_oak".to_string(), true),
+        },
+        18 => match damage {
+            1 => ("blocks/leaves_spruce".to_string(), true),
+            2 => ("blocks/leaves_birch".to_string(), true),
+            3 => ("blocks/leaves_jungle".to_string(), true),
+            _ => ("blocks/leaves_oak".to_string(), true),
+        },
+        19 => if damage == 1 { ("blocks/sponge_wet".to_string(), true) } else { ("blocks/sponge".to_string(), true) },
+        24 => match damage {
+            1 => ("blocks/sandstone_carved".to_string(), true),
+            2 => ("blocks/sandstone_smooth".to_string(), true),
+            _ => ("blocks/sandstone_normal".to_string(), true),
+        },
+        31 => ("blocks/tallgrass".to_string(), true),
+        35 => {
+            let names = [
+                "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                "silver", "cyan", "purple", "blue", "brown", "green", "red", "black",
+            ];
+            let name = names.get((damage & 15) as usize).unwrap_or(&"white");
+            (format!("blocks/wool_colored_{}", name), true)
+        }
+        44 => ("blocks/stone_slab_top".to_string(), true),
+        53 => ("blocks/planks_oak".to_string(), true),
+        54 => ("entity/chest/normal".to_string(), true),
+        67 => ("blocks/cobblestone".to_string(), true),
+        95 => {
+            let names = [
+                "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                "silver", "cyan", "purple", "blue", "brown", "green", "red", "black",
+            ];
+            let name = names.get((damage & 15) as usize).unwrap_or(&"white");
+            (format!("blocks/glass_{}", name), true)
+        }
+        125 | 126 => ("blocks/planks_oak".to_string(), true),
+        134..=136 | 163 | 164 => ("blocks/planks_oak".to_string(), true),
+        161 => ("blocks/leaves_acacia".to_string(), true),
+        162 => ("blocks/log_acacia".to_string(), true),
+        171 => {
+            let names = [
+                "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray",
+                "silver", "cyan", "purple", "blue", "brown", "green", "red", "black",
+            ];
+            let name = names.get((damage & 15) as usize).unwrap_or(&"white");
+            (format!("blocks/wool_colored_{}", name), true)
+        }
+        // Items
+        261 => ("items/bow_standby".to_string(), false),
+        324 => ("items/door_wood".to_string(), false),
+        328 => ("items/minecart_normal".to_string(), false),
+        330 => ("items/door_iron".to_string(), false),
+        333 => ("items/boat".to_string(), false),
+        342 => ("items/minecart_chest".to_string(), false),
+        343 => ("items/minecart_furnace".to_string(), false),
+        346 => ("items/fishing_rod_uncast".to_string(), false),
+        373 => ("items/potion_bottle_drinkable".to_string(), false),
+        383 => ("items/spawn_egg".to_string(), false),
+        407 => ("items/minecart_tnt".to_string(), false),
+        408 => ("items/minecart_hopper".to_string(), false),
+        427 => ("items/door_spruce".to_string(), false),
+        428 => ("items/door_birch".to_string(), false),
+        429 => ("items/door_jungle".to_string(), false),
+        430 => ("items/door_acacia".to_string(), false),
+        431 => ("items/door_dark_oak".to_string(), false),
+        _ => {
+            if let Some(def) = world::item::get_item_def(item_id) {
+                if def.is_block {
+                    (format!("blocks/{}", def.name), true)
+                } else {
+                    (format!("items/{}", def.name), false)
+                }
+            } else {
+                ("items/apple".to_string(), false)
+            }
+        }
+    }
+}
+
 /// Helper function to load texture image from filesystem with safe procedural fallbacks.
 fn load_entity_texture(key: &str) -> RgbaImage {
     let clean_key = key.trim_start_matches('/');
@@ -851,6 +955,21 @@ fn load_entity_texture(key: &str) -> RgbaImage {
     ];
 
     for path in &candidates {
+        if let Ok(img) = image::open(path) {
+            return img.to_rgba8();
+        }
+    }
+
+    // Safe fallback to apple or stone before procedural checkerboard to prevent checkerboard textures
+    let fallback_keys: &[&str] = if clean_key.starts_with("blocks/") {
+        &["assets/minecraft/textures/blocks/stone.png", "../assets/minecraft/textures/blocks/stone.png", "../../assets/minecraft/textures/blocks/stone.png"]
+    } else if clean_key.starts_with("items/") {
+        &["assets/minecraft/textures/items/apple.png", "../assets/minecraft/textures/items/apple.png", "../../assets/minecraft/textures/items/apple.png"]
+    } else {
+        &[]
+    };
+
+    for path in fallback_keys {
         if let Ok(img) = image::open(path) {
             return img.to_rgba8();
         }

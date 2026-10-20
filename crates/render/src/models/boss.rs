@@ -87,6 +87,12 @@ pub fn build_dragon_model(
     let age = entity.ticks_existed as f32 + partial_ticks;
     let flap_time = age * 0.2;
 
+    // MCP ModelDragon: f1 root bobbing and pitch rotation
+    let f1_raw = (flap_time * PI * 2.0 - 1.0).sin() + 1.0;
+    let f1 = (f1_raw * f1_raw + f1_raw * 2.0) * 0.05;
+    root *= Mat4::from_translation(Vec3::new(0.0, f1 - 2.0, -3.0));
+    root *= Mat4::from_rotation_x(f1 * 2.0);
+
     // Body (0, 0)
     let mut body = ModelPart::new(0.0, 0.0, 256.0, 256.0);
     body.set_rotation_point(0.0, 4.0, 8.0);
@@ -97,9 +103,9 @@ pub fn build_dragon_model(
     body.add_box(220.0, 53.0, -1.0, -6.0, 30.0, 2.0, 6.0, 12.0, 0.0);
     body.render(root, vertices, indices, color);
 
-    // Neck segments (5 segments)
-    let mut y_offset = 4.0;
-    let mut z_offset = -8.0;
+    // Neck segments (5 segments) - MCP start: Y = 20.0, Z = -12.0
+    let mut y_offset = 20.0;
+    let mut z_offset = -12.0;
     for i in 0..5 {
         let curve = ((i as f32) * 0.45 + flap_time * PI * 2.0).cos() * 0.15;
         let mut spine = ModelPart::new(192.0, 104.0, 256.0, 256.0);
@@ -178,19 +184,27 @@ pub fn build_dragon_model(
     right_wing.add_child(right_wingtip);
     right_wing.render(root, vertices, indices, color);
 
-    // Legs
-    let leg_anim = 1.3 + (flap_time * PI * 2.0).sin().abs() * 0.1;
+    // Legs with MCP f1 flex
+    let fl_rot = 1.3 + f1 * 0.1;
+    let fl_tip_rot = -0.5 - f1 * 0.1;
+    let fl_foot_rot = 0.75 + f1 * 0.1;
+
+    let rl_rot = 1.0 + f1 * 0.1;
+    let rl_tip_rot = 0.5 + f1 * 0.1;
+    let rl_foot_rot = 0.75 + f1 * 0.1;
 
     // Left Front Leg
     let mut fl_leg = ModelPart::new(112.0, 104.0, 256.0, 256.0);
     fl_leg.set_rotation_point(-12.0, 20.0, 2.0);
-    fl_leg.set_rotation(leg_anim, 0.0, 0.0);
+    fl_leg.set_rotation(fl_rot, 0.0, 0.0);
     fl_leg.add_box(112.0, 104.0, -4.0, -4.0, -4.0, 8.0, 24.0, 8.0, 0.0);
     let mut fl_tip = ModelPart::new(226.0, 138.0, 256.0, 256.0);
     fl_tip.set_rotation_point(0.0, 20.0, -1.0);
+    fl_tip.set_rotation(fl_tip_rot, 0.0, 0.0);
     fl_tip.add_box(226.0, 138.0, -3.0, -1.0, -3.0, 6.0, 24.0, 6.0, 0.0);
     let mut fl_foot = ModelPart::new(144.0, 104.0, 256.0, 256.0);
     fl_foot.set_rotation_point(0.0, 23.0, 0.0);
+    fl_foot.set_rotation(fl_foot_rot, 0.0, 0.0);
     fl_foot.add_box(144.0, 104.0, -4.0, 0.0, -12.0, 8.0, 4.0, 16.0, 0.0);
     fl_tip.add_child(fl_foot);
     fl_leg.add_child(fl_tip);
@@ -200,13 +214,15 @@ pub fn build_dragon_model(
     let mut fr_leg = ModelPart::new(112.0, 104.0, 256.0, 256.0);
     fr_leg.mirror = true;
     fr_leg.set_rotation_point(12.0, 20.0, 2.0);
-    fr_leg.set_rotation(leg_anim, 0.0, 0.0);
+    fr_leg.set_rotation(fl_rot, 0.0, 0.0);
     fr_leg.add_box(112.0, 104.0, -4.0, -4.0, -4.0, 8.0, 24.0, 8.0, 0.0);
     let mut fr_tip = ModelPart::new(226.0, 138.0, 256.0, 256.0);
     fr_tip.set_rotation_point(0.0, 20.0, -1.0);
+    fr_tip.set_rotation(fl_tip_rot, 0.0, 0.0);
     fr_tip.add_box(226.0, 138.0, -3.0, -1.0, -3.0, 6.0, 24.0, 6.0, 0.0);
     let mut fr_foot = ModelPart::new(144.0, 104.0, 256.0, 256.0);
     fr_foot.set_rotation_point(0.0, 23.0, 0.0);
+    fr_foot.set_rotation(fl_foot_rot, 0.0, 0.0);
     fr_foot.add_box(144.0, 104.0, -4.0, 0.0, -12.0, 8.0, 4.0, 16.0, 0.0);
     fr_tip.add_child(fr_foot);
     fr_leg.add_child(fr_tip);
@@ -215,13 +231,15 @@ pub fn build_dragon_model(
     // Left Rear Leg
     let mut rl_leg = ModelPart::new(0.0, 0.0, 256.0, 256.0);
     rl_leg.set_rotation_point(-16.0, 16.0, 42.0);
-    rl_leg.set_rotation(1.0, 0.0, 0.0);
+    rl_leg.set_rotation(rl_rot, 0.0, 0.0);
     rl_leg.add_box(0.0, 0.0, -8.0, -4.0, -8.0, 16.0, 32.0, 16.0, 0.0);
     let mut rl_tip = ModelPart::new(196.0, 0.0, 256.0, 256.0);
     rl_tip.set_rotation_point(0.0, 32.0, -4.0);
+    rl_tip.set_rotation(rl_tip_rot, 0.0, 0.0);
     rl_tip.add_box(196.0, 0.0, -6.0, -2.0, 0.0, 12.0, 32.0, 12.0, 0.0);
     let mut rl_foot = ModelPart::new(112.0, 0.0, 256.0, 256.0);
     rl_foot.set_rotation_point(0.0, 31.0, 4.0);
+    rl_foot.set_rotation(rl_foot_rot, 0.0, 0.0);
     rl_foot.add_box(112.0, 0.0, -9.0, 0.0, -20.0, 18.0, 6.0, 24.0, 0.0);
     rl_tip.add_child(rl_foot);
     rl_leg.add_child(rl_tip);
@@ -231,21 +249,23 @@ pub fn build_dragon_model(
     let mut rr_leg = ModelPart::new(0.0, 0.0, 256.0, 256.0);
     rr_leg.mirror = true;
     rr_leg.set_rotation_point(16.0, 16.0, 42.0);
-    rr_leg.set_rotation(1.0, 0.0, 0.0);
+    rr_leg.set_rotation(rl_rot, 0.0, 0.0);
     rr_leg.add_box(0.0, 0.0, -8.0, -4.0, -8.0, 16.0, 32.0, 16.0, 0.0);
     let mut rr_tip = ModelPart::new(196.0, 0.0, 256.0, 256.0);
     rr_tip.set_rotation_point(0.0, 32.0, -4.0);
+    rr_tip.set_rotation(rl_tip_rot, 0.0, 0.0);
     rr_tip.add_box(196.0, 0.0, -6.0, -2.0, 0.0, 12.0, 32.0, 12.0, 0.0);
     let mut rr_foot = ModelPart::new(112.0, 0.0, 256.0, 256.0);
     rr_foot.set_rotation_point(0.0, 31.0, 4.0);
+    rr_foot.set_rotation(rl_foot_rot, 0.0, 0.0);
     rr_foot.add_box(112.0, 0.0, -9.0, 0.0, -20.0, 18.0, 6.0, 24.0, 0.0);
     rr_tip.add_child(rr_foot);
     rr_leg.add_child(rr_tip);
     rr_leg.render(root, vertices, indices, color);
 
-    // 12 Tail Segments (MCP ModelDragon)
-    let mut tail_y = 4.0;
-    let mut tail_z = 48.0;
+    // 12 Tail Segments - MCP start: Y = 10.0, Z = 60.0
+    let mut tail_y = 10.0;
+    let mut tail_z = 60.0;
     let mut tail_x = 0.0;
     for j in 0..12 {
         let tail_curve = ((j as f32) * 0.45 + flap_time * PI * 2.0).cos() * 0.08;
@@ -262,3 +282,4 @@ pub fn build_dragon_model(
         tail_x += tail_swing.sin() * 10.0;
     }
 }
+

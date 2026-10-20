@@ -240,7 +240,7 @@ pub fn build_leash_knot_model(
     knot.render(root, vertices, indices, color);
 }
 
-/// Builds the Item Frame borders model (MCP RenderItemFrame, planks_oak).
+/// Builds the Item Frame borders model (MCP RenderItemFrame, planks_birch).
 pub fn build_item_frame_borders(
     vertices: &mut Vec<EntityVertex>,
     indices: &mut Vec<u32>,
@@ -255,14 +255,15 @@ pub fn build_item_frame_borders(
         * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
 
     let mut frame = ModelPart::new(0.0, 0.0, 16.0, 16.0);
+    // Matching vanilla item_frame.json elements (z from 7.0 to 8.0 against the wall):
     // Top border: 12 wide, 1 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, 5.0, -0.5, 12.0, 1.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, 5.0, 7.0, 12.0, 1.0, 1.0, 0.0);
     // Bottom border: 12 wide, 1 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, -6.0, -0.5, 12.0, 1.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, -6.0, 7.0, 12.0, 1.0, 1.0, 0.0);
     // Left border: 1 wide, 10 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, -5.0, -0.5, 1.0, 10.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, -5.0, 7.0, 1.0, 10.0, 1.0, 0.0);
     // Right border: 1 wide, 10 high, 1 deep
-    frame.add_box(0.0, 0.0, 5.0, -5.0, -0.5, 1.0, 10.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, 5.0, -5.0, 7.0, 1.0, 10.0, 1.0, 0.0);
     frame.render(root, vertices, indices, color);
 }
 
@@ -281,8 +282,8 @@ pub fn build_item_frame_background(
         * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
 
     let mut back = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-    // Recessed plate: 10 wide, 10 high, 0.5 deep
-    back.add_box(0.0, 0.0, -5.0, -5.0, 0.0, 10.0, 10.0, 0.5, 0.0);
+    // Recessed plate: 10 wide, 10 high, 0.5 deep (z from 7.5 to 8.0)
+    back.add_box(0.0, 0.0, -5.0, -5.0, 7.5, 10.0, 10.0, 0.5, 0.0);
     back.render(root, vertices, indices, color);
 }
 
@@ -302,8 +303,8 @@ pub fn build_item_frame_item(
 
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
         * Mat4::from_rotation_y((180.0 - yaw).to_radians())
-        * Mat4::from_rotation_z(item_rot.to_radians())
-        * Mat4::from_translation(Vec3::new(0.0, 0.0, -0.05));
+        * Mat4::from_translation(Vec3::new(0.0, 0.0, 7.0 / 16.0 - 0.01))
+        * Mat4::from_rotation_z(item_rot.to_radians());
 
     if is_block {
         let mut block = ModelPart::new(0.0, 0.0, 16.0, 16.0);
@@ -311,11 +312,13 @@ pub fn build_item_frame_item(
         block.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
     } else {
         let s = 0.225;
+        let tz = 0.015;
         let base_idx = vertices.len() as u32;
-        let p0 = (root * Vec3::new(-s, -s, 0.0).extend(1.0)).truncate();
-        let p1 = (root * Vec3::new(s, -s, 0.0).extend(1.0)).truncate();
-        let p2 = (root * Vec3::new(s, s, 0.0).extend(1.0)).truncate();
-        let p3 = (root * Vec3::new(-s, s, 0.0).extend(1.0)).truncate();
+
+        let p0 = (root * Vec3::new(-s, -s, -tz).extend(1.0)).truncate();
+        let p1 = (root * Vec3::new(s, -s, -tz).extend(1.0)).truncate();
+        let p2 = (root * Vec3::new(s, s, -tz).extend(1.0)).truncate();
+        let p3 = (root * Vec3::new(-s, s, -tz).extend(1.0)).truncate();
 
         let norm_f = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
         let norm_b = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
@@ -328,11 +331,16 @@ pub fn build_item_frame_item(
         indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
 
         // Back
+        let bp0 = (root * Vec3::new(s, -s, tz).extend(1.0)).truncate();
+        let bp1 = (root * Vec3::new(-s, -s, tz).extend(1.0)).truncate();
+        let bp2 = (root * Vec3::new(-s, s, tz).extend(1.0)).truncate();
+        let bp3 = (root * Vec3::new(s, s, tz).extend(1.0)).truncate();
+
         let b_idx = vertices.len() as u32;
-        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_b, color });
-        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_b, color });
-        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_b, color });
-        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: bp0.to_array(), uv: [1.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: bp1.to_array(), uv: [0.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: bp2.to_array(), uv: [0.0, 0.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: bp3.to_array(), uv: [1.0, 0.0], normal: norm_b, color });
         indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
     }
 }
@@ -361,7 +369,8 @@ pub fn build_dropped_item_model(
     let pos = entity.interpolated_pos(partial_ticks);
     let age = entity.ticks_existed as f32 + partial_ticks;
     let bob = ((age / 10.0 + (entity.id as f32 * 0.1)).sin() * 0.1 + 0.1) as f32;
-    let spin = (age / 20.0 * 360.0).to_radians();
+    // MCP RenderEntityItem spin: ((age + pt) / 20.0 + hoverStart) radians
+    let spin = age / 20.0 + (entity.id as f32 * 0.1);
 
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32 + bob, pos.z as f32))
         * Mat4::from_rotation_y(spin);
@@ -372,11 +381,13 @@ pub fn build_dropped_item_model(
         block.render(root * Mat4::from_scale(Vec3::splat(1.0 / 16.0)), vertices, indices, color);
     } else {
         let s = 0.2;
+        let tz = 0.015625; // 3D extruded slab thickness (1/16th block)
         let base_idx = vertices.len() as u32;
-        let p0 = (root * Vec3::new(-s, -s, 0.0).extend(1.0)).truncate();
-        let p1 = (root * Vec3::new(s, -s, 0.0).extend(1.0)).truncate();
-        let p2 = (root * Vec3::new(s, s, 0.0).extend(1.0)).truncate();
-        let p3 = (root * Vec3::new(-s, s, 0.0).extend(1.0)).truncate();
+
+        let p0 = (root * Vec3::new(-s, -s, -tz).extend(1.0)).truncate();
+        let p1 = (root * Vec3::new(s, -s, -tz).extend(1.0)).truncate();
+        let p2 = (root * Vec3::new(s, s, -tz).extend(1.0)).truncate();
+        let p3 = (root * Vec3::new(-s, s, -tz).extend(1.0)).truncate();
 
         let norm_f = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
         let norm_b = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
@@ -389,12 +400,50 @@ pub fn build_dropped_item_model(
         indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
 
         // Back
+        let bp0 = (root * Vec3::new(s, -s, tz).extend(1.0)).truncate();
+        let bp1 = (root * Vec3::new(-s, -s, tz).extend(1.0)).truncate();
+        let bp2 = (root * Vec3::new(-s, s, tz).extend(1.0)).truncate();
+        let bp3 = (root * Vec3::new(s, s, tz).extend(1.0)).truncate();
+
         let b_idx = vertices.len() as u32;
-        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_b, color });
-        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_b, color });
-        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_b, color });
-        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: bp0.to_array(), uv: [1.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: bp1.to_array(), uv: [0.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: bp2.to_array(), uv: [0.0, 0.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: bp3.to_array(), uv: [1.0, 0.0], normal: norm_b, color });
         indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
+
+        // 3D edge borders (Left, Right, Top, Bottom) for extruded slab feel
+        let norm_l = (root * Vec3::new(-1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+        let l_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_l, color });
+        vertices.push(EntityVertex { position: bp1.to_array(), uv: [0.0, 1.0], normal: norm_l, color });
+        vertices.push(EntityVertex { position: bp2.to_array(), uv: [0.0, 0.0], normal: norm_l, color });
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_l, color });
+        indices.extend_from_slice(&[l_idx, l_idx + 1, l_idx + 2, l_idx, l_idx + 2, l_idx + 3]);
+
+        let norm_r = (root * Vec3::new(1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+        let r_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: bp0.to_array(), uv: [1.0, 1.0], normal: norm_r, color });
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_r, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_r, color });
+        vertices.push(EntityVertex { position: bp3.to_array(), uv: [1.0, 0.0], normal: norm_r, color });
+        indices.extend_from_slice(&[r_idx, r_idx + 1, r_idx + 2, r_idx, r_idx + 2, r_idx + 3]);
+
+        let norm_t = (root * Vec3::new(0.0, 1.0, 0.0).extend(0.0)).truncate().to_array();
+        let t_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_t, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_t, color });
+        vertices.push(EntityVertex { position: bp3.to_array(), uv: [1.0, 0.0], normal: norm_t, color });
+        vertices.push(EntityVertex { position: bp2.to_array(), uv: [0.0, 0.0], normal: norm_t, color });
+        indices.extend_from_slice(&[t_idx, t_idx + 1, t_idx + 2, t_idx, t_idx + 2, t_idx + 3]);
+
+        let norm_bt = (root * Vec3::new(0.0, -1.0, 0.0).extend(0.0)).truncate().to_array();
+        let bt_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: bp1.to_array(), uv: [0.0, 1.0], normal: norm_bt, color });
+        vertices.push(EntityVertex { position: bp0.to_array(), uv: [1.0, 1.0], normal: norm_bt, color });
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_bt, color });
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_bt, color });
+        indices.extend_from_slice(&[bt_idx, bt_idx + 1, bt_idx + 2, bt_idx, bt_idx + 2, bt_idx + 3]);
     }
 }
 
@@ -578,13 +627,13 @@ pub fn build_painting_model(
     let art = find_painting(title);
     let pos = entity.interpolated_pos(partial_ticks);
 
-    // MCP facing: 0 = South (180), 1 = West (270), 2 = North (0), 3 = East (90)
+    // MCP facing: 0 = South (180), 1 = West (90), 2 = North (0), 3 = East (270)
     let yaw: f32 = match facing {
-        0 => 0.0,
+        0 => 180.0,
         1 => 90.0,
-        2 => 180.0,
+        2 => 0.0,
         3 => 270.0,
-        _ => 0.0,
+        _ => 180.0,
     };
 
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
@@ -677,6 +726,36 @@ pub fn build_painting_model(
                 vertices.push(EntityVertex { position: btp2.to_array(), uv: [u_border_max, v_border_max], normal: bot_norm, color });
                 vertices.push(EntityVertex { position: btp3.to_array(), uv: [u_border_min, v_border_max], normal: bot_norm, color });
                 indices.extend_from_slice(&[bot_idx, bot_idx + 1, bot_idx + 2, bot_idx, bot_idx + 2, bot_idx + 3]);
+            }
+
+            // Left border (MCP RenderPainting x0)
+            if tx == 0 {
+                let left_idx = vertices.len() as u32;
+                let lp0 = (root * Vec3::new(x0, y1, -f_z).extend(1.0)).truncate();
+                let lp1 = (root * Vec3::new(x0, y0, -f_z).extend(1.0)).truncate();
+                let lp2 = (root * Vec3::new(x0, y0, f_z).extend(1.0)).truncate();
+                let lp3 = (root * Vec3::new(x0, y1, f_z).extend(1.0)).truncate();
+                let l_norm = (root * Vec3::new(-1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+                vertices.push(EntityVertex { position: lp0.to_array(), uv: [u_border_min, v_border_min], normal: l_norm, color });
+                vertices.push(EntityVertex { position: lp1.to_array(), uv: [u_border_max, v_border_min], normal: l_norm, color });
+                vertices.push(EntityVertex { position: lp2.to_array(), uv: [u_border_max, v_border_max], normal: l_norm, color });
+                vertices.push(EntityVertex { position: lp3.to_array(), uv: [u_border_min, v_border_max], normal: l_norm, color });
+                indices.extend_from_slice(&[left_idx, left_idx + 1, left_idx + 2, left_idx, left_idx + 2, left_idx + 3]);
+            }
+
+            // Right border (MCP RenderPainting x1)
+            if tx == tiles_x - 1 {
+                let right_idx = vertices.len() as u32;
+                let rp0 = (root * Vec3::new(x1, y1, f_z).extend(1.0)).truncate();
+                let rp1 = (root * Vec3::new(x1, y0, f_z).extend(1.0)).truncate();
+                let rp2 = (root * Vec3::new(x1, y0, -f_z).extend(1.0)).truncate();
+                let rp3 = (root * Vec3::new(x1, y1, -f_z).extend(1.0)).truncate();
+                let r_norm = (root * Vec3::new(1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+                vertices.push(EntityVertex { position: rp0.to_array(), uv: [u_border_min, v_border_min], normal: r_norm, color });
+                vertices.push(EntityVertex { position: rp1.to_array(), uv: [u_border_max, v_border_min], normal: r_norm, color });
+                vertices.push(EntityVertex { position: rp2.to_array(), uv: [u_border_max, v_border_max], normal: r_norm, color });
+                vertices.push(EntityVertex { position: rp3.to_array(), uv: [u_border_min, v_border_max], normal: r_norm, color });
+                indices.extend_from_slice(&[right_idx, right_idx + 1, right_idx + 2, right_idx, right_idx + 2, right_idx + 3]);
             }
         }
     }

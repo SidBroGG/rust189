@@ -133,15 +133,15 @@ impl ModelPart {
     }
 }
 
-/// Standard vanilla root transformation for entities:
-/// Translate(interpolated_pos) * RotateY(180 - body_yaw) * Scale(-1, -1, 1) * Translate(0, -1.5078125, 0)
-pub fn root_entity_matrix(entity: &TrackedEntity, partial_ticks: f32) -> Mat4 {
+/// Vanilla root transformation for entities with preRenderCallback scale:
+/// Translate(pos) * RotateY(180 - body_yaw) * Scale(-scale.x, -scale.y, scale.z) * Translate(0, -1.5078125, 0)
+pub fn root_entity_matrix_scaled(entity: &TrackedEntity, partial_ticks: f32, scale: Vec3) -> Mat4 {
     let pos = entity.interpolated_pos(partial_ticks);
     let body_yaw = entity.interpolated_render_yaw_offset(partial_ticks);
 
     let mut m = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
         * Mat4::from_rotation_y((180.0 - body_yaw).to_radians())
-        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
+        * Mat4::from_scale(Vec3::new(-scale.x, -scale.y, scale.z))
         * Mat4::from_translation(Vec3::new(0.0, -1.5078125, 0.0));
 
     if entity.death_time > 0 {
@@ -155,3 +155,10 @@ pub fn root_entity_matrix(entity: &TrackedEntity, partial_ticks: f32) -> Mat4 {
 
     m
 }
+
+/// Standard vanilla root transformation for entities:
+/// Translate(interpolated_pos) * RotateY(180 - body_yaw) * Scale(-1, -1, 1) * Translate(0, -1.5078125, 0)
+pub fn root_entity_matrix(entity: &TrackedEntity, partial_ticks: f32) -> Mat4 {
+    root_entity_matrix_scaled(entity, partial_ticks, Vec3::ONE)
+}
+

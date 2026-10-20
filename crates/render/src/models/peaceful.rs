@@ -1,4 +1,4 @@
-use super::{root_entity_matrix, ModelPart};
+use super::{root_entity_matrix, root_entity_matrix_scaled, ModelPart};
 use crate::entity_renderer::EntityVertex;
 use glam::{Mat4, Vec3};
 use std::f32::consts::PI;
@@ -616,8 +616,7 @@ pub fn build_bat_model(
     partial_ticks: f32,
     color: [f32; 4],
 ) {
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    root *= Mat4::from_scale(Vec3::splat(0.35));
+    let mut root = root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(0.35));
 
     let is_hanging = entity.metadata.iter().any(|m| m.index == 16 && match m.value {
         world::entity::MetadataValue::Byte(b) => (b & 1) != 0,

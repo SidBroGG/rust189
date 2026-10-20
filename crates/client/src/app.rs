@@ -718,11 +718,6 @@ impl App {
         match self.current_target {
             TargetHit::Entity(eh) => {
                 let entity_id = eh.entity_id;
-                if let Some(ent) = self.world.entity_tracker.entities.get(&entity_id) {
-                    if ent.is_vehicle() {
-                        self.riding_entity_id = Some(entity_id);
-                    }
-                }
                 let rel_target = self.world.entity_tracker.entities.get(&entity_id).map(|ent| {
                     (
                         (eh.hit_pos.x - ent.pos.x) as f32,
@@ -933,10 +928,100 @@ impl App {
                     return;
                 }
 
-                // 3. Right clicking a block with non-placeable item (Compass, Nether Star, Clock, Book, Food, Bow, Sword, etc.)
-                // In vanilla MCP 1.8.9 (PlayerControllerMP.onPlayerRightClick & sendUseItem):
-                // Send PlayerBlockPlacement targeting the block face, and send PlayerBlockPlacement(-1, -1, -1, 255)
-                // so server plugins (e.g. ChestCommands, DeluxeMenus, lobby selectors) trigger their GUIs!
+                // 3. Block-use items (Spawn Eggs, Boat, Minecarts, Doors, Signs, Bed, Redstone, etc.)
+                let is_block_use_item = matches!(
+                    self.held_item_id,
+                    383 // Spawn egg
+                    | 328 | 342 | 343 | 407 | 408 // Minecarts
+                    | 321 | 389 // Painting, Item frame
+                    | 259 // Flint and steel
+                    | 324 | 330 | 427..=431 // Doors
+                    | 323 // Sign
+                    | 355 // Bed
+                    | 331 | 356 | 404 // Redstone, Repeater, Comparator
+                    | 379 | 380 | 390 | 354 // Brewing stand, Cauldron, Flower pot, Cake
+                    | 290..=294 | 256 // Hoes, Shovel
+                    | 295 | 361 | 362 // Wheat/Pumpkin/Melon seeds
+                );
+
+                if is_block_use_item {
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
+                            direction: bh.face as u8,
+                            item: held_slot.clone(),
+                            cursor_x,
+                            cursor_y,
+                            cursor_z,
+                        });
+                        s.send(OutgoingPlayPacket::Animation);
+                    }
+
+                    let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    if !is_creative && !matches!(self.held_item_id, 259 | 290..=294 | 256) {
+                        if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+                            if item.count <= 1 {
+                                self.hotbar_items[self.selected_hotbar_slot] = None;
+                                self.held_item_id = 0;
+                            } else {
+                                item.count -= 1;
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                // 4. Usable items (Bow, Swords blocking, Food, Potions/Milk)
+                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                if action != ItemUseAction::None {
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(-1, -1, -1),
+                            direction: 255,
+                            item: held_slot.clone(),
+                            cursor_x: 0,
+                            cursor_y: 0,
+                            cursor_z: 0,
+                        });
+                        // DO NOT send Animation: swinging arm cancels bow drawing & eating in MCP / Spigot!
+                    }
+                    self.item_use_state.start_using(self.held_item_id);
+                    return;
+                }
+
+                // 5. Throwables / Projectiles / Instant-use items (Snowball, Egg, Ender Pearl, Exp Bottle, Fishing Rod, Eye of Ender, Boat)
+                let is_throwable = matches!(
+                    self.held_item_id,
+                    332 | 344 | 368 | 384 | 346 | 381 | 333
+                );
+                if is_throwable {
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(-1, -1, -1),
+                            direction: 255,
+                            item: held_slot.clone(),
+                            cursor_x: 0,
+                            cursor_y: 0,
+                            cursor_z: 0,
+                        });
+                        s.send(OutgoingPlayPacket::Animation);
+                    }
+
+                    let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    if !is_creative && self.held_item_id != 346 { // fishing rod is not consumed on cast
+                        if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+                            if item.count <= 1 {
+                                self.hotbar_items[self.selected_hotbar_slot] = None;
+                                self.held_item_id = 0;
+                            } else {
+                                item.count -= 1;
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                // 6. Generic items / server menus (Compass, Nether Star, Clock, Book, etc.)
                 if let Some(s) = &self.session {
                     s.send(OutgoingPlayPacket::PlayerBlockPlacement {
                         position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
@@ -956,13 +1041,55 @@ impl App {
                     });
                     s.send(OutgoingPlayPacket::Animation);
                 }
-
-                let action = ItemUseState::get_action_for_item(self.held_item_id);
-                if action != ItemUseAction::None {
-                    self.item_use_state.start_using(self.held_item_id);
-                }
             }
             TargetHit::Miss => {
+                let action = ItemUseState::get_action_for_item(self.held_item_id);
+                if action != ItemUseAction::None {
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(-1, -1, -1),
+                            direction: 255,
+                            item: held_slot.clone(),
+                            cursor_x: 0,
+                            cursor_y: 0,
+                            cursor_z: 0,
+                        });
+                    }
+                    self.item_use_state.start_using(self.held_item_id);
+                    return;
+                }
+
+                let is_throwable = matches!(
+                    self.held_item_id,
+                    332 | 344 | 368 | 384 | 346 | 381 | 333
+                );
+                if is_throwable {
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerBlockPlacement {
+                            position: Position::new(-1, -1, -1),
+                            direction: 255,
+                            item: held_slot.clone(),
+                            cursor_x: 0,
+                            cursor_y: 0,
+                            cursor_z: 0,
+                        });
+                        s.send(OutgoingPlayPacket::Animation);
+                    }
+
+                    let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    if !is_creative && self.held_item_id != 346 {
+                        if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
+                            if item.count <= 1 {
+                                self.hotbar_items[self.selected_hotbar_slot] = None;
+                                self.held_item_id = 0;
+                            } else {
+                                item.count -= 1;
+                            }
+                        }
+                    }
+                    return;
+                }
+
                 // In vanilla MCP 1.8.9 (Minecraft.java:1628-1636 & PlayerControllerMP.sendUseItem):
                 // Always sends C08PacketPlayerBlockPlacement(-1, -1, -1, 255) with the held item when right clicking in air!
                 if let Some(s) = &self.session {
@@ -976,25 +1103,22 @@ impl App {
                     });
                     s.send(OutgoingPlayPacket::Animation);
                 }
-
-                let action = ItemUseState::get_action_for_item(self.held_item_id);
-                if action != ItemUseAction::None {
-                    self.item_use_state.start_using(self.held_item_id);
-                }
             }
         }
     }
 
     pub fn handle_right_release(&mut self) {
         if self.item_use_state.is_bow_drawing() {
-            if let Some((_vel, is_crit)) = self.item_use_state.release_bow() {
-                if let Some(s) = &self.session {
-                    s.send(OutgoingPlayPacket::PlayerDigging {
-                        status: DiggingAction::ReleaseUseItem,
-                        position: Position::new(0, 0, 0),
-                        facing: BlockFace::Down,
-                    });
-                }
+            let bow_res = self.item_use_state.release_bow();
+            // In MCP 1.8.9, always send ReleaseUseItem when bow draw is released, regardless of pull duration!
+            if let Some(s) = &self.session {
+                s.send(OutgoingPlayPacket::PlayerDigging {
+                    status: DiggingAction::ReleaseUseItem,
+                    position: Position::new(0, 0, 0),
+                    facing: BlockFace::Down,
+                });
+            }
+            if let Some((_vel, is_crit)) = bow_res {
                 if is_crit {
                     if let Some(ir) = &mut self.interaction_renderer {
                         let spawn_pos = glam::Vec3::new(

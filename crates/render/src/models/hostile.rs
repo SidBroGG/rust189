@@ -1,4 +1,4 @@
-use super::{root_entity_matrix, ModelPart};
+use super::{root_entity_matrix, root_entity_matrix_scaled, ModelPart};
 use crate::entity_renderer::EntityVertex;
 use glam::{Mat4, Vec3};
 use std::f32::consts::PI;
@@ -13,6 +13,17 @@ pub fn build_zombie_model(
     color: [f32; 4],
 ) {
     let root = root_entity_matrix(entity, partial_ticks);
+    build_zombie_model_with_root(vertices, indices, entity, partial_ticks, color, root);
+}
+
+pub fn build_zombie_model_with_root(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+    root: Mat4,
+) {
     let (limb_swing, limb_amount) = entity.interpolated_limb_swing(partial_ticks);
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
     let head_pitch = entity.interpolated_pitch(partial_ticks).to_radians();
@@ -74,9 +85,8 @@ pub fn build_giant_model(
     partial_ticks: f32,
     color: [f32; 4],
 ) {
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    root *= Mat4::from_scale(Vec3::splat(6.0));
-    build_zombie_model(vertices, indices, entity, partial_ticks, color);
+    let root = root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(6.0));
+    build_zombie_model_with_root(vertices, indices, entity, partial_ticks, color, root);
 }
 
 /// Builds the Skeleton / Wither Skeleton model (MCP ModelSkeleton).
@@ -88,10 +98,11 @@ pub fn build_skeleton_model(
     is_wither: bool,
     color: [f32; 4],
 ) {
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    if is_wither {
-        root *= Mat4::from_scale(Vec3::splat(1.2)); // Wither skeleton is taller
-    }
+    let root = if is_wither {
+        root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(1.2)) // Wither skeleton is taller
+    } else {
+        root_entity_matrix(entity, partial_ticks)
+    };
 
     let (limb_swing, limb_amount) = entity.interpolated_limb_swing(partial_ticks);
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
@@ -158,7 +169,7 @@ pub fn build_skeleton_model(
     left_leg.render(root, vertices, indices, color);
 }
 
-/// Renders the bow held in the skeleton's right hand (MCP LayerHeldItem).
+/// Renders the bow held in the skeleton's right hand (MCP LayerHeldItem with 3D slab thickness).
 pub fn build_skeleton_bow(
     vertices: &mut Vec<EntityVertex>,
     indices: &mut Vec<u32>,
@@ -172,37 +183,87 @@ pub fn build_skeleton_bow(
     let right_arm_rot_x = -PI / 2.0 + head_pitch;
     let right_arm_rot_y = -0.1 + head_yaw;
 
+    // Matching MCP ModelBiped.postRenderArm + LayerHeldItem + ItemCameraTransforms.THIRD_PERSON for bow
     let arm_matrix = root
-        * Mat4::from_translation(Vec3::new(-5.0 / 16.0, -2.0 / 16.0, 0.0))
+        * Mat4::from_translation(Vec3::new(-5.0 / 16.0, 2.0 / 16.0, 0.0))
         * Mat4::from_rotation_y(right_arm_rot_y)
         * Mat4::from_rotation_x(right_arm_rot_x)
-        * Mat4::from_translation(Vec3::new(-0.0625, -0.6, 0.2))
-        * Mat4::from_rotation_y(-PI / 2.0)
+        * Mat4::from_translation(Vec3::new(-0.0625, 0.4375, 0.0625))
+        * Mat4::from_translation(Vec3::new(0.75 / 16.0, 0.0, 0.25 / 16.0))
+        * Mat4::from_rotation_y((80.0_f32).to_radians())
+        * Mat4::from_rotation_x((5.0_f32).to_radians())
+        * Mat4::from_rotation_z((-45.0_f32).to_radians())
         * Mat4::from_scale(Vec3::splat(0.625));
 
-    let base_idx = vertices.len() as u32;
-    let p0 = (arm_matrix * Vec3::new(-0.5, -0.5, 0.0).extend(1.0)).truncate();
-    let p1 = (arm_matrix * Vec3::new(0.5, -0.5, 0.0).extend(1.0)).truncate();
-    let p2 = (arm_matrix * Vec3::new(0.5, 0.5, 0.0).extend(1.0)).truncate();
-    let p3 = (arm_matrix * Vec3::new(-0.5, 0.5, 0.0).extend(1.0)).truncate();
+    let s = 0.5f32;
+    let tz = 0.03125f32;
 
-    let normal = [0.0, 0.0, 1.0];
+    // Front quad (Z = +tz)
+    let base_idx = vertices.len() as u32;
+    let p0 = (arm_matrix * Vec3::new(-s, -s, tz).extend(1.0)).truncate();
+    let p1 = (arm_matrix * Vec3::new(s, -s, tz).extend(1.0)).truncate();
+    let p2 = (arm_matrix * Vec3::new(s, s, tz).extend(1.0)).truncate();
+    let p3 = (arm_matrix * Vec3::new(-s, s, tz).extend(1.0)).truncate();
+    let norm_front = [0.0, 0.0, 1.0];
     let color = [1.0, 1.0, 1.0, 1.0];
 
-    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal, color });
-    vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal, color });
-    vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal, color });
-    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal, color });
+    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_front, color });
+    vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_front, color });
+    vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_front, color });
+    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_front, color });
     indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
 
+    // Back quad (Z = -tz)
     let b_idx = vertices.len() as u32;
-    let b_norm = [0.0, 0.0, -1.0];
-    vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: b_norm, color });
-    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: b_norm, color });
-    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: b_norm, color });
-    vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: b_norm, color });
+    let b0 = (arm_matrix * Vec3::new(s, -s, -tz).extend(1.0)).truncate();
+    let b1 = (arm_matrix * Vec3::new(-s, -s, -tz).extend(1.0)).truncate();
+    let b2 = (arm_matrix * Vec3::new(-s, s, -tz).extend(1.0)).truncate();
+    let b3 = (arm_matrix * Vec3::new(s, s, -tz).extend(1.0)).truncate();
+    let norm_back = [0.0, 0.0, -1.0];
+
+    vertices.push(EntityVertex { position: b0.to_array(), uv: [1.0, 1.0], normal: norm_back, color });
+    vertices.push(EntityVertex { position: b1.to_array(), uv: [0.0, 1.0], normal: norm_back, color });
+    vertices.push(EntityVertex { position: b2.to_array(), uv: [0.0, 0.0], normal: norm_back, color });
+    vertices.push(EntityVertex { position: b3.to_array(), uv: [1.0, 0.0], normal: norm_back, color });
     indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
+
+    // Left edge (x = -s)
+    let l_idx = vertices.len() as u32;
+    let l_norm = [-1.0, 0.0, 0.0];
+    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: l_norm, color });
+    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: l_norm, color });
+    vertices.push(EntityVertex { position: b2.to_array(), uv: [0.0625, 0.0], normal: l_norm, color });
+    vertices.push(EntityVertex { position: b1.to_array(), uv: [0.0625, 1.0], normal: l_norm, color });
+    indices.extend_from_slice(&[l_idx, l_idx + 1, l_idx + 2, l_idx, l_idx + 2, l_idx + 3]);
+
+    // Right edge (x = +s)
+    let r_idx = vertices.len() as u32;
+    let r_norm = [1.0, 0.0, 0.0];
+    vertices.push(EntityVertex { position: b0.to_array(), uv: [1.0, 1.0], normal: r_norm, color });
+    vertices.push(EntityVertex { position: b3.to_array(), uv: [1.0, 0.0], normal: r_norm, color });
+    vertices.push(EntityVertex { position: p2.to_array(), uv: [0.9375, 0.0], normal: r_norm, color });
+    vertices.push(EntityVertex { position: p1.to_array(), uv: [0.9375, 1.0], normal: r_norm, color });
+    indices.extend_from_slice(&[r_idx, r_idx + 1, r_idx + 2, r_idx, r_idx + 2, r_idx + 3]);
+
+    // Bottom edge (y = -s)
+    let bot_idx = vertices.len() as u32;
+    let bot_norm = [0.0, -1.0, 0.0];
+    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: bot_norm, color });
+    vertices.push(EntityVertex { position: b1.to_array(), uv: [0.0, 0.9375], normal: bot_norm, color });
+    vertices.push(EntityVertex { position: b0.to_array(), uv: [1.0, 0.9375], normal: bot_norm, color });
+    vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: bot_norm, color });
+    indices.extend_from_slice(&[bot_idx, bot_idx + 1, bot_idx + 2, bot_idx, bot_idx + 2, bot_idx + 3]);
+
+    // Top edge (y = +s)
+    let top_idx = vertices.len() as u32;
+    let top_norm = [0.0, 1.0, 0.0];
+    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: top_norm, color });
+    vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: top_norm, color });
+    vertices.push(EntityVertex { position: b3.to_array(), uv: [1.0, 0.0625], normal: top_norm, color });
+    vertices.push(EntityVertex { position: b2.to_array(), uv: [0.0, 0.0625], normal: top_norm, color });
+    indices.extend_from_slice(&[top_idx, top_idx + 1, top_idx + 2, top_idx, top_idx + 2, top_idx + 3]);
 }
+
 
 /// Builds the Spider / Cave Spider model (MCP ModelSpider).
 pub fn build_spider_model(
@@ -213,10 +274,11 @@ pub fn build_spider_model(
     is_cave: bool,
     color: [f32; 4],
 ) {
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    if is_cave {
-        root *= Mat4::from_scale(Vec3::splat(0.7)); // Cave spider is smaller
-    }
+    let root = if is_cave {
+        root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(0.7))
+    } else {
+        root_entity_matrix(entity, partial_ticks)
+    };
 
     let (limb_swing, limb_amount) = entity.interpolated_limb_swing(partial_ticks);
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
@@ -438,8 +500,7 @@ pub fn build_slime_model(
         MetadataValue::Int(i) => Some((i as f32).max(1.0)),
         _ => None,
     }).unwrap_or(1.0);
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    root *= Mat4::from_scale(Vec3::splat(slime_size));
+    let root = root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(slime_size));
 
     // Inner core (0, 16) + Eyes & Mouth (32, 0..8)
     let mut core = ModelPart::new(0.0, 16.0, 64.0, 32.0);
@@ -464,8 +525,7 @@ pub fn build_magma_cube_model(
         MetadataValue::Int(i) => Some((i as f32).max(1.0)),
         _ => None,
     }).unwrap_or(1.0);
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    root *= Mat4::from_scale(Vec3::splat(slime_size));
+    let root = root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(slime_size));
     let age = entity.ticks_existed as f32 + partial_ticks;
     let jump_stretch = ((age * 0.4).sin().max(0.0)) * 2.0;
 
@@ -637,8 +697,7 @@ pub fn build_ghast_model(
     partial_ticks: f32,
     color: [f32; 4],
 ) {
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    root *= Mat4::from_scale(Vec3::splat(4.5));
+    let mut root = root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(4.5));
     root *= Mat4::from_translation(Vec3::new(0.0, 0.6, 0.0));
     let age = entity.ticks_existed as f32 + partial_ticks;
 
@@ -672,10 +731,11 @@ pub fn build_guardian_model(
     is_elder: bool,
     color: [f32; 4],
 ) {
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    if is_elder {
-        root *= Mat4::from_scale(Vec3::splat(2.35)); // Elder Guardian scale
-    }
+    let root = if is_elder {
+        root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(2.35))
+    } else {
+        root_entity_matrix(entity, partial_ticks)
+    };
 
     let age = entity.ticks_existed as f32 + partial_ticks;
 

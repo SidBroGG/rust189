@@ -1,4 +1,4 @@
-use super::{root_entity_matrix, ModelPart};
+use super::{root_entity_matrix, root_entity_matrix_scaled, ModelPart};
 use crate::entity_renderer::EntityVertex;
 use glam::{Mat4, Vec3};
 use std::f32::consts::PI;
@@ -198,30 +198,32 @@ pub fn render_mooshroom_mushroom_layer(
 ) {
     let root = root_entity_matrix(entity, partial_ticks);
 
-    // Shroom 1 on back right
+    // Shroom 1 on back right (MCP LayerMooshroomMushroom)
     let m1 = root
-        * Mat4::from_translation(Vec3::new(0.2, 0.75, 0.3))
-        * Mat4::from_rotation_y((42.0_f32).to_radians())
-        * Mat4::from_scale(Vec3::splat(0.8));
+        * Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0))
+        * Mat4::from_translation(Vec3::new(0.2, 0.35, 0.5))
+        * Mat4::from_rotation_y((42.0_f32).to_radians());
     render_crossed_quads(m1, vertices, indices, color);
 
-    // Shroom 2 on back left
+    // Shroom 2 on back left (MCP LayerMooshroomMushroom)
     let m2 = root
-        * Mat4::from_translation(Vec3::new(-0.2, 0.75, -0.3))
+        * Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0))
+        * Mat4::from_translation(Vec3::new(0.2, 0.35, 0.5))
         * Mat4::from_rotation_y((42.0_f32).to_radians())
-        * Mat4::from_scale(Vec3::splat(0.8));
+        * Mat4::from_translation(Vec3::new(0.1, 0.0, -0.6))
+        * Mat4::from_rotation_y((42.0_f32).to_radians());
     render_crossed_quads(m2, vertices, indices, color);
 
-    // Shroom 3 on head
+    // Shroom 3 on head (MCP LayerMooshroomMushroom + ModelQuadruped.head.postRender)
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
     let head_pitch = entity.interpolated_pitch(partial_ticks).to_radians();
     let m3 = root
-        * Mat4::from_translation(Vec3::new(0.0, 0.25, -0.5))
+        * Mat4::from_translation(Vec3::new(0.0, 4.0 / 16.0, -8.0 / 16.0))
         * Mat4::from_rotation_y(head_yaw)
         * Mat4::from_rotation_x(head_pitch)
-        * Mat4::from_translation(Vec3::new(0.0, 0.5, 0.0))
-        * Mat4::from_rotation_y((12.0_f32).to_radians())
-        * Mat4::from_scale(Vec3::splat(0.8));
+        * Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0))
+        * Mat4::from_translation(Vec3::new(0.0, 0.7, -0.2))
+        * Mat4::from_rotation_y((12.0_f32).to_radians());
     render_crossed_quads(m3, vertices, indices, color);
 }
 
@@ -248,10 +250,11 @@ pub fn render_spider_eyes_layer(
     partial_ticks: f32,
     is_cave_spider: bool,
 ) {
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    if is_cave_spider {
-        root *= Mat4::from_scale(Vec3::splat(0.7));
-    }
+    let root = if is_cave_spider {
+        root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(0.7))
+    } else {
+        root_entity_matrix(entity, partial_ticks)
+    };
     let head_yaw = (entity.interpolated_head_yaw(partial_ticks) - entity.interpolated_render_yaw_offset(partial_ticks)).to_radians();
     let head_pitch = entity.interpolated_pitch(partial_ticks).to_radians();
 
@@ -359,8 +362,7 @@ pub fn render_slime_gel_layer(
         world::entity::MetadataValue::Int(i) => Some((i as f32).max(1.0)),
         _ => None,
     }).unwrap_or(1.0);
-    let mut root = root_entity_matrix(entity, partial_ticks);
-    root *= Mat4::from_scale(Vec3::splat(slime_size));
+    let root = root_entity_matrix_scaled(entity, partial_ticks, Vec3::splat(slime_size));
     let mut gel_color = color;
     gel_color[3] = 0.6; // Translucent outer cube
 
