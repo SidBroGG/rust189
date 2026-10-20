@@ -2634,6 +2634,78 @@ impl App {
             self.last_physics_tick += Duration::from_millis(50);
             ticks_run += 1;
             self.world.entity_tracker.tick();
+
+            // Client-side physics refinement and block collision for arrows and dropped items
+            let mut physics_updates = Vec::new();
+            for entity in self.world.entity_tracker.entities.values() {
+                if let world::entity::EntityKind::Object { object_type, .. } = entity.kind {
+                    match object_type {
+                        60 => {
+                            if !entity.on_ground {
+                                let from = entity.prev_pos;
+                                let to = entity.pos;
+                                let dir = to - from;
+                                let dist = dir.length();
+                                let mut hit_ground = false;
+                                let mut hit_pos = entity.pos;
+                                if dist > 1e-4 {
+                                    if let Some(hit) = world::physics::raycast::ray_trace_voxels(&self.world, from, dir, dist) {
+                                        hit_ground = true;
+                                        hit_pos = hit.hit_pos;
+                                    }
+                                }
+                                if !hit_ground {
+                                    let bx = entity.pos.x.floor() as i32;
+                                    let by = entity.pos.y.floor() as i32;
+                                    let bz = entity.pos.z.floor() as i32;
+                                    if world::block_blocks_movement(self.world.block_at(bx, by, bz).id()) {
+                                        hit_ground = true;
+                                    }
+                                }
+                                if hit_ground {
+                                    physics_updates.push((entity.id, hit_pos, glam::Vec3::ZERO, true));
+                                }
+                            }
+                        }
+                        2 => {
+                            if !entity.on_ground && entity.ticks_existed > 0 {
+                                let mut vel = entity.velocity;
+                                vel.y -= 0.04;
+                                vel *= 0.98;
+
+                                let next_pos = entity.pos + glam::DVec3::new(
+                                    vel.x as f64,
+                                    vel.y as f64,
+                                    vel.z as f64,
+                                );
+
+                                let floor_bx = entity.pos.x.floor() as i32;
+                                let floor_by = next_pos.y.floor() as i32;
+                                let floor_bz = entity.pos.z.floor() as i32;
+
+                                if world::block_blocks_movement(self.world.block_at(floor_bx, floor_by, floor_bz).id()) {
+                                    let land_pos = glam::DVec3::new(next_pos.x, (floor_by + 1) as f64, next_pos.z);
+                                    physics_updates.push((entity.id, land_pos, glam::Vec3::ZERO, true));
+                                } else {
+                                    physics_updates.push((entity.id, next_pos, vel, false));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            for (id, new_pos, new_vel, on_ground) in physics_updates {
+                if let Some(entity) = self.world.entity_tracker.entities.get_mut(&id) {
+                    entity.pos = new_pos;
+                    entity.target_pos = new_pos;
+                    entity.velocity = new_vel;
+                    entity.on_ground = on_ground;
+                    entity.interpolation_steps = 0;
+                }
+            }
+
             self.spatial_hash.rebuild(&self.world.entity_tracker);
 
             // Client-side creative ender pearl trajectory simulation

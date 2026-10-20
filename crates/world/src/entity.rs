@@ -591,7 +591,7 @@ impl EntityTracker {
         };
         let pitch = (pitch_byte as f32 * 360.0) / 256.0;
 
-        let is_projectile = matches!(object_type, 60..=65 | 72 | 73 | 75 | 90);
+        let is_in_air_object = matches!(object_type, 2 | 60..=65 | 72 | 73 | 75 | 90);
         let mut entity = TrackedEntity::new(
             entity_id,
             EntityKind::Object { object_type, data },
@@ -605,7 +605,7 @@ impl EntityTracker {
             vel_y as f32 / 8000.0,
             vel_z as f32 / 8000.0,
         );
-        entity.on_ground = !is_projectile;
+        entity.on_ground = !is_in_air_object;
 
         self.entities.insert(entity_id, entity);
     }
@@ -641,24 +641,76 @@ impl EntityTracker {
                 entity.server_pos_fixed.2 as f64 / 32.0,
             );
 
-            // MCP EntityArrow parity: arrows stuck in obstacles have no interpolation and zero velocity
-            if let EntityKind::Object { object_type: 60, .. } = entity.kind {
-                if on_ground && delta_x == 0 && delta_y == 0 && delta_z == 0 {
-                    entity.pos = target;
-                    entity.prev_pos = target;
-                    entity.target_pos = target;
-                    entity.velocity = glam::Vec3::ZERO;
-                    entity.interpolation_steps = 0;
-                    entity.on_ground = true;
-                    return;
-                } else if delta_x != 0 || delta_y != 0 || delta_z != 0 {
-                    entity.on_ground = false;
-                    let delta = target - entity.pos;
-                    entity.velocity = glam::Vec3::new(
-                        (delta.x / 3.0) as f32,
-                        (delta.y / 3.0) as f32,
-                        (delta.z / 3.0) as f32,
-                    );
+            if let EntityKind::Object { object_type, .. } = entity.kind {
+                match object_type {
+                    60 => {
+                        // Arrow: if at rest (delta == 0 or on_ground or already on_ground), freeze immediately
+                        if on_ground || entity.on_ground || (delta_x == 0 && delta_y == 0 && delta_z == 0) {
+                            entity.pos = target;
+                            entity.prev_pos = target;
+                            entity.target_pos = target;
+                            entity.velocity = glam::Vec3::ZERO;
+                            entity.interpolation_steps = 0;
+                            entity.on_ground = true;
+                            return;
+                        } else {
+                            entity.on_ground = false;
+                            let delta = target - entity.pos;
+                            entity.velocity = glam::Vec3::new(
+                                delta.x as f32,
+                                delta.y as f32,
+                                delta.z as f32,
+                            );
+                            entity.prev_pos = entity.pos;
+                            entity.pos = target;
+                            entity.target_pos = target;
+                            entity.interpolation_steps = 0;
+                            return;
+                        }
+                    }
+                    61..=65 | 72 | 73 | 75 | 90 => {
+                        // Projectiles in flight: track velocity and snap target directly (no 3-tick decay)
+                        let delta = target - entity.pos;
+                        if delta.length_squared() > 1e-4 {
+                            entity.velocity = glam::Vec3::new(
+                                delta.x as f32,
+                                delta.y as f32,
+                                delta.z as f32,
+                            );
+                        }
+                        entity.prev_pos = entity.pos;
+                        entity.pos = target;
+                        entity.target_pos = target;
+                        entity.interpolation_steps = 0;
+                        entity.on_ground = on_ground;
+                        return;
+                    }
+                    2 => {
+                        // Dropped item: if on ground or delta == 0, freeze on ground
+                        if on_ground || (delta_x == 0 && delta_y == 0 && delta_z == 0) {
+                            entity.pos = target;
+                            entity.prev_pos = target;
+                            entity.target_pos = target;
+                            entity.velocity = glam::Vec3::ZERO;
+                            entity.interpolation_steps = 0;
+                            entity.on_ground = true;
+                            return;
+                        } else {
+                            let delta = target - entity.pos;
+                            if delta.length_squared() > 4.0 {
+                                entity.pos = target;
+                                entity.prev_pos = target;
+                                entity.target_pos = target;
+                                entity.interpolation_steps = 0;
+                            } else {
+                                entity.target_pos = target;
+                                entity.interpolation_steps = 3;
+                            }
+                            entity.on_ground = on_ground;
+                            return;
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -703,29 +755,105 @@ impl EntityTracker {
             let yaw = (yaw_byte as f32 * 360.0) / 256.0;
             let pitch = (pitch_byte as f32 * 360.0) / 256.0;
 
-            if let EntityKind::Object { object_type: 60, .. } = entity.kind {
-                if on_ground && delta_x == 0 && delta_y == 0 && delta_z == 0 {
-                    entity.pos = target;
-                    entity.prev_pos = target;
-                    entity.target_pos = target;
-                    entity.yaw = yaw;
-                    entity.prev_yaw = yaw;
-                    entity.target_yaw = yaw;
-                    entity.pitch = pitch;
-                    entity.prev_pitch = pitch;
-                    entity.target_pitch = pitch;
-                    entity.velocity = glam::Vec3::ZERO;
-                    entity.interpolation_steps = 0;
-                    entity.on_ground = true;
-                    return;
-                } else if delta_x != 0 || delta_y != 0 || delta_z != 0 {
-                    entity.on_ground = false;
-                    let delta = target - entity.pos;
-                    entity.velocity = glam::Vec3::new(
-                        (delta.x / 3.0) as f32,
-                        (delta.y / 3.0) as f32,
-                        (delta.z / 3.0) as f32,
-                    );
+            if let EntityKind::Object { object_type, .. } = entity.kind {
+                match object_type {
+                    60 => {
+                        if on_ground || entity.on_ground || (delta_x == 0 && delta_y == 0 && delta_z == 0) {
+                            entity.pos = target;
+                            entity.prev_pos = target;
+                            entity.target_pos = target;
+                            entity.yaw = yaw;
+                            entity.prev_yaw = yaw;
+                            entity.target_yaw = yaw;
+                            entity.pitch = pitch;
+                            entity.prev_pitch = pitch;
+                            entity.target_pitch = pitch;
+                            entity.velocity = glam::Vec3::ZERO;
+                            entity.interpolation_steps = 0;
+                            entity.on_ground = true;
+                            return;
+                        } else {
+                            entity.on_ground = false;
+                            let delta = target - entity.pos;
+                            entity.velocity = glam::Vec3::new(
+                                delta.x as f32,
+                                delta.y as f32,
+                                delta.z as f32,
+                            );
+                            entity.prev_pos = entity.pos;
+                            entity.pos = target;
+                            entity.target_pos = target;
+                            entity.yaw = yaw;
+                            entity.prev_yaw = yaw;
+                            entity.target_yaw = yaw;
+                            entity.pitch = pitch;
+                            entity.prev_pitch = pitch;
+                            entity.target_pitch = pitch;
+                            entity.interpolation_steps = 0;
+                            return;
+                        }
+                    }
+                    61..=65 | 72 | 73 | 75 | 90 => {
+                        let delta = target - entity.pos;
+                        if delta.length_squared() > 1e-4 {
+                            entity.velocity = glam::Vec3::new(
+                                delta.x as f32,
+                                delta.y as f32,
+                                delta.z as f32,
+                            );
+                        }
+                        entity.prev_pos = entity.pos;
+                        entity.pos = target;
+                        entity.target_pos = target;
+                        entity.yaw = yaw;
+                        entity.prev_yaw = yaw;
+                        entity.target_yaw = yaw;
+                        entity.pitch = pitch;
+                        entity.prev_pitch = pitch;
+                        entity.target_pitch = pitch;
+                        entity.interpolation_steps = 0;
+                        entity.on_ground = on_ground;
+                        return;
+                    }
+                    2 => {
+                        if on_ground || (delta_x == 0 && delta_y == 0 && delta_z == 0) {
+                            entity.pos = target;
+                            entity.prev_pos = target;
+                            entity.target_pos = target;
+                            entity.yaw = yaw;
+                            entity.prev_yaw = yaw;
+                            entity.target_yaw = yaw;
+                            entity.pitch = pitch;
+                            entity.prev_pitch = pitch;
+                            entity.target_pitch = pitch;
+                            entity.velocity = glam::Vec3::ZERO;
+                            entity.interpolation_steps = 0;
+                            entity.on_ground = true;
+                            return;
+                        } else {
+                            let delta = target - entity.pos;
+                            if delta.length_squared() > 4.0 {
+                                entity.pos = target;
+                                entity.prev_pos = target;
+                                entity.target_pos = target;
+                                entity.yaw = yaw;
+                                entity.prev_yaw = yaw;
+                                entity.target_yaw = yaw;
+                                entity.pitch = pitch;
+                                entity.prev_pitch = pitch;
+                                entity.target_pitch = pitch;
+                                entity.interpolation_steps = 0;
+                            } else {
+                                entity.target_pos = target;
+                                entity.target_yaw = yaw;
+                                entity.target_pitch = pitch;
+                                entity.interpolation_steps = 3;
+                            }
+                            entity.on_ground = on_ground;
+                            return;
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -757,22 +885,67 @@ impl EntityTracker {
             let yaw = (yaw_byte as f32 * 360.0) / 256.0;
             let pitch = (pitch_byte as f32 * 360.0) / 256.0;
 
-            if let EntityKind::Object { object_type: 60, .. } = entity.kind {
-                entity.pos = target;
-                entity.prev_pos = target;
-                entity.target_pos = target;
-                entity.yaw = yaw;
-                entity.prev_yaw = yaw;
-                entity.target_yaw = yaw;
-                entity.pitch = pitch;
-                entity.prev_pitch = pitch;
-                entity.target_pitch = pitch;
-                entity.interpolation_steps = 0;
-                entity.on_ground = on_ground;
-                if on_ground {
-                    entity.velocity = glam::Vec3::ZERO;
+            if let EntityKind::Object { object_type, .. } = entity.kind {
+                match object_type {
+                    60 => {
+                        let is_frozen = on_ground || entity.on_ground;
+                        entity.pos = target;
+                        entity.prev_pos = target;
+                        entity.target_pos = target;
+                        entity.yaw = yaw;
+                        entity.prev_yaw = yaw;
+                        entity.target_yaw = yaw;
+                        entity.pitch = pitch;
+                        entity.prev_pitch = pitch;
+                        entity.target_pitch = pitch;
+                        entity.interpolation_steps = 0;
+                        entity.on_ground = is_frozen;
+                        if is_frozen {
+                            entity.velocity = glam::Vec3::ZERO;
+                        }
+                        return;
+                    }
+                    61..=65 | 72 | 73 | 75 | 90 => {
+                        let delta = target - entity.pos;
+                        if delta.length_squared() > 1e-4 {
+                            entity.velocity = glam::Vec3::new(
+                                delta.x as f32,
+                                delta.y as f32,
+                                delta.z as f32,
+                            );
+                        }
+                        entity.pos = target;
+                        entity.prev_pos = target;
+                        entity.target_pos = target;
+                        entity.yaw = yaw;
+                        entity.prev_yaw = yaw;
+                        entity.target_yaw = yaw;
+                        entity.pitch = pitch;
+                        entity.prev_pitch = pitch;
+                        entity.target_pitch = pitch;
+                        entity.interpolation_steps = 0;
+                        entity.on_ground = on_ground;
+                        return;
+                    }
+                    2 => {
+                        entity.pos = target;
+                        entity.prev_pos = target;
+                        entity.target_pos = target;
+                        entity.yaw = yaw;
+                        entity.prev_yaw = yaw;
+                        entity.target_yaw = yaw;
+                        entity.pitch = pitch;
+                        entity.prev_pitch = pitch;
+                        entity.target_pitch = pitch;
+                        entity.interpolation_steps = 0;
+                        entity.on_ground = on_ground;
+                        if on_ground {
+                            entity.velocity = glam::Vec3::ZERO;
+                        }
+                        return;
+                    }
+                    _ => {}
                 }
-                return;
             }
 
             let dist_sq = (entity.pos - target).length_squared();
@@ -1021,5 +1194,43 @@ mod tests {
         let entity = tracker.get(2).unwrap();
         assert!((entity.pos.x - 1.0).abs() < 0.01);
         assert_eq!(entity.interpolation_steps, 0);
+    }
+
+    #[test]
+    fn test_arrow_freeze_and_projectile_movement() {
+        let mut tracker = EntityTracker::new();
+        // Spawn Arrow (object_type = 60)
+        tracker.spawn_object(10, 60, 0, 64 * 32, 0, 0, 0, 0, 1000, 0, 0);
+        let arrow = tracker.get(10).unwrap();
+        assert!(!arrow.on_ground);
+
+        // Arrow moves forward in flight
+        tracker.rel_move(10, 32, 0, 0, false);
+        let arrow = tracker.get(10).unwrap();
+        assert_eq!(arrow.pos.x, 1.0);
+        assert_eq!(arrow.interpolation_steps, 0);
+        assert!(!arrow.on_ground);
+
+        // Arrow impacts a block: server sends rel_move with delta 0 or on_ground
+        tracker.rel_move(10, 0, 0, 0, false);
+        let arrow = tracker.get(10).unwrap();
+        assert!(arrow.on_ground);
+        assert_eq!(arrow.velocity, glam::Vec3::ZERO);
+        assert_eq!(arrow.interpolation_steps, 0);
+    }
+
+    #[test]
+    fn test_dropped_item_initial_in_air_state() {
+        let mut tracker = EntityTracker::new();
+        // Spawn Dropped Item (object_type = 2)
+        tracker.spawn_object(20, 2, 0, 64 * 32, 0, 0, 0, 0, 0, -500, 0);
+        let item = tracker.get(20).unwrap();
+        assert!(!item.on_ground);
+
+        // Ground confirmation freezes the item
+        tracker.rel_move(20, 0, -10, 0, true);
+        let item = tracker.get(20).unwrap();
+        assert!(item.on_ground);
+        assert_eq!(item.velocity, glam::Vec3::ZERO);
     }
 }

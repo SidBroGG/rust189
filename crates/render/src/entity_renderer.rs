@@ -928,22 +928,89 @@ pub fn get_item_render_texture_key(item_id: i16, damage: i16) -> (String, bool) 
         }
         // Items
         261 => ("items/bow_standby".to_string(), false),
+        295 => ("items/seeds_wheat".to_string(), false),
+        319 => ("items/porkchop_raw".to_string(), false),
+        320 => ("items/porkchop_cooked".to_string(), false),
+        321 => ("items/painting".to_string(), false),
+        322 => ("items/apple_golden".to_string(), false),
         324 => ("items/door_wood".to_string(), false),
+        325 => ("items/bucket_empty".to_string(), false),
+        326 => ("items/bucket_water".to_string(), false),
+        327 => ("items/bucket_lava".to_string(), false),
         328 => ("items/minecart_normal".to_string(), false),
         330 => ("items/door_iron".to_string(), false),
+        331 => ("items/redstone_dust".to_string(), false),
         333 => ("items/boat".to_string(), false),
+        335 => ("items/bucket_milk".to_string(), false),
+        340 => ("items/book_normal".to_string(), false),
+        341 => ("items/slimeball".to_string(), false),
         342 => ("items/minecart_chest".to_string(), false),
         343 => ("items/minecart_furnace".to_string(), false),
         346 => ("items/fishing_rod_uncast".to_string(), false),
-        373 => ("items/potion_bottle_drinkable".to_string(), false),
+        349 => match damage {
+            1 => ("items/fish_salmon_raw".to_string(), false),
+            2 => ("items/fish_clownfish_raw".to_string(), false),
+            3 => ("items/fish_pufferfish_raw".to_string(), false),
+            _ => ("items/fish_cod_raw".to_string(), false),
+        },
+        350 => match damage {
+            1 => ("items/fish_salmon_cooked".to_string(), false),
+            _ => ("items/fish_cod_cooked".to_string(), false),
+        },
+        351 => {
+            let dyes = [
+                "black", "red", "green", "brown", "blue", "purple", "cyan", "silver",
+                "gray", "pink", "lime", "yellow", "light_blue", "magenta", "orange", "white",
+            ];
+            let name = dyes.get((damage & 15) as usize).unwrap_or(&"black");
+            (format!("items/dye_powder_{}", name), false)
+        }
+        355 => ("items/bed".to_string(), false),
+        356 => ("items/repeater".to_string(), false),
+        358 => ("items/map_filled".to_string(), false),
+        361 => ("items/seeds_pumpkin".to_string(), false),
+        362 => ("items/seeds_melon".to_string(), false),
+        363 => ("items/beef_raw".to_string(), false),
+        364 => ("items/beef_cooked".to_string(), false),
+        365 => ("items/chicken_raw".to_string(), false),
+        366 => ("items/chicken_cooked".to_string(), false),
+        373 => {
+            if (damage & 16384) != 0 {
+                ("items/potion_bottle_splash".to_string(), false)
+            } else {
+                ("items/potion_bottle_drinkable".to_string(), false)
+            }
+        }
+        374 => ("items/potion_bottle_empty".to_string(), false),
+        380 => ("items/cauldron".to_string(), false),
+        382 => ("items/melon_speckled".to_string(), false),
         383 => ("items/spawn_egg".to_string(), false),
+        386 => ("items/book_writable".to_string(), false),
+        387 => ("items/book_written".to_string(), false),
+        389 => ("items/item_frame".to_string(), false),
+        390 => ("items/flower_pot".to_string(), false),
+        393 => ("items/potato_baked".to_string(), false),
+        394 => ("items/potato_poisonous".to_string(), false),
+        395 => ("items/map_empty".to_string(), false),
+        396 => ("items/carrot_golden".to_string(), false),
+        397 => ("blocks/dragon_egg".to_string(), true),
+        403 => ("items/book_enchanted".to_string(), false),
+        404 => ("items/comparator".to_string(), false),
+        405 => ("items/netherbrick".to_string(), false),
         407 => ("items/minecart_tnt".to_string(), false),
         408 => ("items/minecart_hopper".to_string(), false),
+        411 | 423 => ("items/mutton_raw".to_string(), false),
+        412 | 424 => ("items/mutton_cooked".to_string(), false),
+        413 => ("items/rabbit_raw".to_string(), false),
+        414 => ("items/rabbit_cooked".to_string(), false),
+        416 => ("items/wooden_armorstand".to_string(), false),
+        422 => ("items/minecart_command_block".to_string(), false),
         427 => ("items/door_spruce".to_string(), false),
         428 => ("items/door_birch".to_string(), false),
         429 => ("items/door_jungle".to_string(), false),
         430 => ("items/door_acacia".to_string(), false),
         431 => ("items/door_dark_oak".to_string(), false),
+        438 => ("items/potion_bottle_splash".to_string(), false),
         _ => {
             if let Some(def) = world::item::get_item_def(item_id) {
                 if def.is_block {
@@ -961,13 +1028,24 @@ pub fn get_item_render_texture_key(item_id: i16, damage: i16) -> (String, bool) 
 /// Helper function to load texture image from filesystem with safe procedural fallbacks.
 fn load_entity_texture(key: &str) -> RgbaImage {
     let clean_key = key.trim_start_matches('/');
-    let candidates = [
-        format!("assets/minecraft/textures/{}.png", clean_key),
-        format!("assets/minecraft/textures/{}", clean_key),
-        format!("../assets/minecraft/textures/{}.png", clean_key),
-        format!("../../assets/minecraft/textures/{}.png", clean_key),
-        format!("textures/{}.png", clean_key),
-    ];
+    let mut key_variants = vec![clean_key.to_string()];
+
+    // Automatically check transposed word pairs (e.g. water_bucket -> bucket_water, golden_apple -> apple_golden)
+    if let Some((prefix, name)) = clean_key.split_once('/') {
+        if let Some((a, b)) = name.split_once('_') {
+            key_variants.push(format!("{}/{}_{}", prefix, b, a));
+        }
+        key_variants.push(format!("{}/{}", prefix, name.replace('_', "")));
+    }
+
+    let mut candidates = Vec::new();
+    for variant in &key_variants {
+        candidates.push(format!("assets/minecraft/textures/{}.png", variant));
+        candidates.push(format!("assets/minecraft/textures/{}", variant));
+        candidates.push(format!("../assets/minecraft/textures/{}.png", variant));
+        candidates.push(format!("../../assets/minecraft/textures/{}.png", variant));
+        candidates.push(format!("textures/{}.png", variant));
+    }
 
     for path in &candidates {
         if let Ok(img) = image::open(path) {
@@ -1786,5 +1864,28 @@ mod tests {
             assert!(!v.position[1].is_nan());
             assert!(!v.position[2].is_nan());
         }
+    }
+
+    #[test]
+    fn test_item_texture_keys_and_bucket_mapping() {
+        // Water bucket (ID 326) must map to bucket_water
+        let (key, is_block) = get_item_render_texture_key(326, 0);
+        assert_eq!(key, "items/bucket_water");
+        assert!(!is_block);
+
+        // Empty bucket (ID 325) must map to bucket_empty
+        let (key, is_block) = get_item_render_texture_key(325, 0);
+        assert_eq!(key, "items/bucket_empty");
+        assert!(!is_block);
+
+        // Golden apple (ID 322) must map to apple_golden
+        let (key, is_block) = get_item_render_texture_key(322, 0);
+        assert_eq!(key, "items/apple_golden");
+        assert!(!is_block);
+
+        // Raw beef (ID 363) must map to beef_raw
+        let (key, is_block) = get_item_render_texture_key(363, 0);
+        assert_eq!(key, "items/beef_raw");
+        assert!(!is_block);
     }
 }
