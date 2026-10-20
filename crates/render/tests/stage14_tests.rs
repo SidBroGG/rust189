@@ -497,9 +497,14 @@ fn test_user_reported_mob_and_object_fixes() {
 
     // 13. Item Frame (borders, background, item)
     v.clear(); i.clear();
-    let frame = create_dummy_entity(EntityKind::Object { object_type: 71, data: 0 });
+    let mut frame = create_dummy_entity(EntityKind::Object { object_type: 71, data: 0 });
+    frame.yaw = 0.0;
+    frame.prev_yaw = 0.0;
     build_item_frame_borders(&mut v, &mut i, &frame, 0.5, color);
     assert_valid_mesh(&v, &i, 4); // 4 borders
+    let min_x = v.iter().map(|vert| vert.position[0]).fold(f32::INFINITY, f32::min);
+    let max_x = v.iter().map(|vert| vert.position[0]).fold(f32::NEG_INFINITY, f32::max);
+    assert!((max_x - min_x - 0.75).abs() < 0.05, "Item frame border width must be ~0.75 blocks");
 
     v.clear(); i.clear();
     build_item_frame_background(&mut v, &mut i, &frame, 0.5, color);
@@ -518,6 +523,9 @@ fn test_user_reported_mob_and_object_fixes() {
     v.clear(); i.clear();
     build_dropped_item_model(&mut v, &mut i, &item_ent, true, 0.5, color);
     assert_valid_mesh(&v, &i, 1); // 3D block cube
+    let min_x_block = v.iter().map(|vert| vert.position[0]).fold(f32::INFINITY, f32::min);
+    let max_x_block = v.iter().map(|vert| vert.position[0]).fold(f32::NEG_INFINITY, f32::max);
+    assert!((max_x_block - min_x_block - 0.25).abs() < 0.05, "Dropped block width must be ~0.25 blocks");
 
     // 15. Projectiles: Arrow, Throwable (snowball/egg/pearl/etc.), Wither Skull, Fishing Bobber
     v.clear(); i.clear();

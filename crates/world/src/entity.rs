@@ -463,6 +463,24 @@ impl TrackedEntity {
                 _ => (0.5, 0.5),
             },
         };
+        if let EntityKind::Object { object_type: 71, data } = self.kind {
+            let half_size = 0.375; // 12 pixels / 32 = 0.375
+            let (min_x, max_x, min_z, max_z) = match data {
+                0 => (self.pos.x - half_size, self.pos.x + half_size, self.pos.z - 0.5, self.pos.z - 0.4375), // South (+Z facing, on -Z face)
+                1 => (self.pos.x + 0.4375, self.pos.x + 0.5, self.pos.z - half_size, self.pos.z + half_size), // West (-X facing, on +X face)
+                2 => (self.pos.x - half_size, self.pos.x + half_size, self.pos.z + 0.4375, self.pos.z + 0.5), // North (-Z facing, on +Z face)
+                3 => (self.pos.x - 0.5, self.pos.x - 0.4375, self.pos.z - half_size, self.pos.z + half_size), // East (+X facing, on -X face)
+                _ => (self.pos.x - half_size, self.pos.x + half_size, self.pos.z - half_size, self.pos.z + half_size),
+            };
+            return crate::physics::aabb::AABB::new(
+                min_x,
+                self.pos.y - half_size,
+                min_z,
+                max_x,
+                self.pos.y + half_size,
+                max_z,
+            );
+        }
         let half_w = width * 0.5;
         crate::physics::aabb::AABB::new(
             self.pos.x - half_w,
@@ -597,15 +615,22 @@ impl EntityTracker {
         vel_y: i16,
         vel_z: i16,
     ) {
-        let pos = DVec3::new(
-            fixed_x as f64 / 32.0,
-            fixed_y as f64 / 32.0,
-            fixed_z as f64 / 32.0,
-        );
-        let yaw = if object_type == 71 && (0..=3).contains(&data) {
-            (data as f32) * 90.0
+        let (pos, yaw) = if object_type == 71 && (0..=3).contains(&data) {
+            // Item Frame: server sends hangingPosition in fixed_x, fixed_y, fixed_z.
+            // Vanilla RenderItemFrame translates to hangingPosition block center:
+            let hx = (fixed_x as f64) / 32.0 + 0.5;
+            let hy = (fixed_y as f64) / 32.0 + 0.5;
+            let hz = (fixed_z as f64) / 32.0 + 0.5;
+            let yaw = (data as f32) * 90.0;
+            (DVec3::new(hx, hy, hz), yaw)
         } else {
-            (yaw_byte as f32 * 360.0) / 256.0
+            let pos = DVec3::new(
+                fixed_x as f64 / 32.0,
+                fixed_y as f64 / 32.0,
+                fixed_z as f64 / 32.0,
+            );
+            let yaw = (yaw_byte as f32 * 360.0) / 256.0;
+            (pos, yaw)
         };
         let pitch = (pitch_byte as f32 * 360.0) / 256.0;
 
@@ -1325,5 +1350,26 @@ mod tests {
         let bb = falling_block.bounding_box();
         assert!(((bb.max_x - bb.min_x) - 0.98).abs() < 1e-4);
         assert!(((bb.max_y - bb.min_y) - 0.98).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_item_frame_spawn_and_bounding_box() {
+        let mut tracker = EntityTracker::new();
+
+        // Spawn Item Frame (object_type = 71, data = 0 for South facing) at block (10, 64, 20)
+        tracker.spawn_object(80, 71, 10 * 32, 64 * 32, 20 * 32, 0, 0, 0, 0, 0, 0);
+        let frame = tracker.get(80).unwrap();
+        assert_eq!(frame.yaw, 0.0);
+        assert!((frame.pos.x - 10.5).abs() < 1e-5);
+        assert!((frame.pos.y - 64.5).abs() < 1e-5);
+        assert!((frame.pos.z - 20.5).abs() < 1e-5);
+
+        let bb = frame.bounding_box();
+        // Width and height: 12 pixels = 0.75 blocks (centered at 10.5, 64.5)
+        assert!(((bb.max_x - bb.min_x) - 0.75).abs() < 1e-4);
+        assert!(((bb.max_y - bb.min_y) - 0.75).abs() < 1e-4);
+        // Thickness: 0.0625 blocks against South face (z = 20.0 to 20.0625)
+        assert!(((bb.max_z - bb.min_z) - 0.0625).abs() < 1e-4);
+        assert!((bb.min_z - 20.0).abs() < 1e-4);
     }
 }

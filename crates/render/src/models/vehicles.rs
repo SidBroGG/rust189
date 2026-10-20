@@ -251,19 +251,18 @@ pub fn build_item_frame_borders(
     let pos = entity.interpolated_pos(partial_ticks);
     let yaw = entity.interpolated_yaw(partial_ticks);
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
-        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
-        * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians());
 
     let mut frame = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-    // Matching vanilla item_frame.json elements (resting against wall surface at z = 0, sticking forward to z = -1):
+    // Matching vanilla item_frame.json elements (resting against wall surface at z = 8, sticking forward to z = 7):
     // Top border: 12 wide, 1 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, 5.0, -1.0, 12.0, 1.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, 5.0, 7.0, 12.0, 1.0, 1.0, 0.0);
     // Bottom border: 12 wide, 1 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, -6.0, -1.0, 12.0, 1.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, -6.0, 7.0, 12.0, 1.0, 1.0, 0.0);
     // Left border: 1 wide, 10 high, 1 deep
-    frame.add_box(0.0, 0.0, -6.0, -5.0, -1.0, 1.0, 10.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, -6.0, -5.0, 7.0, 1.0, 10.0, 1.0, 0.0);
     // Right border: 1 wide, 10 high, 1 deep
-    frame.add_box(0.0, 0.0, 5.0, -5.0, -1.0, 1.0, 10.0, 1.0, 0.0);
+    frame.add_box(0.0, 0.0, 5.0, -5.0, 7.0, 1.0, 10.0, 1.0, 0.0);
     frame.render(root, vertices, indices, color);
 }
 
@@ -278,12 +277,11 @@ pub fn build_item_frame_background(
     let pos = entity.interpolated_pos(partial_ticks);
     let yaw = entity.interpolated_yaw(partial_ticks);
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
-        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
-        * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians());
 
     let mut back = ModelPart::new(0.0, 0.0, 16.0, 16.0);
-    // Recessed plate: 10 wide, 10 high, 0.5 deep (resting on wall z = 0 to z = -0.5)
-    back.add_box(0.0, 0.0, -5.0, -5.0, -0.5, 10.0, 10.0, 0.5, 0.0);
+    // Recessed plate: 10 wide, 10 high, 0.5 deep (resting on wall z = 8.0, front at z = 7.5)
+    back.add_box(0.0, 0.0, -5.0, -5.0, 7.5, 10.0, 10.0, 0.5, 0.0);
     back.render(root, vertices, indices, color);
 }
 
@@ -303,26 +301,28 @@ pub fn build_item_frame_item(
 
     let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
         * Mat4::from_rotation_y((180.0 - yaw).to_radians())
-        * Mat4::from_translation(Vec3::new(0.0, 0.0, -0.0625))
+        * Mat4::from_translation(Vec3::new(0.0, 0.0, 0.4375))
         * Mat4::from_rotation_z(item_rot.to_radians());
 
     if is_block {
-        let s = 0.16;
-        let p_000 = (root * Vec3::new(-s, -s, -s).extend(1.0)).truncate().to_array();
-        let p_100 = (root * Vec3::new(s, -s, -s).extend(1.0)).truncate().to_array();
-        let p_110 = (root * Vec3::new(s, s, -s).extend(1.0)).truncate().to_array();
-        let p_010 = (root * Vec3::new(-s, s, -s).extend(1.0)).truncate().to_array();
-        let p_001 = (root * Vec3::new(-s, -s, s).extend(1.0)).truncate().to_array();
-        let p_101 = (root * Vec3::new(s, -s, s).extend(1.0)).truncate().to_array();
-        let p_111 = (root * Vec3::new(s, s, s).extend(1.0)).truncate().to_array();
-        let p_011 = (root * Vec3::new(-s, s, s).extend(1.0)).truncate().to_array();
+        let s = 0.125;
+        // Shift block forward so its back face rests against the frame opening
+        let block_root = root * Mat4::from_translation(Vec3::new(0.0, 0.0, -s));
+        let p_000 = (block_root * Vec3::new(-s, -s, -s).extend(1.0)).truncate().to_array();
+        let p_100 = (block_root * Vec3::new(s, -s, -s).extend(1.0)).truncate().to_array();
+        let p_110 = (block_root * Vec3::new(s, s, -s).extend(1.0)).truncate().to_array();
+        let p_010 = (block_root * Vec3::new(-s, s, -s).extend(1.0)).truncate().to_array();
+        let p_001 = (block_root * Vec3::new(-s, -s, s).extend(1.0)).truncate().to_array();
+        let p_101 = (block_root * Vec3::new(s, -s, s).extend(1.0)).truncate().to_array();
+        let p_111 = (block_root * Vec3::new(s, s, s).extend(1.0)).truncate().to_array();
+        let p_011 = (block_root * Vec3::new(-s, s, s).extend(1.0)).truncate().to_array();
 
-        let norm_n = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
-        let norm_s = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
-        let norm_w = (root * Vec3::new(-1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
-        let norm_e = (root * Vec3::new(1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
-        let norm_u = (root * Vec3::new(0.0, 1.0, 0.0).extend(0.0)).truncate().to_array();
-        let norm_d = (root * Vec3::new(0.0, -1.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_n = (block_root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+        let norm_s = (block_root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+        let norm_w = (block_root * Vec3::new(-1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_e = (block_root * Vec3::new(1.0, 0.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_u = (block_root * Vec3::new(0.0, 1.0, 0.0).extend(0.0)).truncate().to_array();
+        let norm_d = (block_root * Vec3::new(0.0, -1.0, 0.0).extend(0.0)).truncate().to_array();
 
         // North face (-Z)
         add_cube_face(vertices, indices, [p_100, p_000, p_010, p_110], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_n, color);
@@ -338,7 +338,7 @@ pub fn build_item_frame_item(
         add_cube_face(vertices, indices, [p_000, p_100, p_101, p_001], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_d, color);
     } else {
         let s = 0.225;
-        let tz = 0.015;
+        let tz = 0.01;
         let base_idx = vertices.len() as u32;
 
         let p0 = (root * Vec3::new(-s, -s, -tz).extend(1.0)).truncate();
@@ -398,11 +398,12 @@ pub fn build_dropped_item_model(
     // MCP RenderEntityItem spin: ((age + pt) / 20.0 + hoverStart) radians
     let spin = age / 20.0 + (entity.id as f32 * 0.1);
 
-    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32 + bob, pos.z as f32))
-        * Mat4::from_rotation_y(spin);
-
     if is_block {
-        let s = 0.25;
+        // Vanilla MCP 1.8.9 RenderEntityItem: scale 0.5 * ground transform scale 0.25 = 0.125
+        let s = 0.125;
+        let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32 + bob + s, pos.z as f32))
+            * Mat4::from_rotation_y(spin);
+
         let p_000 = (root * Vec3::new(-s, -s, -s).extend(1.0)).truncate().to_array();
         let p_100 = (root * Vec3::new(s, -s, -s).extend(1.0)).truncate().to_array();
         let p_110 = (root * Vec3::new(s, s, -s).extend(1.0)).truncate().to_array();
@@ -432,6 +433,8 @@ pub fn build_dropped_item_model(
         // Bottom face (-Y)
         add_cube_face(vertices, indices, [p_000, p_100, p_101, p_001], [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]], norm_d, color);
     } else {
+        let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32 + bob, pos.z as f32))
+            * Mat4::from_rotation_y(spin);
         let s = 0.2;
         let tz = 0.015625; // 3D extruded slab thickness (1/16th block)
         let base_idx = vertices.len() as u32;
