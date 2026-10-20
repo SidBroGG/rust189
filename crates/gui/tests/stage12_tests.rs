@@ -277,3 +277,39 @@ fn test_minecraft_item_asset_mapping_and_texture_loading() {
     let tex_id_2 = get_or_load_item_texture(&ctx, 276, 42, 1561, "Diamond Sword");
     assert_eq!(tex_id, tex_id_2, "Damaged tool should share the same cached texture ID");
 }
+
+#[test]
+fn test_custom_item_name_and_tooltip_theme() {
+    let ctx = egui::Context::default();
+    gui::theme::setup_minecraft_theme(&ctx);
+
+    // Verify instant tooltip configuration and semi-transparency
+    let style = ctx.style();
+    assert_eq!(style.interaction.tooltip_delay, 0.0);
+    assert!(!style.interaction.show_tooltips_only_when_still);
+    assert_eq!(style.spacing.window_margin, egui::Margin::symmetric(6, 4));
+
+    let visuals = &style.visuals;
+    assert_eq!(visuals.window_fill.a(), 180);
+    assert_eq!(visuals.window_stroke.color.a(), 180);
+
+    // Verify custom name layout job generation
+    let custom_name_colored = "§6§lLegendary §bSword";
+    let job = gui::theme::build_layout_job_styled(custom_name_colored, 13.5, false, None);
+    assert_eq!(job.sections.len(), 2);
+
+    // Verify slot with NBT display.Name extraction
+    let mut display_map = std::collections::HashMap::new();
+    display_map.insert("Name".to_string(), protocol::NbtTag::String("§cSharp Blade".to_string()));
+    let mut root_map = std::collections::HashMap::new();
+    root_map.insert("display".to_string(), protocol::NbtTag::Compound(display_map));
+    let slot = protocol::Slot::new(276, 1, 0, Some(protocol::NbtTag::Compound(root_map)));
+
+    let extracted = slot
+        .nbt
+        .as_ref()
+        .and_then(|n| n.get_compound("display"))
+        .and_then(|d| d.get_string("Name"));
+    assert_eq!(extracted, Some("§cSharp Blade"));
+}
+

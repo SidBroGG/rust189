@@ -263,9 +263,16 @@ pub fn setup_minecraft_theme(ctx: &egui::Context) {
 
     // Modern clean dark theme panels
     visuals.panel_fill = Color32::from_rgb(24, 25, 28);
-    visuals.window_fill = Color32::from_rgb(32, 34, 38);
+    visuals.window_fill = Color32::from_rgba_unmultiplied(16, 18, 24, 180);
+    visuals.window_stroke = egui::Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(65, 72, 88, 180));
 
     ctx.set_visuals(visuals);
+
+    let mut style = (*ctx.style()).clone();
+    style.interaction.tooltip_delay = 0.0;
+    style.interaction.show_tooltips_only_when_still = false;
+    style.spacing.window_margin = egui::Margin::symmetric(6, 4);
+    ctx.set_style(style);
 }
 
 #[cfg(test)]

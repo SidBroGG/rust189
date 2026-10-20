@@ -88,6 +88,7 @@ pub struct App {
     pub server_break_progress: HashMap<(i32, i32, i32), u8>,
     pub held_item_id: i16,
     pub right_click_delay_timer: u8,
+    pub block_hit_delay: u32,
 
     // Player Vitals & Inventory (Stage 12)
     pub player_health: f32,
@@ -167,6 +168,7 @@ impl App {
             server_break_progress: HashMap::new(),
             held_item_id: 0,
             right_click_delay_timer: 0,
+            block_hit_delay: 0,
 
             player_health: 20.0,
             player_max_health: 20.0,
@@ -208,6 +210,11 @@ impl App {
             }
         }
         None
+    }
+
+    /// Returns true if the player is currently in creative mode (either via capabilities or gamemode 1).
+    pub fn is_creative_mode(&self) -> bool {
+        self.player.capabilities.is_creative || self.player_gamemode == 1
     }
 
     /// Returns the exact currently held slot from the player's hotbar, preserving NBT and count.
@@ -352,7 +359,13 @@ impl App {
             133 => ("Emerald Block", 0),
             _ => ("Item", 0),
         };
-        let mut info = HudItemInfo::new(slot.item_id, slot.item_count, slot.item_damage, max_dur, name);
+        let custom_name = slot
+            .nbt
+            .as_ref()
+            .and_then(|n| n.get_compound("display"))
+            .and_then(|d| d.get_string("Name"));
+        let final_name = custom_name.unwrap_or(name);
+        let mut info = HudItemInfo::new(slot.item_id, slot.item_count, slot.item_damage, max_dur, final_name);
         info.is_enchanted = slot.is_enchanted();
         info
     }
@@ -468,7 +481,7 @@ impl App {
             &self.spatial_hash,
             eye_pos,
             look_dir,
-            self.player.capabilities.is_creative,
+            self.is_creative_mode(),
             Some(self.player_entity_id),
         );
     }
@@ -486,10 +499,12 @@ impl App {
             s.send(OutgoingPlayPacket::Animation);
         }
 
+        let is_creative = self.is_creative_mode();
+
         match self.current_target {
             TargetHit::Entity(eh) => {
                 let entity_id = eh.entity_id;
-                let attack_reach = if self.player.capabilities.is_creative { 6.0 } else { 3.0 };
+                let attack_reach = if is_creative { 6.0 } else { 3.0 };
                 if eh.distance <= attack_reach {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::UseEntity {
@@ -523,6 +538,40 @@ impl App {
             TargetHit::Block(bh) => {
                 let pos = bh.block_pos;
                 let block = self.world.get_block(pos.0, pos.1, pos.2);
+                if block.id() == 0 {
+                    return;
+                }
+
+                if is_creative {
+                    // MCP 1.8.9 PlayerControllerMP.java:232-234:
+                    // In creative mode, send ONLY StartDestroyBlock and set blockHitDelay = 5
+                    self.block_hit_delay = 5;
+                    if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::PlayerDigging {
+                            status: DiggingAction::StartDestroyBlock,
+                            position: Position::new(pos.0, pos.1, pos.2),
+                            facing: bh.face,
+                        });
+                    }
+                    self.world.set_block(pos.0, pos.1, pos.2, BlockState::AIR);
+                    let chunk_x = pos.0 >> 4;
+                    let chunk_z = pos.2 >> 4;
+                    let sec_idx = ((pos.1 >> 4) as usize).min(15);
+                    if let Some(cm) = &mut self.chunk_manager {
+                        cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                    }
+                    if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
+                        let tex_name = Self::block_texture_name(block.id());
+                        let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
+                        let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                        ir.spawn_digging_particles(center, region, 16);
+                    }
+                    self.breaking_block_pos = None;
+                    self.breaking_block_damage = 0.0;
+                    self.recalculate_current_target();
+                    return;
+                }
+
                 let in_water = is_water_block(
                     self.world
                         .get_block(
@@ -542,11 +591,11 @@ impl App {
                     in_water,
                     false,
                     self.player_on_ground,
-                    self.player.capabilities.is_creative,
+                    false,
                 );
 
                 if rel_damage >= 1.0 {
-                    // Instant destroy (creative or zero-hardness block)
+                    // Instant destroy (survival zero-hardness block)
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerDigging {
                             status: DiggingAction::StartDestroyBlock,
@@ -574,6 +623,7 @@ impl App {
                     }
                     self.breaking_block_pos = None;
                     self.breaking_block_damage = 0.0;
+                    self.recalculate_current_target();
                 } else {
                     self.breaking_block_pos = Some(pos);
                     self.breaking_block_damage = rel_damage;
@@ -593,6 +643,9 @@ impl App {
     }
 
     pub fn handle_left_release(&mut self) {
+        if self.is_creative_mode() {
+            self.block_hit_delay = 0;
+        }
         if let Some(pos) = self.breaking_block_pos.take() {
             self.breaking_block_damage = 0.0;
             if let Some(s) = &self.session {
@@ -957,7 +1010,7 @@ impl App {
 
     /// Handles Pick Block (Pipette) on mouse wheel / middle click according to MCP 1.8.9 (Minecraft.middleClickMouse).
     pub fn handle_middle_click(&mut self) {
-        let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+        let is_creative = self.is_creative_mode();
 
         let pick_item = match self.current_target {
             TargetHit::Block(bh) => {
@@ -2441,10 +2494,20 @@ impl App {
                     input.move_strafe *= speed_mult;
                 }
 
+                if self.block_hit_delay > 0 {
+                    self.block_hit_delay -= 1;
+                }
+
                 // Block destruction continuous tick
                 if self.is_left_clicking {
                     self.recalculate_current_target();
-                    if let Some(pos) = self.breaking_block_pos {
+                    if self.is_creative_mode() {
+                        if self.block_hit_delay == 0 {
+                            if let TargetHit::Block(_) = self.current_target {
+                                self.handle_left_click();
+                            }
+                        }
+                    } else if let Some(pos) = self.breaking_block_pos {
                         let is_still_targeting = match self.current_target {
                             TargetHit::Block(ref b) => b.block_pos == pos,
                             _ => false,
@@ -2471,7 +2534,7 @@ impl App {
                                 in_water,
                                 false,
                                 self.player_on_ground,
-                                self.player.capabilities.is_creative,
+                                false,
                             );
 
                             self.breaking_block_damage += rel_damage;

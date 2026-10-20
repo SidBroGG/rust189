@@ -1,6 +1,6 @@
 use crate::hud::get_or_load_item_texture;
 use crate::theme::{
-    parse_minecraft_text, COLOR_AQUA, COLOR_BLACK, COLOR_DARK_GRAY, COLOR_GOLD, COLOR_GRAY,
+    COLOR_AQUA, COLOR_BLACK, COLOR_DARK_GRAY, COLOR_GOLD, COLOR_GRAY,
     COLOR_GREEN, COLOR_RED, COLOR_WHITE, COLOR_YELLOW,
 };
 use egui::{
@@ -586,11 +586,18 @@ pub fn render_slot(
     ui.data_mut(|d| d.insert_temp(egui::Id::new("active_drag_state_v1"), drag_state));
 }
 
-/// Renders rich Minecraft tooltip with name, enchantments, lore, durability, and stats.
+/// Renders rich Minecraft tooltip with custom name, enchantments, lore, durability, and stats.
 fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i16) {
-    ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
+    ui.spacing_mut().item_spacing = Vec2::new(0.0, 1.5);
+    ui.set_max_width(220.0);
 
-    // Title: colored by rarity
+    // Title: check custom name from NBT display.Name or fallback to default item name
+    let custom_name = slot
+        .nbt
+        .as_ref()
+        .and_then(|n| n.get_compound("display"))
+        .and_then(|d| d.get_string("Name"));
+
     let def = get_item_def(slot.item_id);
     let title_color = if slot.nbt.is_some() {
         COLOR_AQUA
@@ -598,21 +605,36 @@ fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i
         COLOR_WHITE
     };
 
-    ui.label(RichText::new(name).size(15.0).color(title_color).strong());
+    if let Some(cname) = custom_name {
+        if cname.contains('§') || cname.contains('&') {
+            let job = crate::theme::build_layout_job_styled(cname, 13.5, false, None);
+            ui.label(job);
+        } else {
+            ui.label(
+                RichText::new(cname)
+                    .size(13.5)
+                    .color(title_color)
+                    .italics()
+                    .strong(),
+            );
+        }
+    } else {
+        ui.label(RichText::new(name).size(13.5).color(title_color).strong());
+    }
 
     // Attack damage / Armor stats
     if let Some(d) = def {
         if d.attack_damage > 1.0 {
             ui.label(
                 RichText::new(format!("When in main hand: +{:.0} Attack Damage", d.attack_damage))
-                    .size(12.0)
+                    .size(11.0)
                     .color(COLOR_GRAY),
             );
         }
         if d.armor_defense > 0 {
             ui.label(
                 RichText::new(format!("+{} Armor", d.armor_defense))
-                    .size(12.0)
+                    .size(11.0)
                     .color(COLOR_GRAY),
             );
         }
@@ -623,7 +645,7 @@ fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i
         let left = (max_damage - slot.item_damage).max(0);
         ui.label(
             RichText::new(format!("Durability: {} / {}", left, max_damage))
-                .size(12.0)
+                .size(11.0)
                 .color(COLOR_GRAY),
         );
     }
@@ -635,19 +657,7 @@ fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i
             if let Some(lore_list) = display.get_list("Lore") {
                 for tag in lore_list {
                     if let Some(s) = tag.as_string() {
-                        let parsed = parse_minecraft_text(s);
-                        let mut job = egui::text::LayoutJob::default();
-                        for (color, text) in parsed {
-                            job.append(
-                                &text,
-                                0.0,
-                                egui::TextFormat {
-                                    font_id: FontId::proportional(12.0),
-                                    color,
-                                    ..Default::default()
-                                },
-                            );
-                        }
+                        let job = crate::theme::build_layout_job_styled(s, 11.0, false, None);
                         ui.label(job);
                     }
                 }
@@ -662,7 +672,7 @@ fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i
                     let lvl_str = roman_numeral(lvl as i32);
                     ui.label(
                         RichText::new(format!("{} {}", ench_name, lvl_str))
-                            .size(12.0)
+                            .size(11.0)
                             .color(COLOR_GRAY),
                     );
                 }
@@ -673,7 +683,7 @@ fn render_item_tooltip(ui: &mut egui::Ui, slot: &Slot, name: &str, max_damage: i
     // ID tag: "#0276/0"
     ui.label(
         RichText::new(format!("#{:04}/{}", slot.item_id, slot.item_damage))
-            .size(10.0)
+            .size(9.5)
             .color(COLOR_DARK_GRAY),
     );
 }
@@ -936,7 +946,14 @@ fn render_anvil_body(
     if let Some(ref item) = container.slots[0] {
         if item.item_id != ui_state.anvil_last_item_id {
             ui_state.anvil_last_item_id = item.item_id;
-            ui_state.anvil_rename_text = get_item_name(item.item_id, item.item_damage);
+            let custom_name = item
+                .nbt
+                .as_ref()
+                .and_then(|n| n.get_compound("display"))
+                .and_then(|d| d.get_string("Name"));
+            ui_state.anvil_rename_text = custom_name
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| get_item_name(item.item_id, item.item_damage));
         }
     } else {
         ui_state.anvil_last_item_id = 0;

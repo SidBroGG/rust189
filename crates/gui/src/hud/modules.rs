@@ -976,10 +976,11 @@ pub fn render_armor_status(painter: &Painter, rect: Rect, data: &HudData) {
     let mut y = rect.top() + 4.0;
     for item in items {
         // Item short title
+        let display_name = world::chat::strip_formatting(&item.name);
         painter.text(
             Pos2::new(rect.left() + 6.0, y),
             Align2::LEFT_TOP,
-            &item.name,
+            &display_name,
             FontId::proportional(9.5),
             Color32::WHITE,
         );
