@@ -144,6 +144,7 @@ fn translate_ru<'a>(key: &'a str) -> &'a str {
 
         // In-game escape menu
         "ingame.menu_title" => "Игровое меню",
+        "ingame.connected_to" => "Подключено к:",
         "ingame.back_to_game" => "Вернуться в игру",
         "ingame.options" => "⚙ Настройки...",
         "ingame.drop_item" => "Выбросить предмет (Q)",
@@ -272,6 +273,7 @@ fn translate_en<'a>(key: &'a str) -> &'a str {
 
         // In-game escape menu
         "ingame.menu_title" => "Game Menu",
+        "ingame.connected_to" => "Connected to:",
         "ingame.back_to_game" => "Back to Game",
         "ingame.options" => "⚙ Options...",
         "ingame.drop_item" => "Drop Item (Q)",

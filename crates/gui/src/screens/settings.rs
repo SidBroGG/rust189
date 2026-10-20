@@ -1,6 +1,6 @@
 use crate::i18n::{t, Language};
 use crate::keybinds::{egui_key_to_standard, standardize_key, KeyCategory, ALL_KEYBINDS};
-use egui::{Button, Color32, Context, RichText, ScrollArea, Slider, Ui, Vec2, Window};
+use egui::{Button, Color32, Context, Id, LayerId, Order, RichText, ScrollArea, Slider, Ui, Vec2, Window};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -265,12 +265,17 @@ impl SettingsScreen {
         let mut action = SettingsAction::None;
         let mut is_open = true;
 
+        let screen_rect = ctx.screen_rect();
+        ctx.layer_painter(LayerId::new(Order::Middle, Id::new("settings_modal_backdrop")))
+            .rect_filled(screen_rect, 0.0, Color32::from_black_alpha(160));
+
         Window::new(t(self.language, "settings.title"))
+            .order(Order::Foreground)
             .collapsible(false)
             .resizable(false)
             .open(&mut is_open)
             .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
-            .default_width(460.0)
+            .default_width(480.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Video, t(self.language, "settings.tab_video"));

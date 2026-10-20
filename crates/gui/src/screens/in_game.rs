@@ -856,122 +856,123 @@ impl InGameScreen {
             ctx.layer_painter(LayerId::new(Order::Middle, Id::new("esc_backdrop")))
                 .rect_filled(screen_rect, 0.0, Color32::from_black_alpha(150));
 
-            Window::new("InGameEscapeMenu")
-                .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-                .title_bar(false)
-                .resizable(false)
-                .collapsible(false)
-                .frame(
-                    Frame::NONE
-                        .fill(Color32::from_rgba_unmultiplied(18, 22, 28, 245))
-                        .stroke(Stroke::new(1.5_f32, Color32::from_rgb(60, 68, 85)))
-                        .corner_radius(CornerRadius::same(8))
-                        .inner_margin(egui::Margin::symmetric(32, 26)),
-                )
-                .show(ctx, |ui| {
-                    ui.set_width(260.0);
-                    ui.vertical_centered(|ui| {
-                        ui.label(
-                            RichText::new(t(self.language, "ingame.menu_title"))
-                                .size(20.0)
-                                .color(Color32::WHITE)
-                                .strong(),
-                        );
-                        ui.add_space(4.0);
-                        ui.label(
-                            RichText::new(format!("{} {}", t(self.language, "ingame.connected_to"), self.server_ip))
-                                .size(12.0)
-                                .color(Color32::from_rgb(85, 255, 85)),
-                        );
+            if !self.is_modal_open {
+                Window::new("InGameEscapeMenu")
+                    .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+                    .title_bar(false)
+                    .resizable(false)
+                    .collapsible(false)
+                    .frame(
+                        Frame::NONE
+                            .fill(Color32::from_rgba_unmultiplied(18, 22, 28, 245))
+                            .stroke(Stroke::new(1.5_f32, Color32::from_rgb(60, 68, 85)))
+                            .corner_radius(CornerRadius::same(8))
+                            .inner_margin(egui::Margin::symmetric(32, 26)),
+                    )
+                    .show(ctx, |ui| {
+                        ui.set_width(260.0);
+                        ui.vertical_centered(|ui| {
+                            ui.label(
+                                RichText::new(t(self.language, "ingame.menu_title"))
+                                    .size(20.0)
+                                    .color(Color32::WHITE)
+                                    .strong(),
+                            );
+                            ui.add_space(4.0);
+                            ui.label(
+                                RichText::new(format!("{} {}", t(self.language, "ingame.connected_to"), self.server_ip))
+                                    .size(12.0)
+                                    .color(Color32::from_rgb(85, 255, 85)),
+                            );
 
-                        let dim_str = match self.dimension {
-                            0 => "Overworld",
-                            -1 => "Nether",
-                            1 => "The End",
-                            _ => "Custom Dimension",
-                        };
-                        ui.label(
-                            RichText::new(format!("Dimension: {}", dim_str))
-                                .size(11.0)
-                                .color(Color32::from_rgb(160, 165, 180)),
-                        );
+                            let dim_str = match self.dimension {
+                                0 => "Overworld",
+                                -1 => "Nether",
+                                1 => "The End",
+                                _ => "Custom Dimension",
+                            };
+                            ui.label(
+                                RichText::new(format!("Dimension: {}", dim_str))
+                                    .size(11.0)
+                                    .color(Color32::from_rgb(160, 165, 180)),
+                            );
 
-                        ui.add_space(14.0);
-                        ui.separator();
-                        ui.add_space(14.0);
+                            ui.add_space(14.0);
+                            ui.separator();
+                            ui.add_space(14.0);
 
-                        let btn_size = Vec2::new(240.0, 32.0);
+                            let btn_size = Vec2::new(240.0, 32.0);
 
-                        if ui
-                            .add_sized(
-                                btn_size,
-                                egui::Button::new(
-                                    RichText::new(t(self.language, "ingame.back_to_game"))
-                                        .size(14.0)
-                                        .color(Color32::WHITE)
-                                        .strong(),
-                                ),
-                            )
-                            .clicked()
-                        {
-                            self.escape_menu_opened = false;
-                        }
+                            if ui
+                                .add_sized(
+                                    btn_size,
+                                    egui::Button::new(
+                                        RichText::new(t(self.language, "ingame.back_to_game"))
+                                            .size(14.0)
+                                            .color(Color32::WHITE)
+                                            .strong(),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                self.escape_menu_opened = false;
+                            }
 
-                        ui.add_space(6.0);
+                            ui.add_space(6.0);
 
-                        // HUD Editor button in game menu
-                        if ui
-                            .add_sized(
-                                btn_size,
-                                egui::Button::new(
-                                    RichText::new("HUD Layout Editor (RShift)")
-                                        .size(13.0)
-                                        .color(Color32::from_rgb(85, 255, 255)),
-                                ),
-                            )
-                            .clicked()
-                        {
-                            self.escape_menu_opened = false;
-                            self.hud_editor_opened = true;
-                        }
+                            // HUD Editor button in game menu
+                            if ui
+                                .add_sized(
+                                    btn_size,
+                                    egui::Button::new(
+                                        RichText::new("HUD Layout Editor (RShift)")
+                                            .size(13.0)
+                                            .color(Color32::from_rgb(85, 255, 255)),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                self.escape_menu_opened = false;
+                                self.hud_editor_opened = true;
+                            }
 
-                        ui.add_space(6.0);
+                            ui.add_space(6.0);
 
+                            if ui
+                                .add_sized(
+                                    btn_size,
+                                    egui::Button::new(
+                                        RichText::new(t(self.language, "ingame.options"))
+                                            .size(13.0)
+                                            .color(Color32::from_rgb(220, 225, 235)),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                action = InGameAction::OpenSettings;
+                            }
 
-                        if ui
-                            .add_sized(
-                                btn_size,
-                                egui::Button::new(
-                                    RichText::new(t(self.language, "ingame.options"))
-                                        .size(13.0)
-                                        .color(Color32::from_rgb(220, 225, 235)),
-                                ),
-                            )
-                            .clicked()
-                        {
-                            action = InGameAction::OpenSettings;
-                        }
+                            ui.add_space(10.0);
+                            ui.separator();
+                            ui.add_space(10.0);
 
-                        ui.add_space(10.0);
-                        ui.separator();
-                        ui.add_space(10.0);
-
-                        if ui
-                            .add_sized(
-                                btn_size,
-                                egui::Button::new(
-                                    RichText::new(t(self.language, "ingame.disconnect"))
-                                        .size(14.0)
-                                        .color(Color32::from_rgb(255, 85, 85))
-                                        .strong(),
-                                ),
-                            )
-                            .clicked()
-                        {
-                            action = InGameAction::Disconnect;
-                        }
+                            if ui
+                                .add_sized(
+                                    btn_size,
+                                    egui::Button::new(
+                                        RichText::new(t(self.language, "ingame.disconnect"))
+                                            .size(14.0)
+                                            .color(Color32::from_rgb(255, 85, 85))
+                                            .strong(),
+                                    ),
+                                )
+                                .clicked()
+                            {
+                                action = InGameAction::Disconnect;
+                            }
+                        });
                     });
-                });
+            }
         }
 
         action
