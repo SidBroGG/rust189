@@ -175,11 +175,11 @@ impl TrackedEntity {
             if let EntityKind::Object { object_type, .. } = self.kind {
                 match object_type {
                     60 => {
-                        // Arrow: in flight (!on_ground), update ballistic trajectory
+                        // Arrow: in flight (!on_ground), update ballistic trajectory matching MCP EntityArrow
                         if !self.on_ground && self.velocity.length_squared() > 0.001 {
-                            self.velocity.y -= 0.05;
-                            self.velocity *= 0.99;
                             self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                            self.velocity *= 0.99;
+                            self.velocity.y -= 0.05;
                             let horiz = (self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z).sqrt();
                             if horiz > 0.001 {
                                 self.yaw = self.velocity.x.atan2(self.velocity.z).to_degrees();
@@ -190,16 +190,25 @@ impl TrackedEntity {
                         }
                     }
                     61 | 62 | 65 | 73 | 75 => {
-                        // Throwables (Snowball, Egg, Pearl, Potion, ExpBottle): gravity 0.03, drag 0.99
-                        self.velocity.y -= 0.03;
-                        self.velocity *= 0.99;
-                        self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                        // Throwables (Snowball, Egg, Pearl, Potion, ExpBottle): gravity 0.03, drag 0.99 matching MCP EntityThrowable
+                        if !self.on_ground && self.velocity.length_squared() > 0.001 {
+                            self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                            self.velocity *= 0.99;
+                            self.velocity.y -= 0.03;
+                            let horiz = (self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z).sqrt();
+                            if horiz > 0.001 {
+                                self.yaw = self.velocity.x.atan2(self.velocity.z).to_degrees();
+                                self.pitch = self.velocity.y.atan2(horiz).to_degrees();
+                            }
+                        }
                     }
                     90 => {
                         // Fishing Bobber: gravity 0.03, drag 0.92
-                        self.velocity.y -= 0.03;
-                        self.velocity *= 0.92;
-                        self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                        if !self.on_ground && self.velocity.length_squared() > 0.001 {
+                            self.pos += glam::DVec3::new(self.velocity.x as f64, self.velocity.y as f64, self.velocity.z as f64);
+                            self.velocity *= 0.92;
+                            self.velocity.y -= 0.03;
+                        }
                     }
                     _ => {}
                 }
@@ -655,13 +664,10 @@ impl EntityTracker {
                             return;
                         } else {
                             entity.on_ground = false;
-                            let delta = target - entity.pos;
-                            entity.velocity = glam::Vec3::new(
-                                delta.x as f32,
-                                delta.y as f32,
-                                delta.z as f32,
-                            );
-                            entity.prev_pos = entity.pos;
+                            let dist_sq = (target - entity.pos).length_squared();
+                            if dist_sq > 4.0 {
+                                entity.prev_pos = target;
+                            }
                             entity.pos = target;
                             entity.target_pos = target;
                             entity.interpolation_steps = 0;
@@ -669,16 +675,10 @@ impl EntityTracker {
                         }
                     }
                     61..=65 | 72 | 73 | 75 | 90 => {
-                        // Projectiles in flight: track velocity and snap target directly (no 3-tick decay)
-                        let delta = target - entity.pos;
-                        if delta.length_squared() > 1e-4 {
-                            entity.velocity = glam::Vec3::new(
-                                delta.x as f32,
-                                delta.y as f32,
-                                delta.z as f32,
-                            );
+                        let dist_sq = (target - entity.pos).length_squared();
+                        if dist_sq > 4.0 {
+                            entity.prev_pos = target;
                         }
-                        entity.prev_pos = entity.pos;
                         entity.pos = target;
                         entity.target_pos = target;
                         entity.interpolation_steps = 0;
@@ -774,13 +774,10 @@ impl EntityTracker {
                             return;
                         } else {
                             entity.on_ground = false;
-                            let delta = target - entity.pos;
-                            entity.velocity = glam::Vec3::new(
-                                delta.x as f32,
-                                delta.y as f32,
-                                delta.z as f32,
-                            );
-                            entity.prev_pos = entity.pos;
+                            let dist_sq = (target - entity.pos).length_squared();
+                            if dist_sq > 4.0 {
+                                entity.prev_pos = target;
+                            }
                             entity.pos = target;
                             entity.target_pos = target;
                             entity.yaw = yaw;
@@ -794,15 +791,10 @@ impl EntityTracker {
                         }
                     }
                     61..=65 | 72 | 73 | 75 | 90 => {
-                        let delta = target - entity.pos;
-                        if delta.length_squared() > 1e-4 {
-                            entity.velocity = glam::Vec3::new(
-                                delta.x as f32,
-                                delta.y as f32,
-                                delta.z as f32,
-                            );
+                        let dist_sq = (target - entity.pos).length_squared();
+                        if dist_sq > 4.0 {
+                            entity.prev_pos = target;
                         }
-                        entity.prev_pos = entity.pos;
                         entity.pos = target;
                         entity.target_pos = target;
                         entity.yaw = yaw;
@@ -906,14 +898,6 @@ impl EntityTracker {
                         return;
                     }
                     61..=65 | 72 | 73 | 75 | 90 => {
-                        let delta = target - entity.pos;
-                        if delta.length_squared() > 1e-4 {
-                            entity.velocity = glam::Vec3::new(
-                                delta.x as f32,
-                                delta.y as f32,
-                                delta.z as f32,
-                            );
-                        }
                         entity.pos = target;
                         entity.prev_pos = target;
                         entity.target_pos = target;
@@ -1232,5 +1216,22 @@ mod tests {
         let item = tracker.get(20).unwrap();
         assert!(item.on_ground);
         assert_eq!(item.velocity, glam::Vec3::ZERO);
+    }
+
+    #[test]
+    fn test_projectile_velocity_preserved_during_flight() {
+        let mut tracker = EntityTracker::new();
+        // Spawn Snowball (object_type = 61) with forward velocity of (1.0, 0.4, 0.0)
+        let vel_x = (1.0 * 8000.0) as i16;
+        let vel_y = (0.4 * 8000.0) as i16;
+        tracker.spawn_object(30, 61, 0, 64 * 32, 0, 0, 0, 1, vel_x, vel_y, 0);
+        let snowball = tracker.get(30).unwrap();
+        let initial_vel = snowball.velocity;
+        assert!((initial_vel.x - 1.0).abs() < 1e-3);
+
+        // Server packet arrives with slight drift - velocity must NOT be overwritten by drift delta
+        tracker.rel_move(30, 32, 10, 0, false);
+        let snowball = tracker.get(30).unwrap();
+        assert_eq!(snowball.velocity, initial_vel);
     }
 }
