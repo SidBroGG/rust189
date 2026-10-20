@@ -285,6 +285,86 @@ pub fn build_item_frame_background(
     back.render(root, vertices, indices, color);
 }
 
+/// Builds the Item Frame borders for map items (MCP RenderItemFrame mapModel, item_frame_map.json).
+pub fn build_item_frame_map_borders(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians());
+
+    let mut frame = ModelPart::new(0.0, 0.0, 32.0, 16.0);
+    // Full 16x16 borders matching item_frame_map.json (edges connect seamlessly to adjacent frames)
+    // Top border: 16 wide, 1 high, 1 deep
+    frame.add_box(0.0, 0.0, -8.0, 7.0, 7.001, 16.0, 1.0, 0.999, 0.0);
+    // Bottom border: 16 wide, 1 high, 1 deep
+    frame.add_box(0.0, 0.0, -8.0, -8.0, 7.001, 16.0, 1.0, 0.999, 0.0);
+    // Left border: 1 wide, 14 high, 1 deep
+    frame.add_box(0.0, 0.0, -8.0, -7.0, 7.001, 1.0, 14.0, 0.999, 0.0);
+    // Right border: 1 wide, 14 high, 1 deep
+    frame.add_box(0.0, 0.0, 7.0, -7.0, 7.001, 1.0, 14.0, 0.999, 0.0);
+    frame.render(root, vertices, indices, color);
+}
+
+/// Builds the Item Frame background plate for map items (MCP RenderItemFrame mapModel, item_frame_map.json).
+pub fn build_item_frame_map_background(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians());
+
+    let mut back = ModelPart::new(0.0, 0.0, 32.0, 16.0);
+    // 14 wide, 14 high, 1.0 deep plate
+    back.add_box(0.0, 0.0, -7.0, -7.0, 7.001, 14.0, 14.0, 0.999, 0.0);
+    back.render(root, vertices, indices, color);
+}
+
+/// Builds the Map quad inside the Item Frame (MCP RenderItemFrame / MapItemRenderer).
+pub fn build_item_frame_map(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    rotation_steps: u8,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let map_rot = ((rotation_steps % 4) as f32) * 90.0;
+
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_translation(Vec3::new(0.0, 0.0, 0.4297))
+        * Mat4::from_rotation_z(map_rot.to_radians());
+
+    let s = 0.5; // Full 1.0 x 1.0 block quad spanning [-0.5, +0.5]
+    let base_idx = vertices.len() as u32;
+
+    let p0 = (root * Vec3::new(-s, -s, 0.0).extend(1.0)).truncate();
+    let p1 = (root * Vec3::new(s, -s, 0.0).extend(1.0)).truncate();
+    let p2 = (root * Vec3::new(s, s, 0.0).extend(1.0)).truncate();
+    let p3 = (root * Vec3::new(-s, s, 0.0).extend(1.0)).truncate();
+
+    let norm_f = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+
+    vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_f, color });
+    vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_f, color });
+    vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_f, color });
+    vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_f, color });
+    indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+}
+
 /// Builds the Item inside the Item Frame (MCP RenderItemFrame).
 pub fn build_item_frame_item(
     vertices: &mut Vec<EntityVertex>,

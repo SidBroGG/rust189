@@ -4,6 +4,7 @@ pub mod chunk;
 pub mod entity;
 pub mod inventory;
 pub mod item;
+pub mod map;
 pub mod morton;
 pub mod palette;
 pub mod physics;
@@ -12,6 +13,8 @@ pub mod scoreboard;
 pub mod section;
 pub mod tab_list;
 pub mod world;
+
+pub use map::{MapData, MapDecoration, MAP_BASE_COLORS, MAP_SHADE_MULTIPLIERS};
 
 pub use inventory::{
     match_crafting_2x2, match_crafting_3x3, ContainerKind, ContainerState, MerchantTradeRecipe,

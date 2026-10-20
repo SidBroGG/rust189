@@ -60,6 +60,7 @@ pub enum ClientboundPlayPacket {
     ChangeGameState(ClientboundChangeGameStatePacket),
     CustomPayload(ClientboundCustomPayloadPacket),
     AttachEntity(ClientboundAttachEntityPacket),
+    Maps(ClientboundMapsPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -216,6 +217,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundAttachEntityPacket::PACKET_ID => {
                 Ok(Self::AttachEntity(ClientboundAttachEntityPacket::decode(payload)?))
+            }
+            ClientboundMapsPacket::PACKET_ID => {
+                Ok(Self::Maps(ClientboundMapsPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,
@@ -744,6 +748,32 @@ mod tests {
         let decoded_sign = ServerboundUpdateSignPacket::decode(&mut bytes).unwrap();
         assert_eq!(sign.position, decoded_sign.position);
         assert_eq!(sign.lines, decoded_sign.lines);
+    }
+
+    #[test]
+    fn test_maps_packet_roundtrip() {
+        let pkt = ClientboundMapsPacket {
+            map_id: 17,
+            scale: 2,
+            icons: vec![
+                MapIcon {
+                    icon_type: 1,
+                    direction: 8,
+                    x: -32,
+                    z: 64,
+                },
+            ],
+            columns: 2,
+            rows: 2,
+            x: 10,
+            z: 20,
+            data: vec![12, 14, 16, 18],
+        };
+        let mut buf = BytesMut::new();
+        pkt.encode(&mut buf).unwrap();
+        let mut bytes = buf.freeze();
+        let decoded = ClientboundMapsPacket::decode(&mut bytes).unwrap();
+        assert_eq!(pkt, decoded);
     }
 }
 

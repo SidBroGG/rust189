@@ -383,6 +383,29 @@ impl EntityRenderer {
         }
     }
 
+    /// Uploads or updates a 128x128 map texture from MapData onto the GPU.
+    pub fn update_map_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        map_id: i32,
+        map_data: &world::map::MapData,
+    ) {
+        let key = format!("map_{}", map_id);
+        let rgba = map_data.to_rgba();
+        if let Some(img) = image::RgbaImage::from_raw(128, 128, rgba) {
+            let gpu_skin = Self::create_gpu_skin(
+                device,
+                queue,
+                &self.texture_bind_group_layout,
+                &self.sampler,
+                &img,
+                &key,
+            );
+            self.entity_texture_cache.insert(key, gpu_skin);
+        }
+    }
+
     /// Updates uniform buffer (matrices, fog, camera pos).
     pub fn update_uniforms(
         &self,
@@ -413,6 +436,7 @@ impl EntityRenderer {
         tracker: &EntityTracker,
         partial_ticks: f32,
         local_player: Option<&TrackedEntity>,
+        maps: Option<&hashbrown::HashMap<i32, world::map::MapData>>,
     ) {
         if tracker.count() == 0 && local_player.is_none() {
             return;
@@ -754,25 +778,65 @@ impl EntityRenderer {
                             }
                         }
                         71 => {
-                            // Item Frame: wooden borders + birch background plate + optional item inside
-                            let (f_verts, f_inds) = collector.entry("blocks/planks_birch".to_string()).or_default();
-                            crate::models::vehicles::build_item_frame_borders(f_verts, f_inds, entity, partial_ticks, color);
-
-                            let (bg_verts, bg_inds) = collector.entry("blocks/itemframe_background".to_string()).or_default();
-                            crate::models::vehicles::build_item_frame_background(bg_verts, bg_inds, entity, partial_ticks, color);
-
                             let item_slot = entity.metadata.iter().find(|m| m.index == 8).and_then(|m| match &m.value {
                                 world::entity::MetadataValue::Slot(Some(slot)) => Some((slot.item_id, slot.item_damage)),
                                 _ => None,
                             });
-                            if let Some((item_id, dmg)) = item_slot {
+                            let is_map = matches!(item_slot, Some((358, _)) | Some((395, _)));
+
+                            if is_map {
+                                // Full 16x16 frame borders and 14x14 recessed plate for maps (item_frame_map.json)
+                                let (f_verts, f_inds) = collector.entry("blocks/planks_birch".to_string()).or_default();
+                                crate::models::vehicles::build_item_frame_map_borders(f_verts, f_inds, entity, partial_ticks, color);
+
+                                let (bg_verts, bg_inds) = collector.entry("blocks/itemframe_background".to_string()).or_default();
+                                crate::models::vehicles::build_item_frame_map_background(bg_verts, bg_inds, entity, partial_ticks, color);
+
                                 let rot_steps = entity.metadata.iter().find(|m| m.index == 9).and_then(|m| match m.value {
                                     world::entity::MetadataValue::Byte(b) => Some((b & 7) as u8),
                                     _ => None,
                                 }).unwrap_or(0);
-                                let (tex_key, is_block) = get_item_render_texture_key(item_id, dmg);
-                                let (i_verts, i_inds) = collector.entry(tex_key).or_default();
-                                crate::models::vehicles::build_item_frame_item(i_verts, i_inds, entity, rot_steps, is_block, partial_ticks, color);
+
+                                // Check if we have dynamic map data for this map ID
+                                let tex_key = if let Some((358, dmg)) = item_slot {
+                                    let map_id = dmg as i32;
+                                    let key = format!("map_{}", map_id);
+                                    let has_data = if let Some(m_data) = maps.and_then(|m| m.get(&map_id)) {
+                                        if m_data.dirty || !self.entity_texture_cache.contains_key(&key) {
+                                            self.update_map_texture(device, queue, map_id, m_data);
+                                        }
+                                        true
+                                    } else {
+                                        self.entity_texture_cache.contains_key(&key)
+                                    };
+                                    if has_data {
+                                        key
+                                    } else {
+                                        "map/map_background".to_string()
+                                    }
+                                } else {
+                                    "map/map_background".to_string()
+                                };
+
+                                let (m_verts, m_inds) = collector.entry(tex_key).or_default();
+                                crate::models::vehicles::build_item_frame_map(m_verts, m_inds, entity, rot_steps, partial_ticks, color);
+                            } else {
+                                // Standard 12x12 frame borders and 10x10 plate
+                                let (f_verts, f_inds) = collector.entry("blocks/planks_birch".to_string()).or_default();
+                                crate::models::vehicles::build_item_frame_borders(f_verts, f_inds, entity, partial_ticks, color);
+
+                                let (bg_verts, bg_inds) = collector.entry("blocks/itemframe_background".to_string()).or_default();
+                                crate::models::vehicles::build_item_frame_background(bg_verts, bg_inds, entity, partial_ticks, color);
+
+                                if let Some((item_id, dmg)) = item_slot {
+                                    let rot_steps = entity.metadata.iter().find(|m| m.index == 9).and_then(|m| match m.value {
+                                        world::entity::MetadataValue::Byte(b) => Some((b & 7) as u8),
+                                        _ => None,
+                                    }).unwrap_or(0);
+                                    let (tex_key, is_block) = get_item_render_texture_key(item_id, dmg);
+                                    let (i_verts, i_inds) = collector.entry(tex_key).or_default();
+                                    crate::models::vehicles::build_item_frame_item(i_verts, i_inds, entity, rot_steps, is_block, partial_ticks, color);
+                                }
                             }
                         }
                         72 => {
@@ -857,7 +921,11 @@ impl EntityRenderer {
 
         // Ensure GPU textures are loaded
         for batch in &batches {
-            if !batch.texture_key.starts_with("player_") && batch.texture_key != "arrow" && batch.texture_key != "entity/arrow" {
+            if !batch.texture_key.starts_with("player_")
+                && !batch.texture_key.starts_with("map_")
+                && batch.texture_key != "arrow"
+                && batch.texture_key != "entity/arrow"
+            {
                 self.ensure_texture(device, queue, &batch.texture_key);
             }
         }

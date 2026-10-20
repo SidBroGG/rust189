@@ -1,6 +1,7 @@
 use crate::block::BlockState;
 use crate::chunk::{ChunkColumn, WorldError};
 use crate::entity::EntityTracker;
+use crate::map::MapData;
 use hashbrown::HashMap;
 
 /// Manages the voxel world state, loaded chunks, and global dimensions.
@@ -8,6 +9,7 @@ use hashbrown::HashMap;
 pub struct World {
     pub chunks: HashMap<(i32, i32), ChunkColumn>,
     pub entity_tracker: EntityTracker,
+    pub maps: HashMap<i32, MapData>,
     pub dimension: i8, // 0 = Overworld, -1 = Nether, 1 = End
     pub time: i64,
     pub age: i64,
@@ -18,6 +20,7 @@ impl World {
         Self {
             chunks: HashMap::new(),
             entity_tracker: EntityTracker::new(),
+            maps: HashMap::new(),
             dimension: 0,
             time: 0,
             age: 0,

@@ -2265,3 +2265,119 @@ impl ClientboundAttachEntityPacket {
     }
 }
 
+/// Represents an icon/marker on a map (direction, type, x, z).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapIcon {
+    pub icon_type: u8,
+    pub direction: u8,
+    pub x: i8,
+    pub z: i8,
+}
+
+/// Clientbound Maps packet (0x34).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundMapsPacket {
+    pub map_id: i32,
+    pub scale: i8,
+    pub icons: Vec<MapIcon>,
+    pub columns: u8,
+    pub rows: u8,
+    pub x: u8,
+    pub z: u8,
+    pub data: Vec<u8>,
+}
+
+impl ClientboundMapsPacket {
+    pub const PACKET_ID: i32 = 0x34;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let map_id = buf.read_varint()?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let scale = buf.get_i8();
+        let icon_count = buf.read_varint()? as usize;
+        if buf.remaining() < icon_count * 3 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: icon_count * 3,
+                available: buf.remaining(),
+            });
+        }
+        let mut icons = Vec::with_capacity(icon_count);
+        for _ in 0..icon_count {
+            let b = buf.get_u8();
+            let icon_type = (b >> 4) & 15;
+            let direction = b & 15;
+            let x = buf.get_i8();
+            let z = buf.get_i8();
+            icons.push(MapIcon {
+                icon_type,
+                direction,
+                x,
+                z,
+            });
+        }
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let columns = buf.get_u8();
+        let (rows, x, z, data) = if columns > 0 {
+            if buf.remaining() < 3 {
+                return Err(ProtocolError::BufferUnderflow {
+                    needed: 3,
+                    available: buf.remaining(),
+                });
+            }
+            let rows = buf.get_u8();
+            let x = buf.get_u8();
+            let z = buf.get_u8();
+            let data_len = buf.read_varint()? as usize;
+            if buf.remaining() < data_len {
+                return Err(ProtocolError::BufferUnderflow {
+                    needed: data_len,
+                    available: buf.remaining(),
+                });
+            }
+            let mut data = vec![0u8; data_len];
+            buf.copy_to_slice(&mut data);
+            (rows, x, z, data)
+        } else {
+            (0, 0, 0, Vec::new())
+        };
+
+        Ok(Self {
+            map_id,
+            scale,
+            icons,
+            columns,
+            rows,
+            x,
+            z,
+            data,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.map_id);
+        buf.extend_from_slice(&[self.scale as u8]);
+        buf.write_varint(self.icons.len() as i32);
+        for icon in &self.icons {
+            let b = ((icon.icon_type & 15) << 4) | (icon.direction & 15);
+            buf.extend_from_slice(&[b, icon.x as u8, icon.z as u8]);
+        }
+        buf.extend_from_slice(&[self.columns]);
+        if self.columns > 0 {
+            buf.extend_from_slice(&[self.rows, self.x, self.z]);
+            buf.write_varint(self.data.len() as i32);
+            buf.extend_from_slice(&self.data);
+        }
+        Ok(())
+    }
+}
+

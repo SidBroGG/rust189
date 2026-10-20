@@ -2623,6 +2623,28 @@ impl App {
                         }
                     }
                 }
+                ClientboundPlayPacket::Maps(maps_pkt) => {
+                    let map_entry = self.world.maps.entry(maps_pkt.map_id).or_insert_with(|| world::map::MapData::new(maps_pkt.map_id));
+                    map_entry.scale = maps_pkt.scale as u8;
+                    map_entry.decorations = maps_pkt.icons.into_iter().map(|icon| world::map::MapDecoration {
+                        icon_type: icon.icon_type,
+                        direction: icon.direction,
+                        x: icon.x,
+                        z: icon.z,
+                    }).collect();
+                    if maps_pkt.columns > 0 {
+                        map_entry.update_data(
+                            maps_pkt.x as usize,
+                            maps_pkt.z as usize,
+                            maps_pkt.columns as usize,
+                            maps_pkt.rows as usize,
+                            &maps_pkt.data,
+                        );
+                    }
+                    if let (Some(gpu), Some(er)) = (&self.gpu, &mut self.entity_renderer) {
+                        er.update_map_texture(&gpu.device, &gpu.queue, maps_pkt.map_id, map_entry);
+                    }
+                }
                 ClientboundPlayPacket::Unknown { payload_len, .. } => {
                     self.profiler.on_bytes_received(payload_len);
                 }
@@ -4299,7 +4321,15 @@ impl ApplicationHandler for App {
                                 None
                             };
 
-                            er.render(&gpu.device, &gpu.queue, &mut rpass, &self.world.entity_tracker, partial_ticks, local_player_entity.as_ref());
+                            er.render(
+                                &gpu.device,
+                                &gpu.queue,
+                                &mut rpass,
+                                &self.world.entity_tracker,
+                                partial_ticks,
+                                local_player_entity.as_ref(),
+                                Some(&self.world.maps),
+                            );
                         }
 
                         // 3. Render block breaking outline & particles

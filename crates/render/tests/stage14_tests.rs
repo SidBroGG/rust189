@@ -514,6 +514,25 @@ fn test_user_reported_mob_and_object_fixes() {
     build_item_frame_item(&mut v, &mut i, &frame, 2, false, 0.5, color);
     assert_valid_mesh(&v, &i, 2); // 2 double-sided item quads
 
+    // Item Frame with Map (item_frame_map borders 16x16, background plate 14x14, map quad 1.0x1.0)
+    v.clear(); i.clear();
+    build_item_frame_map_borders(&mut v, &mut i, &frame, 0.5, color);
+    assert_valid_mesh(&v, &i, 4); // 4 borders
+    let min_x_map = v.iter().map(|vert| vert.position[0]).fold(f32::INFINITY, f32::min);
+    let max_x_map = v.iter().map(|vert| vert.position[0]).fold(f32::NEG_INFINITY, f32::max);
+    assert!((max_x_map - min_x_map - 1.0).abs() < 0.05, "Map frame border width must be ~1.0 blocks (16x16)");
+
+    v.clear(); i.clear();
+    build_item_frame_map_background(&mut v, &mut i, &frame, 0.5, color);
+    assert_valid_mesh(&v, &i, 1); // 14x14 plate
+
+    v.clear(); i.clear();
+    build_item_frame_map(&mut v, &mut i, &frame, 1, 0.5, color);
+    assert_valid_mesh(&v, &i, 1); // 1 full-block map quad
+    let min_x_quad = v.iter().map(|vert| vert.position[0]).fold(f32::INFINITY, f32::min);
+    let max_x_quad = v.iter().map(|vert| vert.position[0]).fold(f32::NEG_INFINITY, f32::max);
+    assert!((max_x_quad - min_x_quad - 1.0).abs() < 0.05, "Map quad width must be ~1.0 block");
+
     // 14. Dropped item entity
     v.clear(); i.clear();
     let item_ent = create_dummy_entity(EntityKind::Object { object_type: 2, data: 0 });
