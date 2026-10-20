@@ -1,6 +1,6 @@
 use glam::{DVec3, Vec3};
 use hashbrown::HashMap;
-use protocol::codec::{MetadataEntry, MetadataValue, Slot};
+pub use protocol::codec::{MetadataEntry, MetadataValue, Slot};
 use uuid::Uuid;
 
 /// Category of entity in the world.
@@ -18,6 +18,10 @@ pub enum EntityKind {
         object_type: u8,
         data: i32,
     },
+    Painting {
+        title: String,
+        facing: u8,
+    },
 }
 
 impl EntityKind {
@@ -27,6 +31,10 @@ impl EntityKind {
 
     pub fn is_projectile_or_object(&self) -> bool {
         matches!(self, EntityKind::Object { .. })
+    }
+
+    pub fn is_painting(&self) -> bool {
+        matches!(self, EntityKind::Painting { .. })
     }
 }
 
@@ -65,6 +73,8 @@ pub struct TrackedEntity {
     pub is_sneaking: bool,
     pub is_sprinting: bool,
     pub is_invisible: bool,
+    pub hurt_time: u8,
+    pub death_time: u8,
     pub is_armor_stand_marker: bool,
     pub is_armor_stand_small: bool,
     pub custom_name: Option<String>,
@@ -110,6 +120,8 @@ impl TrackedEntity {
             is_sneaking: false,
             is_sprinting: false,
             is_invisible: false,
+            hurt_time: 0,
+            death_time: 0,
             is_armor_stand_marker: false,
             is_armor_stand_small: false,
             custom_name: None,
@@ -203,8 +215,29 @@ impl TrackedEntity {
             }
         }
 
+        if self.hurt_time > 0 {
+            self.hurt_time -= 1;
+        }
+        if self.death_time > 0 && self.death_time < 20 {
+            self.death_time += 1;
+        }
+
         // Apply metadata flags
         self.apply_metadata_flags();
+    }
+
+    /// Handles entity status updates from S19PacketEntityStatus (e.g. 2: hurt, 3: dead).
+    pub fn handle_status(&mut self, status: i8) {
+        match status {
+            2 => {
+                self.hurt_time = 10;
+                self.limb_swing_amount = 1.5;
+            }
+            3 => {
+                self.death_time = 1;
+            }
+            _ => {}
+        }
     }
 
     /// Extracts sneak/sprint/invisible flags, ArmorStand flags, and custom name from entity metadata.
@@ -246,6 +279,7 @@ impl TrackedEntity {
         match self.kind {
             EntityKind::Player { .. } => true,
             EntityKind::Mob { .. } => true,
+            EntityKind::Painting { .. } => true,
             EntityKind::Object { object_type, .. } => match object_type {
                 // ArmorStand: cannot be collided with if it has the marker flag (e.g. floating holograms)
                 78 => !self.is_armor_stand_marker,
@@ -311,23 +345,41 @@ impl TrackedEntity {
                 }
             }
             EntityKind::Mob { mob_type } => match *mob_type {
-                54 => (0.6, 1.95),  // Zombie
-                51 => (0.6, 1.99),  // Skeleton
                 50 => (0.6, 1.7),   // Creeper
+                51 => (0.6, 1.99),  // Skeleton
                 52 => (1.4, 0.9),   // Spider
+                53 => (3.6, 11.7),  // Giant
+                54 => (0.6, 1.95),  // Zombie
+                55 => (0.6, 0.6),   // Slime
+                56 => (4.0, 4.0),   // Ghast
+                57 => (0.6, 1.95),  // Zombie Pigman
                 58 => (0.6, 2.9),   // Enderman
-                100 => (1.4, 2.7),  // Iron Golem
-                65 => (0.4, 0.3),   // Bat
-                120 => (0.6, 1.95), // Villager
+                59 => (0.7, 0.5),   // Cave Spider
+                60 => (0.4, 0.3),   // Silverfish
+                61 => (0.6, 1.8),   // Blaze
+                62 => (0.6, 0.6),   // Magma Cube
+                63 => (16.0, 8.0),  // Ender Dragon
+                64 => (0.9, 3.5),   // Wither
+                65 => (0.5, 0.9),   // Bat
+                66 => (0.6, 1.95),  // Witch
+                67 => (0.4, 0.3),   // Endermite
+                68 => (0.85, 0.85), // Guardian
                 90 => (0.9, 0.9),   // Pig
                 91 => (0.9, 1.3),   // Sheep
                 92 => (0.9, 1.4),   // Cow
                 93 => (0.4, 0.7),   // Chicken
+                94 => (0.8, 0.8),   // Squid
                 95 => (0.6, 0.8),   // Wolf
-                96 => (1.4, 1.2),   // Mooshroom
-                101 => (1.4, 1.6),  // Horse
+                96 => (0.9, 1.4),   // Mooshroom
+                97 => (0.7, 1.9),   // Snowman
+                98 => (0.6, 0.7),   // Ocelot
+                99 => (1.4, 2.7),   // Iron Golem
+                100 => (1.4, 1.6),  // Horse
+                101 => (0.4, 0.5),  // Rabbit
+                120 => (0.6, 1.95), // Villager
                 _ => (0.6, 1.8),
             },
+            EntityKind::Painting { .. } => (0.5, 0.5),
             EntityKind::Object { object_type, .. } => match *object_type {
                 78 => {
                     if self.is_armor_stand_marker {
@@ -341,6 +393,7 @@ impl TrackedEntity {
                 1 => (1.5, 0.6),    // Boat
                 10 => (0.98, 0.7),  // Minecart
                 71 => (0.5, 0.5),   // Item Frame
+                77 => (0.25, 0.25), // Leash Knot
                 51 => (2.0, 2.0),   // Ender Crystal
                 60 | 61 | 62 => (0.5, 0.5), // Projectiles
                 2 => (0.25, 0.25),  // Item drop
@@ -682,6 +735,39 @@ impl EntityTracker {
             }
             entity.apply_metadata_flags();
         }
+    }
+
+    pub fn status(&mut self, entity_id: i32, status: i8) {
+        if let Some(entity) = self.entities.get_mut(&entity_id) {
+            entity.handle_status(status);
+        }
+    }
+
+    pub fn spawn_painting(
+        &mut self,
+        entity_id: i32,
+        title: String,
+        x: i32,
+        y: i32,
+        z: i32,
+        facing: u8,
+    ) {
+        let pos = DVec3::new(x as f64, y as f64, z as f64);
+        let yaw = match facing {
+            0 => 180.0,
+            1 => 270.0,
+            2 => 0.0,
+            3 => 90.0,
+            _ => 0.0,
+        };
+        let entity = TrackedEntity::new(
+            entity_id,
+            EntityKind::Painting { title, facing },
+            pos,
+            yaw,
+            0.0,
+        );
+        self.entities.insert(entity_id, entity);
     }
 
     /// Advances simulation one tick across all tracked entities.

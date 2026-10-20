@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 world.workspace = true
+protocol.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 bytemuck.workspace = true

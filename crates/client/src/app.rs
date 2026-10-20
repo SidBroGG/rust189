@@ -1923,6 +1923,16 @@ impl App {
                         so.velocity_z,
                     );
                 }
+                ClientboundPlayPacket::SpawnPainting(sp) => {
+                    self.world.entity_tracker.spawn_painting(
+                        sp.entity_id,
+                        sp.title,
+                        sp.position.x,
+                        sp.position.y,
+                        sp.position.z,
+                        sp.facing,
+                    );
+                }
                 ClientboundPlayPacket::DestroyEntities(de) => {
                     self.world.entity_tracker.destroy_entities(&de.entity_ids);
                 }
@@ -2121,6 +2131,7 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::EntityStatus(es) => {
+                    self.world.entity_tracker.status(es.entity_id, es.status);
                     if es.entity_id == self.player_entity_id {
                         if es.status == 2 {
                             self.hurt_time = 10;
@@ -3818,6 +3829,21 @@ impl ApplicationHandler for App {
                                 lp.prev_head_yaw = self.player.prev_yaw;
                                 lp.is_sneaking = self.player.is_sneaking;
                                 lp.is_sprinting = self.player.is_sprinting;
+                                lp.hurt_time = self.hurt_time as u8;
+                                lp.death_time = self.death_time as u8;
+                                let to_slot = |info: &Option<gui::hud::HudItemInfo>| -> Option<protocol::codec::Slot> {
+                                    info.as_ref().map(|it| protocol::codec::Slot {
+                                        item_id: it.item_id,
+                                        item_count: it.count,
+                                        item_damage: it.damage,
+                                        nbt: None,
+                                    })
+                                };
+                                lp.equipment[0] = to_slot(&self.hotbar_items[self.selected_hotbar_slot as usize]);
+                                lp.equipment[1] = to_slot(&self.armor_items[0]); // boots
+                                lp.equipment[2] = to_slot(&self.armor_items[1]); // leggings
+                                lp.equipment[3] = to_slot(&self.armor_items[2]); // chestplate
+                                lp.equipment[4] = to_slot(&self.armor_items[3]); // helmet
                                 Some(lp)
                             } else {
                                 None

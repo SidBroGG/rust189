@@ -1,0 +1,425 @@
+use super::{root_entity_matrix, ModelPart};
+use crate::entity_renderer::EntityVertex;
+use glam::{Mat4, Vec3};
+use std::f32::consts::PI;
+use world::entity::TrackedEntity;
+
+/// Builds the Armor Stand model (MCP ModelArmorStand).
+pub fn build_armor_stand_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let root = root_entity_matrix(entity, partial_ticks);
+
+    // Base plate (0, 32)
+    let mut base = ModelPart::new(0.0, 32.0, 64.0, 64.0);
+    base.set_rotation_point(0.0, 12.0, 0.0);
+    base.add_box(0.0, 32.0, -6.0, 11.0, -6.0, 12.0, 1.0, 12.0, 0.0);
+    base.render(root, vertices, indices, color);
+
+    // Left and right legs (8, 0) and (40, 16)
+    let mut right_leg = ModelPart::new(8.0, 0.0, 64.0, 64.0);
+    right_leg.set_rotation_point(-1.9, 12.0, 0.0);
+    right_leg.add_box(8.0, 0.0, -1.0, 0.0, -1.0, 2.0, 11.0, 2.0, 0.0);
+    right_leg.render(root, vertices, indices, color);
+
+    let mut left_leg = ModelPart::new(40.0, 16.0, 64.0, 64.0);
+    left_leg.mirror = true;
+    left_leg.set_rotation_point(1.9, 12.0, 0.0);
+    left_leg.add_box(40.0, 16.0, -1.0, 0.0, -1.0, 2.0, 11.0, 2.0, 0.0);
+    left_leg.render(root, vertices, indices, color);
+
+    // Waist (0, 48)
+    let mut waist = ModelPart::new(0.0, 48.0, 64.0, 64.0);
+    waist.add_box(0.0, 48.0, -4.0, 10.0, -1.0, 8.0, 2.0, 2.0, 0.0);
+    waist.render(root, vertices, indices, color);
+
+    // Side rods (16, 0) and (48, 16)
+    let mut right_side = ModelPart::new(16.0, 0.0, 64.0, 64.0);
+    right_side.add_box(16.0, 0.0, -3.0, 3.0, -1.0, 2.0, 7.0, 2.0, 0.0);
+    right_side.render(root, vertices, indices, color);
+
+    let mut left_side = ModelPart::new(48.0, 16.0, 64.0, 64.0);
+    left_side.add_box(48.0, 16.0, 1.0, 3.0, -1.0, 2.0, 7.0, 2.0, 0.0);
+    left_side.render(root, vertices, indices, color);
+
+    // Shoulders (0, 26)
+    let mut body = ModelPart::new(0.0, 26.0, 64.0, 64.0);
+    body.add_box(0.0, 26.0, -6.0, 0.0, -1.5, 12.0, 3.0, 3.0, 0.0);
+    body.render(root, vertices, indices, color);
+
+    // Head post (0, 0)
+    let mut head = ModelPart::new(0.0, 0.0, 64.0, 64.0);
+    head.set_rotation_point(0.0, 0.0, 0.0);
+    head.add_box(0.0, 0.0, -1.0, -7.0, -1.0, 2.0, 7.0, 2.0, 0.0);
+    head.render(root, vertices, indices, color);
+
+    // Arms (24, 0) and (32, 16)
+    let mut right_arm = ModelPart::new(24.0, 0.0, 64.0, 64.0);
+    right_arm.set_rotation_point(-5.0, 2.0, 0.0);
+    right_arm.add_box(24.0, 0.0, -2.0, -2.0, -1.0, 2.0, 12.0, 2.0, 0.0);
+    right_arm.render(root, vertices, indices, color);
+
+    let mut left_arm = ModelPart::new(32.0, 16.0, 64.0, 64.0);
+    left_arm.mirror = true;
+    left_arm.set_rotation_point(5.0, 2.0, 0.0);
+    left_arm.add_box(32.0, 16.0, 0.0, -2.0, -1.0, 2.0, 12.0, 2.0, 0.0);
+    left_arm.render(root, vertices, indices, color);
+}
+
+/// Builds the Boat model (MCP ModelBoat).
+pub fn build_boat_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
+        * Mat4::from_translation(Vec3::new(0.0, -0.375, 0.0));
+
+    // Bottom (0, 8)
+    let mut bottom = ModelPart::new(0.0, 8.0, 64.0, 32.0);
+    bottom.set_rotation_point(0.0, 4.0, 0.0);
+    bottom.set_rotation(PI / 2.0, 0.0, 0.0);
+    bottom.add_box(0.0, 8.0, -12.0, -8.0, -3.0, 24.0, 16.0, 4.0, 0.0);
+    bottom.render(root, vertices, indices, color);
+
+    // Left side (0, 0)
+    let mut left = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    left.set_rotation_point(-11.0, 4.0, 0.0);
+    left.set_rotation(0.0, PI * 1.5, 0.0);
+    left.add_box(0.0, 0.0, -10.0, -7.0, -1.0, 20.0, 6.0, 2.0, 0.0);
+    left.render(root, vertices, indices, color);
+
+    // Right side (0, 0)
+    let mut right = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    right.set_rotation_point(11.0, 4.0, 0.0);
+    right.set_rotation(0.0, PI / 2.0, 0.0);
+    right.add_box(0.0, 0.0, -10.0, -7.0, -1.0, 20.0, 6.0, 2.0, 0.0);
+    right.render(root, vertices, indices, color);
+
+    // Back side (0, 0)
+    let mut back = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    back.set_rotation_point(0.0, 4.0, -9.0);
+    back.set_rotation(0.0, PI, 0.0);
+    back.add_box(0.0, 0.0, -10.0, -7.0, -1.0, 20.0, 6.0, 2.0, 0.0);
+    back.render(root, vertices, indices, color);
+
+    // Front side (0, 0)
+    let mut front = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    front.set_rotation_point(0.0, 4.0, 9.0);
+    front.add_box(0.0, 0.0, -10.0, -7.0, -1.0, 20.0, 6.0, 2.0, 0.0);
+    front.render(root, vertices, indices, color);
+}
+
+/// Builds the Minecart model (MCP ModelMinecart).
+pub fn build_minecart_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
+        * Mat4::from_translation(Vec3::new(0.0, -0.375, 0.0));
+
+    // Bottom outer (0, 10)
+    let mut bottom = ModelPart::new(0.0, 10.0, 64.0, 32.0);
+    bottom.set_rotation_point(0.0, 4.0, 0.0);
+    bottom.set_rotation(PI / 2.0, 0.0, 0.0);
+    bottom.add_box(0.0, 10.0, -10.0, -8.0, -1.0, 20.0, 16.0, 2.0, 0.0);
+    bottom.render(root, vertices, indices, color);
+
+    // Inner floor (44, 10)
+    let mut floor = ModelPart::new(44.0, 10.0, 64.0, 32.0);
+    floor.set_rotation_point(0.0, 4.0, 0.0);
+    floor.set_rotation(-PI / 2.0, 0.0, 0.0);
+    floor.add_box(44.0, 10.0, -9.0, -7.0, -1.0, 18.0, 14.0, 1.0, 0.0);
+    floor.render(root, vertices, indices, color);
+
+    // Left side (0, 0)
+    let mut left = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    left.set_rotation_point(-9.0, 4.0, 0.0);
+    left.set_rotation(0.0, PI * 1.5, 0.0);
+    left.add_box(0.0, 0.0, -8.0, -9.0, -1.0, 16.0, 8.0, 2.0, 0.0);
+    left.render(root, vertices, indices, color);
+
+    // Right side (0, 0)
+    let mut right = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    right.set_rotation_point(9.0, 4.0, 0.0);
+    right.set_rotation(0.0, PI / 2.0, 0.0);
+    right.add_box(0.0, 0.0, -8.0, -9.0, -1.0, 16.0, 8.0, 2.0, 0.0);
+    right.render(root, vertices, indices, color);
+
+    // Back side (0, 0)
+    let mut back = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    back.set_rotation_point(0.0, 4.0, -7.0);
+    back.set_rotation(0.0, PI, 0.0);
+    back.add_box(0.0, 0.0, -8.0, -9.0, -1.0, 16.0, 8.0, 2.0, 0.0);
+    back.render(root, vertices, indices, color);
+
+    // Front side (0, 0)
+    let mut front = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    front.set_rotation_point(0.0, 4.0, 7.0);
+    front.add_box(0.0, 0.0, -8.0, -9.0, -1.0, 16.0, 8.0, 2.0, 0.0);
+    front.render(root, vertices, indices, color);
+}
+
+/// Builds the Ender Crystal model (MCP ModelEnderCrystal).
+pub fn build_ender_crystal_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let age = entity.ticks_existed as f32 + partial_ticks;
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_scale(Vec3::splat(2.0))
+        * Mat4::from_translation(Vec3::new(0.0, -0.5, 0.0));
+
+    // Base obsidian pedestal (0, 16)
+    let mut base = ModelPart::new(0.0, 16.0, 64.0, 32.0);
+    base.add_box(0.0, 16.0, -6.0, 0.0, -6.0, 12.0, 4.0, 12.0, 0.0);
+    base.render(root, vertices, indices, color);
+
+    // Outer rotating glass cube (0, 0)
+    let rot_y = (age * 3.0).to_radians();
+    let bob = (age * 0.2).sin() * 0.2 + 0.8;
+    let glass_matrix = root
+        * Mat4::from_rotation_y(rot_y)
+        * Mat4::from_translation(Vec3::new(0.0, bob, 0.0))
+        * Mat4::from_axis_angle(Vec3::new(0.7071, 0.0, 0.7071), (60.0_f32).to_radians());
+
+    let mut glass = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    glass.add_box(0.0, 0.0, -4.0, -4.0, -4.0, 8.0, 8.0, 8.0, 0.0);
+    glass.render(glass_matrix, vertices, indices, color);
+
+    // Inner counter-rotating glass cube (0, 0) scaled 0.875
+    let inner_glass_matrix = glass_matrix
+        * Mat4::from_scale(Vec3::splat(0.875))
+        * Mat4::from_axis_angle(Vec3::new(0.7071, 0.0, 0.7071), (60.0_f32).to_radians())
+        * Mat4::from_rotation_y(rot_y);
+    glass.render(inner_glass_matrix, vertices, indices, color);
+
+    // Core cube (32, 0) scaled 0.76
+    let core_matrix = inner_glass_matrix
+        * Mat4::from_scale(Vec3::splat(0.875))
+        * Mat4::from_axis_angle(Vec3::new(0.7071, 0.0, 0.7071), (60.0_f32).to_radians())
+        * Mat4::from_rotation_y(rot_y);
+    let mut core = ModelPart::new(32.0, 0.0, 64.0, 32.0);
+    core.add_box(32.0, 0.0, -4.0, -4.0, -4.0, 8.0, 8.0, 8.0, 0.0);
+    core.render(core_matrix, vertices, indices, color);
+}
+
+/// Builds the Leash Knot model (MCP ModelLeashKnot).
+pub fn build_leash_knot_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32));
+    let mut knot = ModelPart::new(0.0, 0.0, 32.0, 32.0);
+    knot.add_box(0.0, 0.0, -3.0, -6.0, -3.0, 6.0, 8.0, 6.0, 0.0);
+    knot.render(root, vertices, indices, color);
+}
+
+/// Builds the Item Frame model (MCP RenderItemFrame).
+pub fn build_item_frame_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let yaw = entity.interpolated_yaw(partial_ticks);
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - yaw).to_radians())
+        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0));
+
+    // Outer wooden frame box (12x12x1)
+    let mut frame = ModelPart::new(0.0, 0.0, 64.0, 32.0);
+    frame.add_box(0.0, 0.0, -6.0, -6.0, -0.5, 12.0, 12.0, 1.0, 0.0);
+    frame.render(root, vertices, indices, color);
+}
+
+/// Painting artwork definitions from MCP EntityPainting.EnumArt.
+#[derive(Copy, Clone, Debug)]
+pub struct PaintingArt {
+    pub title: &'static str,
+    pub width: i32,
+    pub height: i32,
+    pub u: i32,
+    pub v: i32,
+}
+
+pub const ALL_PAINTINGS: &[PaintingArt] = &[
+    PaintingArt { title: "Kebab", width: 16, height: 16, u: 0, v: 0 },
+    PaintingArt { title: "Aztec", width: 16, height: 16, u: 16, v: 0 },
+    PaintingArt { title: "Alban", width: 16, height: 16, u: 32, v: 0 },
+    PaintingArt { title: "Aztec2", width: 16, height: 16, u: 48, v: 0 },
+    PaintingArt { title: "Bomb", width: 16, height: 16, u: 64, v: 0 },
+    PaintingArt { title: "Plant", width: 16, height: 16, u: 80, v: 0 },
+    PaintingArt { title: "Wasteland", width: 16, height: 16, u: 96, v: 0 },
+    PaintingArt { title: "Pool", width: 32, height: 16, u: 0, v: 32 },
+    PaintingArt { title: "Courbet", width: 32, height: 16, u: 32, v: 32 },
+    PaintingArt { title: "Sea", width: 32, height: 16, u: 64, v: 32 },
+    PaintingArt { title: "Sunset", width: 32, height: 16, u: 96, v: 32 },
+    PaintingArt { title: "Creebet", width: 32, height: 16, u: 128, v: 32 },
+    PaintingArt { title: "Wanderer", width: 16, height: 32, u: 0, v: 64 },
+    PaintingArt { title: "Graham", width: 16, height: 32, u: 16, v: 64 },
+    PaintingArt { title: "Match", width: 32, height: 32, u: 0, v: 128 },
+    PaintingArt { title: "Bust", width: 32, height: 32, u: 32, v: 128 },
+    PaintingArt { title: "Stage", width: 32, height: 32, u: 64, v: 128 },
+    PaintingArt { title: "Void", width: 32, height: 32, u: 96, v: 128 },
+    PaintingArt { title: "SkullAndRoses", width: 32, height: 32, u: 128, v: 128 },
+    PaintingArt { title: "Wither", width: 32, height: 32, u: 160, v: 128 },
+    PaintingArt { title: "Fighters", width: 64, height: 32, u: 0, v: 96 },
+    PaintingArt { title: "Pointer", width: 64, height: 64, u: 0, v: 192 },
+    PaintingArt { title: "Pigscene", width: 64, height: 64, u: 64, v: 192 },
+    PaintingArt { title: "BurningSkull", width: 64, height: 64, u: 128, v: 192 },
+    PaintingArt { title: "Skeleton", width: 64, height: 48, u: 192, v: 64 },
+    PaintingArt { title: "DonkeyKong", width: 64, height: 48, u: 192, v: 112 },
+];
+
+pub fn find_painting(title: &str) -> PaintingArt {
+    ALL_PAINTINGS
+        .iter()
+        .copied()
+        .find(|p| p.title.eq_ignore_ascii_case(title))
+        .unwrap_or(ALL_PAINTINGS[0])
+}
+
+/// Builds all 26 variants of Paintings (MCP RenderPainting).
+pub fn build_painting_model(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    title: &str,
+    facing: u8,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let art = find_painting(title);
+    let pos = entity.interpolated_pos(partial_ticks);
+
+    // MCP facing: 0 = South (180), 1 = West (270), 2 = North (0), 3 = East (90)
+    let yaw: f32 = match facing {
+        0 => 0.0,
+        1 => 90.0,
+        2 => 180.0,
+        3 => 270.0,
+        _ => 0.0,
+    };
+
+    let root = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y(yaw.to_radians())
+        * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+
+    let f_x = -(art.width as f32) / 2.0;
+    let f_y = -(art.height as f32) / 2.0;
+    let f_z = 0.5;
+
+    // Wood backing and border UV coordinates from paintings_kristoffer_zetterstrand.png
+    let u_back_min = 192.0 / 256.0;
+    let u_back_max = 208.0 / 256.0;
+    let v_back_min = 0.0 / 256.0;
+    let v_back_max = 16.0 / 256.0;
+
+    let u_border_min = 192.0 / 256.0;
+    let u_border_max = 208.0 / 256.0;
+    let v_border_min = 0.0 / 256.0;
+    let v_border_max = 1.0 / 256.0;
+
+    let tiles_x = art.width / 16;
+    let tiles_y = art.height / 16;
+
+    for tx in 0..tiles_x {
+        for ty in 0..tiles_y {
+            let x0 = f_x + (tx * 16) as f32;
+            let x1 = f_x + ((tx + 1) * 16) as f32;
+            let y0 = f_y + (ty * 16) as f32;
+            let y1 = f_y + ((ty + 1) * 16) as f32;
+
+            let u0 = (art.u + art.width - tx * 16) as f32 / 256.0;
+            let u1 = (art.u + art.width - (tx + 1) * 16) as f32 / 256.0;
+            let v0 = (art.v + art.height - ty * 16) as f32 / 256.0;
+            let v1 = (art.v + art.height - (ty + 1) * 16) as f32 / 256.0;
+
+            // Front face (Art)
+            let base_idx = vertices.len() as u32;
+            let p0 = (root * Vec3::new(x1, y0, -f_z).extend(1.0)).truncate();
+            let p1 = (root * Vec3::new(x0, y0, -f_z).extend(1.0)).truncate();
+            let p2 = (root * Vec3::new(x0, y1, -f_z).extend(1.0)).truncate();
+            let p3 = (root * Vec3::new(x1, y1, -f_z).extend(1.0)).truncate();
+            let normal = (root * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+
+            vertices.push(EntityVertex { position: p0.to_array(), uv: [u1, v0], normal, color });
+            vertices.push(EntityVertex { position: p1.to_array(), uv: [u0, v0], normal, color });
+            vertices.push(EntityVertex { position: p2.to_array(), uv: [u0, v1], normal, color });
+            vertices.push(EntityVertex { position: p3.to_array(), uv: [u1, v1], normal, color });
+            indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+
+            // Back face (Wood)
+            let back_idx = vertices.len() as u32;
+            let bp0 = (root * Vec3::new(x1, y1, f_z).extend(1.0)).truncate();
+            let bp1 = (root * Vec3::new(x0, y1, f_z).extend(1.0)).truncate();
+            let bp2 = (root * Vec3::new(x0, y0, f_z).extend(1.0)).truncate();
+            let bp3 = (root * Vec3::new(x1, y0, f_z).extend(1.0)).truncate();
+            let b_normal = (root * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+
+            vertices.push(EntityVertex { position: bp0.to_array(), uv: [u_back_min, v_back_min], normal: b_normal, color });
+            vertices.push(EntityVertex { position: bp1.to_array(), uv: [u_back_max, v_back_min], normal: b_normal, color });
+            vertices.push(EntityVertex { position: bp2.to_array(), uv: [u_back_max, v_back_max], normal: b_normal, color });
+            vertices.push(EntityVertex { position: bp3.to_array(), uv: [u_back_min, v_back_max], normal: b_normal, color });
+            indices.extend_from_slice(&[back_idx, back_idx + 1, back_idx + 2, back_idx, back_idx + 2, back_idx + 3]);
+
+            // Top border
+            if ty == tiles_y - 1 {
+                let top_idx = vertices.len() as u32;
+                let tp0 = (root * Vec3::new(x1, y1, -f_z).extend(1.0)).truncate();
+                let tp1 = (root * Vec3::new(x0, y1, -f_z).extend(1.0)).truncate();
+                let tp2 = (root * Vec3::new(x0, y1, f_z).extend(1.0)).truncate();
+                let tp3 = (root * Vec3::new(x1, y1, f_z).extend(1.0)).truncate();
+                let t_norm = (root * Vec3::new(0.0, 1.0, 0.0).extend(0.0)).truncate().to_array();
+                vertices.push(EntityVertex { position: tp0.to_array(), uv: [u_border_min, v_border_min], normal: t_norm, color });
+                vertices.push(EntityVertex { position: tp1.to_array(), uv: [u_border_max, v_border_min], normal: t_norm, color });
+                vertices.push(EntityVertex { position: tp2.to_array(), uv: [u_border_max, v_border_max], normal: t_norm, color });
+                vertices.push(EntityVertex { position: tp3.to_array(), uv: [u_border_min, v_border_max], normal: t_norm, color });
+                indices.extend_from_slice(&[top_idx, top_idx + 1, top_idx + 2, top_idx, top_idx + 2, top_idx + 3]);
+            }
+
+            // Bottom border
+            if ty == 0 {
+                let bot_idx = vertices.len() as u32;
+                let btp0 = (root * Vec3::new(x1, y0, f_z).extend(1.0)).truncate();
+                let btp1 = (root * Vec3::new(x0, y0, f_z).extend(1.0)).truncate();
+                let btp2 = (root * Vec3::new(x0, y0, -f_z).extend(1.0)).truncate();
+                let btp3 = (root * Vec3::new(x1, y0, -f_z).extend(1.0)).truncate();
+                let bot_norm = (root * Vec3::new(0.0, -1.0, 0.0).extend(0.0)).truncate().to_array();
+                vertices.push(EntityVertex { position: btp0.to_array(), uv: [u_border_min, v_border_min], normal: bot_norm, color });
+                vertices.push(EntityVertex { position: btp1.to_array(), uv: [u_border_max, v_border_min], normal: bot_norm, color });
+                vertices.push(EntityVertex { position: btp2.to_array(), uv: [u_border_max, v_border_max], normal: bot_norm, color });
+                vertices.push(EntityVertex { position: btp3.to_array(), uv: [u_border_min, v_border_max], normal: bot_norm, color });
+                indices.extend_from_slice(&[bot_idx, bot_idx + 1, bot_idx + 2, bot_idx, bot_idx + 2, bot_idx + 3]);
+            }
+        }
+    }
+}

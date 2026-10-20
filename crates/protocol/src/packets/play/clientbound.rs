@@ -988,6 +988,46 @@ impl ClientboundSpawnObjectPacket {
     }
 }
 
+/// Clientbound SpawnPainting packet (0x10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundSpawnPaintingPacket {
+    pub entity_id: i32,
+    pub title: String,
+    pub position: Position,
+    pub facing: u8,
+}
+
+impl ClientboundSpawnPaintingPacket {
+    pub const PACKET_ID: i32 = 0x10;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let entity_id = buf.read_varint()?;
+        let title = buf.read_string(13)?;
+        let position = buf.read_position()?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let facing = buf.get_u8();
+        Ok(Self {
+            entity_id,
+            title,
+            position,
+            facing,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.entity_id);
+        buf.write_string(&self.title)?;
+        buf.write_position(&self.position);
+        buf.extend_from_slice(&[self.facing]);
+        Ok(())
+    }
+}
+
 /// Clientbound DestroyEntities packet (0x13).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientboundDestroyEntitiesPacket {

@@ -7,6 +7,7 @@ pub mod entity_renderer;
 pub mod frustum;
 pub mod interaction_renderer;
 pub mod mesher;
+pub mod models;
 pub mod occlusion;
 pub mod terrain_renderer;
 pub mod vertex;

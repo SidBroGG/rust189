@@ -29,6 +29,7 @@ pub enum ClientboundPlayPacket {
     SpawnPlayer(ClientboundSpawnPlayerPacket),
     SpawnMob(ClientboundSpawnMobPacket),
     SpawnObject(ClientboundSpawnObjectPacket),
+    SpawnPainting(ClientboundSpawnPaintingPacket),
     DestroyEntities(ClientboundDestroyEntitiesPacket),
     Entity(ClientboundEntityPacket),
     EntityRelMove(ClientboundEntityRelMovePacket),
@@ -121,6 +122,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundSpawnObjectPacket::PACKET_ID => {
                 Ok(Self::SpawnObject(ClientboundSpawnObjectPacket::decode(payload)?))
+            }
+            ClientboundSpawnPaintingPacket::PACKET_ID => {
+                Ok(Self::SpawnPainting(ClientboundSpawnPaintingPacket::decode(payload)?))
             }
             ClientboundDestroyEntitiesPacket::PACKET_ID => {
                 Ok(Self::DestroyEntities(ClientboundDestroyEntitiesPacket::decode(payload)?))

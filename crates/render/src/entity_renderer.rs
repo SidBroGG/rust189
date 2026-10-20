@@ -79,6 +79,7 @@ pub struct EntityRenderer {
     default_skin: GpuSkin,
     arrow_skin: GpuSkin,
     skin_cache: HashMap<Uuid, GpuSkin>,
+    entity_texture_cache: HashMap<String, GpuSkin>,
 
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
@@ -259,6 +260,7 @@ impl EntityRenderer {
             default_skin,
             arrow_skin,
             skin_cache: HashMap::new(),
+            entity_texture_cache: HashMap::new(),
             vertex_buffer,
             index_buffer,
             vertex_capacity,
@@ -355,6 +357,27 @@ impl EntityRenderer {
         }
     }
 
+    /// Uploads or caches an entity/mob texture by resource key.
+    pub fn ensure_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        key: &str,
+    ) {
+        if !self.entity_texture_cache.contains_key(key) {
+            let img = load_entity_texture(key);
+            let gpu_skin = Self::create_gpu_skin(
+                device,
+                queue,
+                &self.texture_bind_group_layout,
+                &self.sampler,
+                &img,
+                key,
+            );
+            self.entity_texture_cache.insert(key.to_string(), gpu_skin);
+        }
+    }
+
     /// Updates uniform buffer (matrices, fog, camera pos).
     pub fn update_uniforms(
         &self,
@@ -387,91 +410,288 @@ impl EntityRenderer {
             return;
         }
 
-        let mut vertices: Vec<EntityVertex> = Vec::with_capacity(4096);
-        let mut indices: Vec<u32> = Vec::with_capacity(8192);
-
-        // Group entities by skin bind group to batch draw calls
-        struct DrawBatch {
-            index_start: u32,
-            index_count: u32,
-            is_arrow: bool,
-            player_uuid: Option<Uuid>,
-        }
-
-        let mut batches: Vec<DrawBatch> = Vec::new();
+        // Group geometry by texture key for hardware-instanced batching (one draw call per texture)
+        let mut collector: HashMap<String, (Vec<EntityVertex>, Vec<u32>)> = HashMap::new();
 
         let all_entities = tracker.entities.values().chain(local_player);
         for entity in all_entities {
-            // Do not render invisible entities
-            if entity.is_invisible {
-                continue;
-            }
-
-            let batch_start = indices.len() as u32;
+            let alpha = if entity.is_invisible { 0.15 } else { 1.0 };
+            let color = if entity.hurt_time > 0 {
+                [1.0, 0.35, 0.35, alpha]
+            } else {
+                [1.0, 1.0, 1.0, alpha]
+            };
 
             match &entity.kind {
                 EntityKind::Player { uuid, .. } => {
-                    build_player_model(
-                        &mut vertices,
-                        &mut indices,
-                        entity,
-                        partial_ticks,
-                    );
-                    let count = (indices.len() as u32) - batch_start;
-                    if count > 0 {
-                        batches.push(DrawBatch {
-                            index_start: batch_start,
-                            index_count: count,
-                            is_arrow: false,
-                            player_uuid: Some(*uuid),
-                        });
-                    }
+                    let key = format!("player_{}", uuid);
+                    let (verts, inds) = collector.entry(key).or_default();
+                    build_player_model(verts, inds, entity, partial_ticks, color);
                 }
                 EntityKind::Mob { mob_type } => {
-                    // Only render humanoid mobs (51 Skeleton, 54 Zombie, 57 Zombie Pigman).
-                    // Skip ArmorStand (mob ID 30) and other unhandled mobs so they are not rendered as humanoid bodies.
-                    if matches!(*mob_type, 51 | 54 | 57) {
-                        build_mob_model(
-                            &mut vertices,
-                            &mut indices,
-                            entity,
-                            *mob_type,
-                            partial_ticks,
-                        );
-                        let count = (indices.len() as u32) - batch_start;
-                        if count > 0 {
-                            batches.push(DrawBatch {
-                                index_start: batch_start,
-                                index_count: count,
-                                is_arrow: false,
-                                player_uuid: None,
-                            });
+                    match *mob_type {
+                        50 => {
+                            let (verts, inds) = collector.entry("entity/creeper/creeper".to_string()).or_default();
+                            crate::models::hostile::build_creeper_model(verts, inds, entity, partial_ticks, color);
+                            let is_powered = entity.metadata.iter().any(|m| m.index == 17 && matches!(m.value, world::entity::MetadataValue::Byte(1)));
+                            if is_powered {
+                                let (cverts, cinds) = collector.entry("entity/creeper/creeper_armor".to_string()).or_default();
+                                crate::models::layers::render_creeper_charge_layer(cverts, cinds, entity, partial_ticks);
+                            }
+                        }
+                        51 => {
+                            let is_wither = entity.metadata.iter().any(|m| m.index == 13 && matches!(m.value, world::entity::MetadataValue::Byte(1)));
+                            let key = if is_wither { "entity/skeleton/wither_skeleton" } else { "entity/skeleton/skeleton" };
+                            let (verts, inds) = collector.entry(key.to_string()).or_default();
+                            crate::models::hostile::build_skeleton_model(verts, inds, entity, partial_ticks, is_wither, color);
+                        }
+                        52 => {
+                            let (verts, inds) = collector.entry("entity/spider/spider".to_string()).or_default();
+                            crate::models::hostile::build_spider_model(verts, inds, entity, partial_ticks, false, color);
+                            let (everts, einds) = collector.entry("entity/spider_eyes".to_string()).or_default();
+                            crate::models::layers::render_spider_eyes_layer(everts, einds, entity, partial_ticks);
+                        }
+                        53 => {
+                            let (verts, inds) = collector.entry("entity/zombie/zombie".to_string()).or_default();
+                            crate::models::hostile::build_giant_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        54 => {
+                            let (verts, inds) = collector.entry("entity/zombie/zombie".to_string()).or_default();
+                            crate::models::hostile::build_zombie_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        55 => {
+                            let (verts, inds) = collector.entry("entity/slime/slime".to_string()).or_default();
+                            crate::models::hostile::build_slime_model(verts, inds, entity, partial_ticks, color);
+                            crate::models::layers::render_slime_gel_layer(verts, inds, entity, partial_ticks, color);
+                        }
+                        56 => {
+                            let (verts, inds) = collector.entry("entity/ghast/ghast".to_string()).or_default();
+                            crate::models::hostile::build_ghast_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        57 => {
+                            let (verts, inds) = collector.entry("entity/zombie_pigman".to_string()).or_default();
+                            crate::models::hostile::build_zombie_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        58 => {
+                            let (verts, inds) = collector.entry("entity/enderman/enderman".to_string()).or_default();
+                            crate::models::hostile::build_enderman_model(verts, inds, entity, partial_ticks, color);
+                            let (everts, einds) = collector.entry("entity/enderman/enderman_eyes".to_string()).or_default();
+                            crate::models::layers::render_enderman_eyes_layer(everts, einds, entity, partial_ticks);
+                        }
+                        59 => {
+                            let (verts, inds) = collector.entry("entity/spider/cave_spider".to_string()).or_default();
+                            crate::models::hostile::build_spider_model(verts, inds, entity, partial_ticks, true, color);
+                            let (everts, einds) = collector.entry("entity/spider_eyes".to_string()).or_default();
+                            crate::models::layers::render_spider_eyes_layer(everts, einds, entity, partial_ticks);
+                        }
+                        60 => {
+                            let (verts, inds) = collector.entry("entity/silverfish".to_string()).or_default();
+                            crate::models::hostile::build_silverfish_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        61 => {
+                            let (verts, inds) = collector.entry("entity/blaze".to_string()).or_default();
+                            crate::models::hostile::build_blaze_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        62 => {
+                            let (verts, inds) = collector.entry("entity/slime/magmacube".to_string()).or_default();
+                            crate::models::hostile::build_magma_cube_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        63 => {
+                            let (verts, inds) = collector.entry("entity/enderdragon/dragon".to_string()).or_default();
+                            crate::models::boss::build_dragon_model(verts, inds, entity, partial_ticks, color);
+                            let (everts, einds) = collector.entry("entity/enderdragon/dragon_eyes".to_string()).or_default();
+                            crate::models::layers::render_dragon_eyes_layer(everts, einds, entity, partial_ticks);
+                        }
+                        64 => {
+                            let (verts, inds) = collector.entry("entity/wither/wither".to_string()).or_default();
+                            crate::models::boss::build_wither_model(verts, inds, entity, partial_ticks, color);
+                            let (averts, ainds) = collector.entry("entity/wither/wither_armor".to_string()).or_default();
+                            crate::models::layers::render_wither_aura_layer(averts, ainds, entity, partial_ticks);
+                        }
+                        65 => {
+                            let (verts, inds) = collector.entry("entity/bat".to_string()).or_default();
+                            crate::models::peaceful::build_bat_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        66 => {
+                            let (verts, inds) = collector.entry("entity/witch".to_string()).or_default();
+                            crate::models::hostile::build_witch_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        67 => {
+                            let (verts, inds) = collector.entry("entity/endermite".to_string()).or_default();
+                            crate::models::hostile::build_endermite_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        68 => {
+                            let is_elder = entity.metadata.iter().any(|m| m.index == 16 && matches!(m.value, world::entity::MetadataValue::Int(v) if (v & 4) != 0));
+                            let key = if is_elder { "entity/guardian_elder" } else { "entity/guardian" };
+                            let (verts, inds) = collector.entry(key.to_string()).or_default();
+                            crate::models::hostile::build_guardian_model(verts, inds, entity, partial_ticks, is_elder, color);
+                        }
+                        90 => {
+                            let (verts, inds) = collector.entry("entity/pig/pig".to_string()).or_default();
+                            crate::models::peaceful::build_pig_model(verts, inds, entity, partial_ticks, color);
+                            let has_saddle = entity.metadata.iter().any(|m| m.index == 16 && matches!(m.value, world::entity::MetadataValue::Byte(1)));
+                            if has_saddle {
+                                let (sverts, sinds) = collector.entry("entity/pig/pig_saddle".to_string()).or_default();
+                                crate::models::layers::render_pig_saddle_layer(sverts, sinds, entity, partial_ticks, color);
+                            }
+                        }
+                        91 => {
+                            let (verts, inds) = collector.entry("entity/sheep/sheep".to_string()).or_default();
+                            crate::models::peaceful::build_sheep_model(verts, inds, entity, partial_ticks, color);
+                            let dye = entity.metadata.iter().find(|m| m.index == 16).and_then(|m| match m.value {
+                                world::entity::MetadataValue::Byte(b) => Some((b & 0x0F) as u8),
+                                _ => None,
+                            }).unwrap_or(0);
+                            let is_sheared = entity.metadata.iter().any(|m| m.index == 16 && matches!(m.value, world::entity::MetadataValue::Byte(b) if (b & 0x10) != 0));
+                            let (wverts, winds) = collector.entry("entity/sheep/sheep_fur".to_string()).or_default();
+                            crate::models::layers::render_sheep_wool_layer(wverts, winds, entity, partial_ticks, dye, is_sheared);
+                        }
+                        92 => {
+                            let (verts, inds) = collector.entry("entity/cow/cow".to_string()).or_default();
+                            crate::models::peaceful::build_cow_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        93 => {
+                            let (verts, inds) = collector.entry("entity/chicken".to_string()).or_default();
+                            crate::models::peaceful::build_chicken_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        94 => {
+                            let (verts, inds) = collector.entry("entity/squid".to_string()).or_default();
+                            crate::models::peaceful::build_squid_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        95 => {
+                            let (verts, inds) = collector.entry("entity/wolf/wolf".to_string()).or_default();
+                            crate::models::peaceful::build_wolf_model(verts, inds, entity, partial_ticks, color);
+                            let is_tamed = entity.metadata.iter().any(|m| m.index == 16 && matches!(m.value, world::entity::MetadataValue::Byte(b) if (b & 0x04) != 0));
+                            if is_tamed {
+                                let collar_dye = entity.metadata.iter().find(|m| m.index == 20).and_then(|m| match m.value {
+                                    world::entity::MetadataValue::Byte(b) => Some((b & 0x0F) as u8),
+                                    _ => None,
+                                }).unwrap_or(14);
+                                let (cverts, cinds) = collector.entry("entity/wolf/wolf_collar".to_string()).or_default();
+                                crate::models::layers::render_wolf_collar_layer(cverts, cinds, entity, partial_ticks, collar_dye);
+                            }
+                        }
+                        96 => {
+                            let (verts, inds) = collector.entry("entity/cow/mooshroom".to_string()).or_default();
+                            crate::models::peaceful::build_cow_model(verts, inds, entity, partial_ticks, color);
+                            crate::models::layers::render_mooshroom_mushroom_layer(verts, inds, entity, partial_ticks, color);
+                        }
+                        97 => {
+                            let (verts, inds) = collector.entry("entity/snowman".to_string()).or_default();
+                            crate::models::peaceful::build_snowman_model(verts, inds, entity, partial_ticks, color);
+                            crate::models::layers::render_snowman_head_layer(verts, inds, entity, partial_ticks, color);
+                        }
+                        98 => {
+                            let (verts, inds) = collector.entry("entity/cat/ocelot".to_string()).or_default();
+                            crate::models::peaceful::build_ocelot_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        99 => {
+                            let (verts, inds) = collector.entry("entity/iron_golem".to_string()).or_default();
+                            crate::models::peaceful::build_iron_golem_model(verts, inds, entity, partial_ticks, color);
+                            crate::models::layers::render_iron_golem_flower_layer(verts, inds, entity, partial_ticks, color);
+                        }
+                        100 => {
+                            let (verts, inds) = collector.entry("entity/horse/horse_white".to_string()).or_default();
+                            crate::models::peaceful::build_horse_model(verts, inds, entity, partial_ticks, false, color);
+                        }
+                        101 => {
+                            let (verts, inds) = collector.entry("entity/rabbit/brown".to_string()).or_default();
+                            crate::models::peaceful::build_rabbit_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        120 => {
+                            let (verts, inds) = collector.entry("entity/villager/villager".to_string()).or_default();
+                            crate::models::peaceful::build_villager_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        _ => {
+                            let (verts, inds) = collector.entry("entity/zombie/zombie".to_string()).or_default();
+                            crate::models::hostile::build_zombie_model(verts, inds, entity, partial_ticks, color);
                         }
                     }
                 }
                 EntityKind::Object { object_type, .. } => {
-                    build_object_model(
-                        &mut vertices,
-                        &mut indices,
-                        entity,
-                        *object_type,
-                        partial_ticks,
-                    );
-                    let count = (indices.len() as u32) - batch_start;
-                    if count > 0 {
-                        batches.push(DrawBatch {
-                            index_start: batch_start,
-                            index_count: count,
-                            is_arrow: *object_type == 60,
-                            player_uuid: None,
-                        });
+                    match *object_type {
+                        78 => {
+                            let (verts, inds) = collector.entry("entity/armorstand/wood".to_string()).or_default();
+                            crate::models::vehicles::build_armor_stand_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        1 => {
+                            let (verts, inds) = collector.entry("entity/boat".to_string()).or_default();
+                            crate::models::vehicles::build_boat_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        10 => {
+                            let (verts, inds) = collector.entry("entity/minecart".to_string()).or_default();
+                            crate::models::vehicles::build_minecart_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        51 => {
+                            let (verts, inds) = collector.entry("entity/endercrystal/endercrystal".to_string()).or_default();
+                            crate::models::vehicles::build_ender_crystal_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        71 => {
+                            let (verts, inds) = collector.entry("entity/sign".to_string()).or_default();
+                            crate::models::vehicles::build_item_frame_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        77 => {
+                            let (verts, inds) = collector.entry("entity/lead_knot".to_string()).or_default();
+                            crate::models::vehicles::build_leash_knot_model(verts, inds, entity, partial_ticks, color);
+                        }
+                        60 => {
+                            let (verts, inds) = collector.entry("arrow".to_string()).or_default();
+                            build_object_model(verts, inds, entity, 60, partial_ticks);
+                        }
+                        _ => {
+                            let (verts, inds) = collector.entry("arrow".to_string()).or_default();
+                            build_object_model(verts, inds, entity, *object_type, partial_ticks);
+                        }
                     }
+                }
+                EntityKind::Painting { title, facing } => {
+                    let (verts, inds) = collector.entry("painting/paintings_kristoffer_zetterstrand".to_string()).or_default();
+                    crate::models::vehicles::build_painting_model(verts, inds, entity, title, *facing, partial_ticks, color);
                 }
             }
         }
 
+        // Flatten collected per-texture batches into continuous vertex and index buffers
+        let mut vertices: Vec<EntityVertex> = Vec::new();
+        let mut indices: Vec<u32> = Vec::new();
+
+        struct DrawBatch {
+            index_start: u32,
+            index_count: u32,
+            texture_key: String,
+        }
+
+        let mut batches: Vec<DrawBatch> = Vec::new();
+
+        for (tex_key, (b_verts, b_inds)) in collector {
+            if b_verts.is_empty() || b_inds.is_empty() {
+                continue;
+            }
+            let vertex_offset = vertices.len() as u32;
+            let index_start = indices.len() as u32;
+
+            vertices.extend_from_slice(&b_verts);
+            for idx in b_inds {
+                indices.push(idx + vertex_offset);
+            }
+            let index_count = (indices.len() as u32) - index_start;
+
+            batches.push(DrawBatch {
+                index_start,
+                index_count,
+                texture_key: tex_key,
+            });
+        }
+
         if vertices.is_empty() || indices.is_empty() {
             return;
+        }
+
+        // Ensure GPU textures are loaded
+        for batch in &batches {
+            if !batch.texture_key.starts_with("player_") && batch.texture_key != "arrow" {
+                self.ensure_texture(device, queue, &batch.texture_key);
+            }
         }
 
         // Expand buffers if necessary
@@ -505,14 +725,20 @@ impl EntityRenderer {
         rpass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
 
         for batch in batches {
-            let bg = if batch.is_arrow {
+            let bg = if batch.texture_key == "arrow" {
                 &self.arrow_skin.bind_group
-            } else if let Some(uuid) = batch.player_uuid {
-                if let Some(gpu_skin) = self.skin_cache.get(&uuid) {
-                    &gpu_skin.bind_group
+            } else if let Some(uuid_str) = batch.texture_key.strip_prefix("player_") {
+                if let Ok(uuid) = Uuid::parse_str(uuid_str) {
+                    if let Some(gpu_skin) = self.skin_cache.get(&uuid) {
+                        &gpu_skin.bind_group
+                    } else {
+                        &self.default_skin.bind_group
+                    }
                 } else {
                     &self.default_skin.bind_group
                 }
+            } else if let Some(gpu_skin) = self.entity_texture_cache.get(&batch.texture_key) {
+                &gpu_skin.bind_group
             } else {
                 &self.default_skin.bind_group
             };
@@ -521,6 +747,45 @@ impl EntityRenderer {
             rpass.draw_indexed(batch.index_start..(batch.index_start + batch.index_count), 0, 0..1);
         }
     }
+}
+
+/// Helper function to load texture image from filesystem with safe procedural fallbacks.
+fn load_entity_texture(key: &str) -> RgbaImage {
+    let clean_key = key.trim_start_matches('/');
+    let candidates = [
+        format!("assets/minecraft/textures/{}.png", clean_key),
+        format!("assets/minecraft/textures/{}", clean_key),
+        format!("../assets/minecraft/textures/{}.png", clean_key),
+        format!("../../assets/minecraft/textures/{}.png", clean_key),
+        format!("textures/{}.png", clean_key),
+    ];
+
+    for path in &candidates {
+        if let Ok(img) = image::open(path) {
+            return img.to_rgba8();
+        }
+    }
+
+    // Procedural fallback checkerboard with color derived from key hash
+    let mut hash: u32 = 0x811c9dc5;
+    for b in clean_key.bytes() {
+        hash ^= b as u32;
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    let r = (((hash >> 16) & 0xFF) as u8).max(50);
+    let g = (((hash >> 8) & 0xFF) as u8).max(50);
+    let b = ((hash & 0xFF) as u8).max(50);
+
+    let mut img = image::RgbaImage::new(64, 64);
+    for (x, y, pixel) in img.enumerate_pixels_mut() {
+        let is_checker = ((x / 8) + (y / 8)) % 2 == 0;
+        if is_checker {
+            *pixel = image::Rgba([r, g, b, 255]);
+        } else {
+            *pixel = image::Rgba([r / 2, g / 2, b / 2, 255]);
+        }
+    }
+    img
 }
 
 /// Helper to add a textured 3D cuboid box to the vertex and index lists following ModelBox specification.
@@ -656,6 +921,7 @@ pub fn build_player_model(
     indices: &mut Vec<u32>,
     entity: &TrackedEntity,
     partial_ticks: f32,
+    color: [f32; 4],
 ) {
     let pos = entity.interpolated_pos(partial_ticks);
     let body_yaw = entity.interpolated_render_yaw_offset(partial_ticks);
@@ -666,7 +932,6 @@ pub fn build_player_model(
     let age_in_ticks = entity.ticks_existed as f32 + partial_ticks;
 
     let is_sneak = entity.is_sneaking;
-    let color = [1.0, 1.0, 1.0, 1.0];
 
     // Vanilla entity root transformation:
     // Translate(pos) * RotateY(180 - bodyYaw) * Scale(-1, -1, 1) * Translate(0, -1.5078125, 0)
@@ -1014,7 +1279,7 @@ pub fn build_player_model(
         false,
         64.0,
         32.0,
-        [0.9, 0.2, 0.2, 1.0],
+        [0.9 * color[0], 0.2 * color[1], 0.2 * color[2], color[3]],
     );
 }
 
@@ -1288,7 +1553,7 @@ mod tests {
             0.0,
         );
 
-        build_player_model(&mut vertices, &mut indices, &entity, 0.5);
+        build_player_model(&mut vertices, &mut indices, &entity, 0.5, [1.0, 1.0, 1.0, 1.0]);
 
         assert!(!vertices.is_empty());
         assert!(!indices.is_empty());
