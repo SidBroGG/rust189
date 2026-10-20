@@ -16,6 +16,10 @@ fn default_chat_font_size() -> f32 {
     13.0
 }
 
+fn default_scoreboard_numbers() -> bool {
+    true
+}
+
 /// Configuration storing HUD element relative grid positions and styling across multiple profiles.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HudLayoutConfig {
@@ -25,6 +29,8 @@ pub struct HudLayoutConfig {
     pub global_opacity: f32, // 0.0 .. 1.0, master opacity slider for all HUD backgrounds & borders
     #[serde(default = "default_chat_font_size")]
     pub chat_font_size: f32, // Chat text and input font size in pixels (e.g. 8.0 .. 24.0)
+    #[serde(default = "default_scoreboard_numbers")]
+    pub scoreboard_numbers: bool,
     pub profiles: BTreeMap<String, BTreeMap<String, HudElementConfig>>,
 }
 
@@ -43,6 +49,7 @@ impl Default for HudLayoutConfig {
             grid_snap_size: 16,
             global_opacity: default_global_opacity(),
             chat_font_size: default_chat_font_size(),
+            scoreboard_numbers: default_scoreboard_numbers(),
             profiles,
         }
     }

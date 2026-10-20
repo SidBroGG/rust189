@@ -81,6 +81,24 @@ impl Default for ChatSettings {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScoreboardSettings {
+    #[serde(default = "default_scoreboard_numbers")]
+    pub show_numbers: bool,
+}
+
+fn default_scoreboard_numbers() -> bool {
+    true
+}
+
+impl Default for ScoreboardSettings {
+    fn default() -> Self {
+        Self {
+            show_numbers: default_scoreboard_numbers(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct KeybindsSettings {
     #[serde(default = "default_forward")]
     pub forward: String,
@@ -200,6 +218,7 @@ pub enum SettingsTab {
     Controls,
     Audio,
     Chat,
+    Scoreboard,
     Language,
 }
 
@@ -215,6 +234,7 @@ pub struct SettingsScreen {
     pub audio: AudioSettings,
     pub keybinds: KeybindsSettings,
     pub chat: ChatSettings,
+    pub scoreboard: ScoreboardSettings,
     pub rebinding_key: Option<String>,
 }
 
@@ -225,6 +245,7 @@ impl SettingsScreen {
         audio: AudioSettings,
         mut keybinds: KeybindsSettings,
         chat: ChatSettings,
+        scoreboard: ScoreboardSettings,
     ) -> Self {
         keybinds.standardize_all();
         Self {
@@ -234,6 +255,7 @@ impl SettingsScreen {
             audio,
             keybinds,
             chat,
+            scoreboard,
             rebinding_key: None,
         }
     }
@@ -255,6 +277,7 @@ impl SettingsScreen {
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Controls, t(self.language, "settings.tab_controls"));
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Audio, t(self.language, "settings.tab_audio"));
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Chat, t(self.language, "settings.tab_chat"));
+                    ui.selectable_value(&mut self.current_tab, SettingsTab::Scoreboard, t(self.language, "settings.tab_scoreboard"));
                     ui.selectable_value(&mut self.current_tab, SettingsTab::Language, t(self.language, "settings.tab_language"));
                 });
                 ui.separator();
@@ -264,6 +287,7 @@ impl SettingsScreen {
                     SettingsTab::Controls => self.render_controls_tab(ui),
                     SettingsTab::Audio => self.render_audio_tab(ui),
                     SettingsTab::Chat => self.render_chat_tab(ui),
+                    SettingsTab::Scoreboard => self.render_scoreboard_tab(ui),
                     SettingsTab::Language => self.render_language_tab(ui),
                 }
 
@@ -526,6 +550,34 @@ impl SettingsScreen {
             );
         });
     }
+
+    fn render_scoreboard_tab(&mut self, ui: &mut Ui) {
+        ui.vertical(|ui| {
+            ui.add_space(6.0);
+            ui.label(RichText::new(t(self.language, "settings.scoreboard_title")).strong());
+            ui.add_space(8.0);
+
+            let btn_text = if self.scoreboard.show_numbers {
+                t(self.language, "settings.scoreboard_numbers_on")
+            } else {
+                t(self.language, "settings.scoreboard_numbers_off")
+            };
+
+            ui.horizontal(|ui| {
+                ui.label(t(self.language, "settings.scoreboard_numbers_label"));
+                if ui.button(btn_text).clicked() {
+                    self.scoreboard.show_numbers = !self.scoreboard.show_numbers;
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(t(self.language, "settings.scoreboard_numbers_desc"))
+                    .size(11.0)
+                    .color(Color32::from_rgb(140, 145, 160)),
+            );
+        });
+    }
 }
 
 #[cfg(test)]
@@ -548,6 +600,11 @@ mod tests {
         let json_k = serde_json::to_string(&keybinds).expect("Serialization failed");
         let decoded_k: KeybindsSettings = serde_json::from_str(&json_k).expect("Deserialization failed");
         assert_eq!(keybinds, decoded_k);
+
+        let scoreboard = ScoreboardSettings::default();
+        let json_s = serde_json::to_string(&scoreboard).expect("Serialization failed");
+        let decoded_s: ScoreboardSettings = serde_json::from_str(&json_s).expect("Deserialization failed");
+        assert_eq!(scoreboard, decoded_s);
     }
 
     #[test]
@@ -558,6 +615,7 @@ mod tests {
             AudioSettings::default(),
             KeybindsSettings::default(),
             ChatSettings::default(),
+            ScoreboardSettings::default(),
         );
 
         assert_eq!(screen.keybinds.forward, "W");

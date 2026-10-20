@@ -2791,6 +2791,7 @@ impl ApplicationHandler for App {
             (&self.config.audio).into(),
             (&self.config.keybinds).into(),
             (&self.config.chat).into(),
+            (&self.config.scoreboard).into(),
         );
 
         let atlas = Arc::new(TextureAtlas::build(Path::new("assets/minecraft/textures/blocks")));
@@ -3475,6 +3476,7 @@ impl ApplicationHandler for App {
                         audio,
                         keybinds,
                         chat,
+                        scoreboard,
                     } => {
                         let prev_vsync = self.config.video.vsync;
                         let prev_fullscreen = self.config.video.fullscreen;
@@ -3484,6 +3486,7 @@ impl ApplicationHandler for App {
                         self.config.audio = (&audio).into();
                         self.config.keybinds = (&keybinds).into();
                         self.config.chat = (&chat).into();
+                        self.config.scoreboard = (&scoreboard).into();
                         self.camera.fov = self.config.video.fov;
 
                         let gpu = self.gpu.as_mut().unwrap();

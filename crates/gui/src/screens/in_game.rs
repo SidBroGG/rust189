@@ -78,6 +78,7 @@ pub struct InGameScreen {
     pub layout_path: PathBuf,
     pub tick_counter: u64,
     pub death_ticks: u32,
+    pub show_scoreboard_numbers: bool,
 
     request_chat_focus: bool,
 }
@@ -95,6 +96,7 @@ impl InGameScreen {
     pub fn new(server_ip: String, player_name: String) -> Self {
         let layout_path = PathBuf::from("hud_layout.toml");
         let hud_layout = HudLayoutConfig::load_or_default(&layout_path);
+        let show_scoreboard_numbers = hud_layout.scoreboard_numbers;
 
         Self {
             server_ip,
@@ -131,6 +133,7 @@ impl InGameScreen {
             layout_path,
             tick_counter: 0,
             death_ticks: 0,
+            show_scoreboard_numbers,
             request_chat_focus: false,
         }
     }
@@ -267,6 +270,7 @@ impl InGameScreen {
         if self.hud_editor_opened {
             if ctx.input(|i| i.key_pressed(Key::Escape)) {
                 self.hud_editor_opened = false;
+                self.show_scoreboard_numbers = self.hud_layout.scoreboard_numbers;
                 let _ = self.hud_layout.save_to_file(&self.layout_path);
                 return InGameAction::None;
             }
@@ -278,6 +282,7 @@ impl InGameScreen {
                 &self.hud_data,
                 self.tick_counter,
             );
+            self.show_scoreboard_numbers = self.hud_layout.scoreboard_numbers;
             if closed {
                 self.hud_editor_opened = false;
                 let _ = self.hud_layout.save_to_file(&self.layout_path);
@@ -497,21 +502,30 @@ impl InGameScreen {
                             break;
                         }
 
-                        // Score number on right side
-                        let val_str = format!("{}", val);
-                        let val_job = crate::theme::build_layout_job_styled(&val_str, base_font_size, false, None);
-                        let val_galley = ctx.fonts(|f| f.layout_job(val_job));
-                        let val_w = val_galley.size().x;
-                        let val_x = rect.right() - pad_x - val_w;
+                        // Score number on right side (optional based on setting)
+                        let val_w = if self.show_scoreboard_numbers {
+                            let val_str = format!("{}", val);
+                            let val_job = crate::theme::build_layout_job_styled(&val_str, base_font_size, false, None);
+                            let val_galley = ctx.fonts(|f| f.layout_job(val_job));
+                            let val_w = val_galley.size().x;
+                            let val_x = rect.right() - pad_x - val_w;
 
-                        hud_painter.galley(
-                            Pos2::new(val_x, cur_y),
-                            val_galley,
-                            Color32::from_rgb(255, 85, 85),
-                        );
+                            hud_painter.galley(
+                                Pos2::new(val_x, cur_y),
+                                val_galley,
+                                Color32::from_rgb(255, 85, 85),
+                            );
+                            val_w
+                        } else {
+                            0.0
+                        };
 
                         // Entry name on left side, compressed to fit within available width
-                        let entry_max_w = (content_w - val_w - 6.0).max(10.0);
+                        let entry_max_w = if self.show_scoreboard_numbers {
+                            (content_w - val_w - 6.0).max(10.0)
+                        } else {
+                            content_w.max(10.0)
+                        };
                         let entry_job = crate::theme::build_layout_job_styled(&entry, base_font_size, false, None);
                         let entry_galley = ctx.fonts(|f| f.layout_job(entry_job));
                         let entry_w = entry_galley.size().x;

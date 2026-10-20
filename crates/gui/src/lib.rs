@@ -24,7 +24,7 @@ pub use keybinds::{
 pub use scale::ScaledResolution;
 pub use screens::{
     AudioSettings, ChatSettings, ContainerAction, ContainerUiState, GuiOutput, InGameAction, InGameScreen,
-    KeybindsSettings, MainMenuScreen, MultiplayerScreen, NametagInfo, ScreenManager,
+    KeybindsSettings, MainMenuScreen, MultiplayerScreen, NametagInfo, ScoreboardSettings, ScreenManager,
     SettingsScreen, VideoSettings,
 };
 pub use servers::{load_servers_dat, ping_server_async, save_servers_dat, ServerEntry, ServerPingResult};

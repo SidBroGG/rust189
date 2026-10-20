@@ -88,9 +88,15 @@ fn translate_ru<'a>(key: &'a str) -> &'a str {
         "settings.tab_controls" => "⌨ Управление",
         "settings.tab_audio" => "🔊 Звук",
         "settings.tab_chat" => "💬 Чат",
+        "settings.tab_scoreboard" => "📊 Скорборд",
         "settings.tab_language" => "🌐 Язык",
         "settings.chat_font_size" => "Размер шрифта чата:",
         "settings.chat_font_size_desc" => "Настройка размера шрифта для всех входящих сообщений и строки ввода чата.",
+        "settings.scoreboard_title" => "Настройки боковой таблицы очков (Scoreboard):",
+        "settings.scoreboard_numbers_label" => "Цифры справа от записей:",
+        "settings.scoreboard_numbers_on" => "Включены (Показывать)",
+        "settings.scoreboard_numbers_off" => "Выключены (Скрыть)",
+        "settings.scoreboard_numbers_desc" => "Убирает красные цифры очков справа от текста в боковой таблице очков.",
         "settings.done" => "Готово",
 
         // Video tab
@@ -210,9 +216,15 @@ fn translate_en<'a>(key: &'a str) -> &'a str {
         "settings.tab_controls" => "⌨ Controls",
         "settings.tab_audio" => "🔊 Audio",
         "settings.tab_chat" => "💬 Chat",
+        "settings.tab_scoreboard" => "📊 Scoreboard",
         "settings.tab_language" => "🌐 Language",
         "settings.chat_font_size" => "Chat Font Size:",
         "settings.chat_font_size_desc" => "Configures the font size for all incoming messages and the chat input line.",
+        "settings.scoreboard_title" => "Sidebar Scoreboard Settings:",
+        "settings.scoreboard_numbers_label" => "Scores on the right:",
+        "settings.scoreboard_numbers_on" => "Enabled (Show)",
+        "settings.scoreboard_numbers_off" => "Disabled (Hide)",
+        "settings.scoreboard_numbers_desc" => "Hides the red score numbers displayed on the right side of the scoreboard.",
         "settings.done" => "Done",
 
         // Video tab

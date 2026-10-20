@@ -3,7 +3,7 @@ use crate::i18n::{t, Language};
 use crate::screens::server_dialog::{
     render_server_dialog, ServerDialogResult, ServerDialogState,
 };
-use crate::screens::settings::{AudioSettings, ChatSettings, KeybindsSettings, SettingsAction, SettingsScreen, VideoSettings};
+use crate::screens::settings::{AudioSettings, ChatSettings, KeybindsSettings, ScoreboardSettings, SettingsAction, SettingsScreen, VideoSettings};
 use crate::servers::{load_servers_dat, ping_server_async, save_servers_dat, ServerEntry, ServerPingResult};
 use crate::theme::parse_minecraft_text;
 use egui::{
@@ -50,6 +50,7 @@ impl MainMenuScreen {
         audio: AudioSettings,
         keybinds: KeybindsSettings,
         chat: ChatSettings,
+        scoreboard: ScoreboardSettings,
     ) -> Self {
         let servers = load_servers_dat(&servers_dat_path);
         let (ping_tx, ping_rx) = channel();
@@ -62,7 +63,7 @@ impl MainMenuScreen {
             servers_dat_path,
             modal_mode: ModalMode::None,
             dialog_state: ServerDialogState::default(),
-            settings_screen: SettingsScreen::new(language, video, audio, keybinds, chat),
+            settings_screen: SettingsScreen::new(language, video, audio, keybinds, chat, scoreboard),
             ping_tx,
             ping_rx,
         };
@@ -119,7 +120,14 @@ impl MainMenuScreen {
     pub fn render(
         &mut self,
         ctx: &Context,
-        out_settings: &mut Option<(Language, VideoSettings, AudioSettings, KeybindsSettings, ChatSettings)>,
+        out_settings: &mut Option<(
+            Language,
+            VideoSettings,
+            AudioSettings,
+            KeybindsSettings,
+            ChatSettings,
+            ScoreboardSettings,
+        )>,
     ) -> MainMenuAction {
         self.poll_pings();
         let mut action = MainMenuAction::None;
@@ -424,6 +432,7 @@ impl MainMenuScreen {
                         self.settings_screen.audio.clone(),
                         self.settings_screen.keybinds.clone(),
                         self.settings_screen.chat.clone(),
+                        self.settings_screen.scoreboard.clone(),
                     ));
                     self.modal_mode = ModalMode::None;
                 }

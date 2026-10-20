@@ -368,7 +368,10 @@ pub fn render_hud_editor(
                 );
 
                 // Selected Element Controls (Visible button moved into top toolbar)
+                let mut toggle_scoreboard_numbers = false;
+                let current_scoreboard_numbers = layout.scoreboard_numbers;
                 if let Some(sel_id) = state.selected_id.clone() {
+                    let is_scoreboard = sel_id == "scoreboard";
                     if let Some(elem) = layout.get_element_mut(&sel_id) {
                         ui.separator();
                         ui.label(
@@ -391,10 +394,33 @@ pub fn render_hud_editor(
                             elem.visible = !elem.visible;
                         }
 
+                        if is_scoreboard {
+                            let num_text = if current_scoreboard_numbers {
+                                "🔢 Scores: On"
+                            } else {
+                                "🔢 Scores: Off"
+                            };
+                            let num_color = if current_scoreboard_numbers {
+                                Color32::from_rgb(85, 255, 85)
+                            } else {
+                                Color32::from_rgb(255, 170, 0)
+                            };
+
+                            if ui
+                                .button(egui::RichText::new(num_text).color(num_color).strong())
+                                .clicked()
+                            {
+                                toggle_scoreboard_numbers = true;
+                            }
+                        }
+
                         if ui.button("✖").clicked() {
                             state.selected_id = None;
                         }
                     }
+                }
+                if toggle_scoreboard_numbers {
+                    layout.scoreboard_numbers = !layout.scoreboard_numbers;
                 }
 
                 ui.separator();

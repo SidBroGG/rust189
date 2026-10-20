@@ -11,7 +11,7 @@ pub use credits::{CreditsAction, CreditsScreen};
 pub use in_game::{InGameAction, InGameScreen, NametagInfo};
 pub use main_menu::{MainMenuAction, MainMenuScreen, ModalMode};
 pub use multiplayer::{MultiplayerAction, MultiplayerScreen};
-pub use settings::{AudioSettings, ChatSettings, KeybindsSettings, SettingsAction, SettingsScreen, VideoSettings};
+pub use settings::{AudioSettings, ChatSettings, KeybindsSettings, ScoreboardSettings, SettingsAction, SettingsScreen, VideoSettings};
 
 use crate::i18n::Language;
 use std::path::PathBuf;
@@ -31,6 +31,7 @@ pub enum GuiOutput {
         audio: AudioSettings,
         keybinds: KeybindsSettings,
         chat: ChatSettings,
+        scoreboard: ScoreboardSettings,
     },
     None,
 }
@@ -50,6 +51,7 @@ impl ScreenManager {
         audio: AudioSettings,
         keybinds: KeybindsSettings,
         chat: ChatSettings,
+        scoreboard: ScoreboardSettings,
     ) -> Self {
         let last_reported_nickname = nickname.clone();
         Self {
@@ -61,6 +63,7 @@ impl ScreenManager {
                 audio,
                 keybinds,
                 chat,
+                scoreboard,
             ),
             in_game: None,
             last_reported_nickname,
@@ -73,6 +76,8 @@ impl ScreenManager {
         screen.toggle_fps_key = self.main_menu.settings_screen.keybinds.toggle_fps.clone();
         screen.inventory_key = self.main_menu.settings_screen.keybinds.inventory.clone();
         screen.hud_layout.chat_font_size = self.main_menu.settings_screen.chat.font_size;
+        screen.show_scoreboard_numbers = self.main_menu.settings_screen.scoreboard.show_numbers;
+        screen.hud_layout.scoreboard_numbers = self.main_menu.settings_screen.scoreboard.show_numbers;
         self.in_game = Some(screen);
         self.main_menu.modal_mode = main_menu::ModalMode::None;
     }
@@ -145,8 +150,11 @@ impl ScreenManager {
                     let audio = self.main_menu.settings_screen.audio.clone();
                     let keybinds = self.main_menu.settings_screen.keybinds.clone();
                     let chat = self.main_menu.settings_screen.chat.clone();
+                    let scoreboard = self.main_menu.settings_screen.scoreboard.clone();
                     in_game.language = language;
                     in_game.hud_layout.chat_font_size = chat.font_size;
+                    in_game.show_scoreboard_numbers = scoreboard.show_numbers;
+                    in_game.hud_layout.scoreboard_numbers = scoreboard.show_numbers;
                     let _ = in_game.hud_layout.save_to_file(&in_game.layout_path);
                     in_game.toggle_fps_key = keybinds.toggle_fps.clone();
                     in_game.inventory_key = keybinds.inventory.clone();
@@ -159,6 +167,7 @@ impl ScreenManager {
                         audio,
                         keybinds,
                         chat,
+                        scoreboard,
                     };
                 }
 
@@ -190,6 +199,10 @@ impl ScreenManager {
                 InGameAction::None => {}
             }
 
+            if in_game.hud_layout.scoreboard_numbers != self.main_menu.settings_screen.scoreboard.show_numbers {
+                self.main_menu.settings_screen.scoreboard.show_numbers = in_game.hud_layout.scoreboard_numbers;
+            }
+
             return GuiOutput::None;
         }
 
@@ -197,13 +210,14 @@ impl ScreenManager {
         let action = self.main_menu.render(ctx, &mut out_settings);
 
         // Check if settings were updated in the settings modal
-        if let Some((language, video, audio, keybinds, chat)) = out_settings {
+        if let Some((language, video, audio, keybinds, chat, scoreboard)) = out_settings {
             return GuiOutput::SettingsUpdated {
                 language,
                 video,
                 audio,
                 keybinds,
                 chat,
+                scoreboard,
             };
         }
 

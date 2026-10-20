@@ -10,6 +10,8 @@ pub struct ClientConfig {
     pub general: GeneralConfig,
     #[serde(default)]
     pub chat: ChatConfig,
+    #[serde(default)]
+    pub scoreboard: ScoreboardConfig,
     pub auth: AuthConfig,
     pub video: VideoConfig,
     pub audio: AudioConfig,
@@ -24,6 +26,7 @@ impl Default for ClientConfig {
         Self {
             general: GeneralConfig::default(),
             chat: ChatConfig::default(),
+            scoreboard: ScoreboardConfig::default(),
             auth: AuthConfig::default(),
             video: VideoConfig::default(),
             audio: AudioConfig::default(),
@@ -450,6 +453,41 @@ impl From<&gui::ChatSettings> for ChatConfig {
     }
 }
 
+/// Sidebar Scoreboard display settings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ScoreboardConfig {
+    #[serde(default = "default_scoreboard_numbers")]
+    pub show_numbers: bool,
+}
+
+fn default_scoreboard_numbers() -> bool {
+    true
+}
+
+impl Default for ScoreboardConfig {
+    fn default() -> Self {
+        Self {
+            show_numbers: default_scoreboard_numbers(),
+        }
+    }
+}
+
+impl From<&ScoreboardConfig> for gui::ScoreboardSettings {
+    fn from(c: &ScoreboardConfig) -> Self {
+        Self {
+            show_numbers: c.show_numbers,
+        }
+    }
+}
+
+impl From<&gui::ScoreboardSettings> for ScoreboardConfig {
+    fn from(s: &gui::ScoreboardSettings) -> Self {
+        Self {
+            show_numbers: s.show_numbers,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,5 +576,9 @@ mod tests {
         let gui_chat: gui::ChatSettings = (&config.chat).into();
         let back_chat: ChatConfig = (&gui_chat).into();
         assert_eq!(config.chat, back_chat);
+
+        let gui_scoreboard: gui::ScoreboardSettings = (&config.scoreboard).into();
+        let back_scoreboard: ScoreboardConfig = (&gui_scoreboard).into();
+        assert_eq!(config.scoreboard, back_scoreboard);
     }
 }
