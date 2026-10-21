@@ -1494,28 +1494,40 @@ fn render_sign_editor(ctx: &egui::Context, ui_state: &mut ContainerUiState) -> C
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
         .frame(
             Frame::NONE
-                .fill(Color32::from_rgb(160, 115, 65)) // Oak wood color
+                .fill(Color32::from_rgb(160, 115, 65)) // Oak wood sign color
                 .stroke(Stroke::new(3.0_f32, Color32::from_rgb(95, 65, 35)))
-                .corner_radius(CornerRadius::same(4))
+                .corner_radius(CornerRadius::same(6))
                 .inner_margin(egui::Margin::symmetric(24, 20)),
         )
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("Edit Sign Message").size(16.0).color(COLOR_BLACK).strong());
-                ui.add_space(10.0);
+                ui.label(RichText::new("Edit Sign Message").size(16.0).color(COLOR_WHITE).strong());
+                ui.add_space(12.0);
 
                 for (i, line) in ui_state.sign_lines.iter_mut().enumerate() {
-                    let edit = TextEdit::singleline(line)
-                        .desired_width(220.0)
-                        .font(FontId::proportional(14.0))
-                        .text_color(COLOR_BLACK)
-                        .hint_text(format!("Line {}", i + 1));
-                    ui.add(edit);
+                    Frame::NONE
+                        .fill(Color32::from_rgb(238, 225, 200)) // Light birch paper/wood background
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(110, 80, 45)))
+                        .corner_radius(CornerRadius::same(3))
+                        .inner_margin(egui::Margin::symmetric(8, 4))
+                        .show(ui, |ui| {
+                            let edit = TextEdit::singleline(line)
+                                .desired_width(240.0)
+                                .font(FontId::proportional(15.0))
+                                .text_color(Color32::from_rgb(20, 20, 20)) // Dark charcoal text
+                                .hint_text(RichText::new(format!("Line {}", i + 1)).color(Color32::from_rgb(140, 130, 115)))
+                                .frame(false);
+                            ui.add(edit);
+                        });
+                    ui.add_space(4.0);
                 }
 
                 ui.add_space(14.0);
 
-                if ui.button(RichText::new("Done").size(14.0).color(COLOR_WHITE)).clicked() {
+                let enter_pressed = ctx.input(|i| i.key_pressed(Key::Enter));
+                let escape_pressed = ctx.input(|i| i.key_pressed(Key::Escape));
+
+                if enter_pressed || escape_pressed || ui.button(RichText::new("Done").size(14.0).color(COLOR_WHITE)).clicked() {
                     if let Some(pos) = ui_state.sign_pos.take() {
                         action = ContainerAction::UpdateSign {
                             position: pos,

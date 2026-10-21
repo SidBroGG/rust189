@@ -271,6 +271,11 @@ impl BlockEntityRenderer {
 
             match be {
                 BlockEntity::Chest(chest) => {
+                    // Double chest right half is already rendered by left half
+                    if chest.double_type == DoubleChestType::Right {
+                        continue;
+                    }
+
                     // Static closed chests are baked into chunk meshes for performance
                     if self.enable_static_baking && chest.is_static_closed() {
                         continue;
@@ -294,7 +299,7 @@ impl BlockEntityRenderer {
                         }
                     };
                     start_batch(tex, &mut current_texture, &mut batches, vertices.len(), indices.len(), &mut batch_v_offset, &mut batch_i_offset);
-                    self.build_chest_geom(&mut vertices, &mut indices, chest, pos, partial_ticks);
+                    Self::build_chest_geom(&mut vertices, &mut indices, chest, pos, partial_ticks);
                 }
                 BlockEntity::Sign(sign) => {
                     start_batch("entity/sign", &mut current_texture, &mut batches, vertices.len(), indices.len(), &mut batch_v_offset, &mut batch_i_offset);
@@ -429,14 +434,17 @@ impl BlockEntityRenderer {
     }
 
     /// Builds single or double chest geometry (ModelChest / ModelLargeChest).
-    fn build_chest_geom(
-        &self,
+    pub fn build_chest_geom(
         vertices: &mut Vec<EntityVertex>,
         indices: &mut Vec<u32>,
         chest: &ChestBlockEntity,
         pos: Vec3,
         partial_ticks: f32,
     ) {
+        if chest.double_type == DoubleChestType::Right {
+            return;
+        }
+
         let rot_y = match chest.facing {
             2 => 180.0f32.to_radians(),
             4 => 90.0f32.to_radians(),
@@ -449,19 +457,37 @@ impl BlockEntityRenderer {
         let box_w = if is_double { 30.0 } else { 14.0 };
         let knob_x = if is_double { 16.0 } else { 8.0 };
 
-        let root_mat = Mat4::from_translation(pos + Vec3::new(0.5, 1.0, 0.5))
+        // Exact MCP 1.8.9 TileEntityChestRenderer transformation pipeline:
+        // translate(x, y + 1.0F, z + 1.0F); scale(1.0F, -1.0F, -1.0F); translate(0.5F, 0.5F, 0.5F);
+        // if large chest: translate(1.0, 0, 0) for North, or translate(0, 0, -1) for East
+        // rotate(j, 0.0F, 1.0F, 0.0F); translate(-0.5F, -0.5F, -0.5F);
+        let mut root_mat = Mat4::from_translation(pos + Vec3::new(0.0, 1.0, 1.0))
             * Mat4::from_scale(Vec3::new(1.0, -1.0, -1.0))
+            * Mat4::from_translation(Vec3::new(0.5, 0.5, 0.5));
+
+        if is_double {
+            if chest.facing == 2 {
+                root_mat = root_mat * Mat4::from_translation(Vec3::new(1.0, 0.0, 0.0));
+            } else if chest.facing == 5 {
+                root_mat = root_mat * Mat4::from_translation(Vec3::new(0.0, 0.0, -1.0));
+            }
+        }
+
+        root_mat = root_mat
             * Mat4::from_rotation_y(rot_y)
             * Mat4::from_translation(Vec3::new(-0.5, -0.5, -0.5));
 
-        // Base box: (ox, oy, oz) = (1, 6, 1), (w, h, d) = (box_w, 10, 14)
+        // Base box: ModelChest.chestBelow
+        // rotation point: (1, 6, 1) in pixels -> (1/16, 6/16, 1/16) in blocks
+        // box: addBox(0, 0, 0, box_w, 10, 14)
+        let below_mat = root_mat * Mat4::from_translation(Vec3::new(1.0 / 16.0, 6.0 / 16.0, 1.0 / 16.0));
         add_box_geom(
             vertices,
             indices,
-            root_mat,
+            below_mat,
             0.0,
             19.0,
-            Vec3::new(1.0, 6.0, 1.0),
+            Vec3::ZERO,
             Vec3::new(box_w, 10.0, 14.0),
             0.0,
             false,
@@ -470,21 +496,21 @@ impl BlockEntityRenderer {
             [1.0, 1.0, 1.0, 1.0],
         );
 
-        // Animated lid & knob
+        // Animated lid & knob:
         let lid_angle = chest.lid_rotation_radians(partial_ticks);
+        // Lid: rotation point (1, 7, 15) in pixels
+        // box: addBox(0, -5, -14, box_w, 5, 14)
         let lid_mat = root_mat
-            * Mat4::from_translation(Vec3::new(0.0, 7.0 / 16.0, 15.0 / 16.0))
-            * Mat4::from_rotation_x(lid_angle)
-            * Mat4::from_translation(Vec3::new(0.0, -7.0 / 16.0, -15.0 / 16.0));
+            * Mat4::from_translation(Vec3::new(1.0 / 16.0, 7.0 / 16.0, 15.0 / 16.0))
+            * Mat4::from_rotation_x(lid_angle);
 
-        // Lid box: addBox(0, -5, -14, box_w, 5, 14) at (1, 7, 15)
         add_box_geom(
             vertices,
             indices,
             lid_mat,
             0.0,
             0.0,
-            Vec3::new(1.0, 2.0, 1.0),
+            Vec3::new(0.0, -5.0, -14.0),
             Vec3::new(box_w, 5.0, 14.0),
             0.0,
             false,
@@ -493,14 +519,19 @@ impl BlockEntityRenderer {
             [1.0, 1.0, 1.0, 1.0],
         );
 
-        // Knob box: addBox(-1, -2, -15, 2, 4, 1) at (knob_x, 7, 15)
+        // Knob: rotation point (knob_x, 7, 15) in pixels
+        // box: addBox(-1, -2, -15, 2, 4, 1)
+        let knob_mat = root_mat
+            * Mat4::from_translation(Vec3::new(knob_x / 16.0, 7.0 / 16.0, 15.0 / 16.0))
+            * Mat4::from_rotation_x(lid_angle);
+
         add_box_geom(
             vertices,
             indices,
-            lid_mat,
+            knob_mat,
             0.0,
             0.0,
-            Vec3::new(knob_x - 1.0, 5.0, 0.0),
+            Vec3::new(-1.0, -2.0, -15.0),
             Vec3::new(2.0, 4.0, 1.0),
             0.0,
             false,

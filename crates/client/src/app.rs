@@ -2619,10 +2619,20 @@ impl App {
                 }
                 ClientboundPlayPacket::SignEditorOpen(seo) => {
                     info!(pos = ?seo.position, "Opening sign editor from server");
+                    let existing_lines = self
+                        .world
+                        .block_entities
+                        .get(&(seo.position.x, seo.position.y, seo.position.z))
+                        .and_then(|be| match be {
+                            world::block_entity::BlockEntity::Sign(s) => Some(s.lines.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| [String::new(), String::new(), String::new(), String::new()]);
+
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.container_ui_state.sign_pos = Some(seo.position);
-                            ig.container_ui_state.sign_lines = [String::new(), String::new(), String::new(), String::new()];
+                            ig.container_ui_state.sign_lines = existing_lines;
                         }
                     }
                     if let Some(w) = &self.window {
@@ -4281,6 +4291,13 @@ impl ApplicationHandler for App {
                                 }
                             }
                             gui::ContainerAction::UpdateSign { position, lines } => {
+                                if let Some(world::block_entity::BlockEntity::Sign(sign)) = self
+                                    .world
+                                    .block_entities
+                                    .get_mut(&(position.x, position.y, position.z))
+                                {
+                                    sign.lines = lines.clone();
+                                }
                                 if let Some(s) = &self.session {
                                     s.send(OutgoingPlayPacket::UpdateSign { position, lines });
                                 }

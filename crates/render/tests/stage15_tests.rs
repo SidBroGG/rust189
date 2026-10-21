@@ -6,6 +6,7 @@ use protocol::packets::play::clientbound::{
 };
 use protocol::NbtTag;
 use std::f32::consts::PI;
+use render::BlockEntityRenderer;
 use world::block_entity::{
     BannerBlockEntity, BeaconBlockEntity, ChestBlockEntity, ChestType, DoubleChestType,
     EnchantmentTableBlockEntity, PistonBlockEntity,
@@ -214,4 +215,39 @@ fn test_block_entity_protocol_packets_codec() {
     let mut read_buf = Bytes::from(buf.freeze());
     let decoded_ute = ClientboundUpdateTileEntityPacket::decode(&mut read_buf).unwrap();
     assert_eq!(ute, decoded_ute);
+}
+
+#[test]
+fn test_chest_ground_alignment_and_bounds() {
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    let chest = ChestBlockEntity::new(ChestType::Normal, 3, DoubleChestType::Single);
+    let pos = Vec3::new(10.0, 64.0, 20.0);
+    BlockEntityRenderer::build_chest_geom(&mut vertices, &mut indices, &chest, pos, 0.0);
+
+    assert!(!vertices.is_empty());
+    assert!(!indices.is_empty());
+
+    let min_y = vertices.iter().map(|v| v.position[1]).fold(f32::INFINITY, f32::min);
+    let max_y = vertices.iter().map(|v| v.position[1]).fold(f32::NEG_INFINITY, f32::max);
+
+    // MCP 1.8.9: chest base must sit flush on top of the block below (Y = 64.0), not floating at 64.5
+    assert!(
+        (min_y - 64.0).abs() < 1e-4,
+        "Chest bottom must be flush with ground (64.0), but got {min_y}"
+    );
+
+    // Height of closed chest must be exactly 14/16 = 0.875 blocks (matching BlockChest bounding box)
+    assert!(
+        (max_y - 64.875).abs() < 1e-4,
+        "Chest top must be 14 pixels high (64.875), but got {max_y}"
+    );
+
+    // Verify double chest right half is skipped so left half renders the full 30-wide model
+    let mut right_vertices = Vec::new();
+    let mut right_indices = Vec::new();
+    let right_chest = ChestBlockEntity::new(ChestType::Normal, 3, DoubleChestType::Right);
+    BlockEntityRenderer::build_chest_geom(&mut right_vertices, &mut right_indices, &right_chest, pos, 0.0);
+    assert_eq!(right_vertices.len(), 0);
+    assert_eq!(right_indices.len(), 0);
 }

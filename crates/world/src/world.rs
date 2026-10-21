@@ -242,35 +242,12 @@ impl World {
                         let nz = z + dz;
                         let n_state = self.block_at(nx, y, nz);
                         if n_state.id() == id {
-                            match facing {
-                                2 => {
-                                    if dx < 0 {
-                                        chest.double_type = DoubleChestType::Right;
-                                    } else if dx > 0 {
-                                        chest.double_type = DoubleChestType::Left;
-                                    }
-                                }
-                                3 => {
-                                    if dx < 0 {
-                                        chest.double_type = DoubleChestType::Left;
-                                    } else if dx > 0 {
-                                        chest.double_type = DoubleChestType::Right;
-                                    }
-                                }
-                                4 => {
-                                    if dz < 0 {
-                                        chest.double_type = DoubleChestType::Left;
-                                    } else if dz > 0 {
-                                        chest.double_type = DoubleChestType::Right;
-                                    }
-                                }
-                                _ => {
-                                    if dz < 0 {
-                                        chest.double_type = DoubleChestType::Right;
-                                    } else if dz > 0 {
-                                        chest.double_type = DoubleChestType::Left;
-                                    }
-                                }
+                            // MCP 1.8.9: chest with smaller coordinate (no negative-direction neighbor)
+                            // is the primary rendering half (Left), while the other half (Right) is skipped.
+                            if dx > 0 || dz > 0 {
+                                chest.double_type = DoubleChestType::Left;
+                            } else {
+                                chest.double_type = DoubleChestType::Right;
                             }
                             break;
                         }
