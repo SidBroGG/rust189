@@ -96,6 +96,11 @@ impl ScreenManager {
             ig.escape_menu_opened = false;
             ig.chat_opened = false;
             ig.hud_editor_opened = false;
+            ig.credits_screen = None;
+            ig.death_ticks = 0;
+            if ig.hud_data.health <= 0.0 {
+                ig.hud_data.health = 20.0;
+            }
             ig.container_ui_state.villager_trades.clear();
             ig.container_ui_state.sign_pos = None;
             ig.container_ui_state.book_open = false;

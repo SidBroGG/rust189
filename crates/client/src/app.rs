@@ -111,7 +111,6 @@ pub struct App {
     pub max_hurt_time: u32,
     pub attacked_at_yaw: f32,
     pub death_time: u32,
-    pub teleport_confirmed_ticks: u32,
     pub riding_entity_id: Option<i32>,
 }
 
@@ -144,7 +143,6 @@ impl App {
             last_reported_pos: (0.0, 64.0, 0.0),
             last_reported_look: (0.0, 0.0),
             position_update_ticks: 0,
-            teleport_confirmed_ticks: 0,
             pending_connection: None,
             connecting_server_ip: None,
 
@@ -1477,7 +1475,7 @@ impl App {
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
                     self.breaking_block_pos = None;
-                    self.teleport_confirmed_ticks = 0;
+                    self.riding_entity_id = None;
                     self.player.capabilities.is_creative = jg.game_mode == 1;
                     self.player.is_spectator = jg.game_mode == 3;
                     if jg.game_mode == 1 || jg.game_mode == 3 {
@@ -1565,10 +1563,10 @@ impl App {
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
                     self.breaking_block_pos = None;
-                    self.teleport_confirmed_ticks = 0;
+                    self.riding_entity_id = None;
                     if let Some(w) = &self.window {
-                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Confined));
                         w.set_cursor_visible(false);
                         self.mouse_grabbed = true;
                     }
@@ -1628,6 +1626,16 @@ impl App {
                         new_pitch = pos_look.pitch;
                     }
 
+                    // Reset health, death and hurt states if player was dead/dying (e.g. minigame respawn / spectator teleport)
+                    if self.player_health <= 0.0 || self.death_time > 0 {
+                        self.player_health = 20.0;
+                        self.death_time = 0;
+                        self.hurt_time = 0;
+                    }
+
+                    // Teleportation dismounts the player from any vehicle / lobby cage
+                    self.riding_entity_id = None;
+
                     self.player.set_position_and_rotation(new_x, new_y, new_z, new_yaw, new_pitch);
                     self.player.distance_walked_modified = 0.0;
                     self.player.prev_distance_walked_modified = 0.0;
@@ -1670,7 +1678,6 @@ impl App {
                     self.last_reported_pos = (self.player.pos.x, self.player.bounding_box.min_y, self.player.pos.z);
                     self.last_reported_look = (self.player.yaw, self.player.pitch);
                     self.position_update_ticks = 0;
-                    self.teleport_confirmed_ticks = 3;
 
                     // Confirm position back to server and mark spawned (on_ground = false per MCP line 717)
                     self.has_spawned = true;
@@ -1697,8 +1704,8 @@ impl App {
                     // Ensure mouse is captured on spawn/teleport (MCP setIngameFocus parity)
                     if !self.is_cursor_needed() {
                         if let Some(w) = &self.window {
-                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Confined));
                             w.set_cursor_visible(false);
                             self.mouse_grabbed = true;
                         }
@@ -2131,6 +2138,9 @@ impl App {
                     );
                 }
                 ClientboundPlayPacket::DestroyEntities(de) => {
+                    if self.riding_entity_id.map_or(false, |rid| de.entity_ids.contains(&rid)) {
+                        self.riding_entity_id = None;
+                    }
                     self.world.entity_tracker.destroy_entities(&de.entity_ids);
                 }
                 ClientboundPlayPacket::Entity(_) => {}
@@ -2211,10 +2221,21 @@ impl App {
                     self.player.abilities_dirty = false;
                     if pa.is_flying || pa.allow_flying {
                         self.death_time = 0;
+                        if self.player_health <= 0.0 {
+                            self.player_health = 20.0;
+                        }
+                        if let Some(sm) = &mut self.screen_manager {
+                            if let Some(ig) = &mut sm.in_game {
+                                if ig.hud_data.health <= 0.0 {
+                                    ig.hud_data.health = 20.0;
+                                    ig.death_ticks = 0;
+                                }
+                            }
+                        }
                         if !self.is_cursor_needed() {
                             if let Some(w) = &self.window {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Confined));
                                 w.set_cursor_visible(false);
                                 self.mouse_grabbed = true;
                             }
@@ -2300,8 +2321,19 @@ impl App {
                         }
                     }
                 }
-                ClientboundPlayPacket::ConfirmTransaction(_ct) => {
-                    // Acknowledged automatically in session.rs Tokio network loop to avoid duplicate responses and minimize jitter.
+                ClientboundPlayPacket::ConfirmTransaction(ct) => {
+                    // MCP NetHandlerPlayClient.handleConfirmTransaction parity:
+                    // Respond to unaccepted transactions through session.send to maintain strict FIFO
+                    // order with C06/C04 movement packets, avoiding anticheat teleport desyncs and bans.
+                    if !ct.accepted {
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::ConfirmTransaction {
+                                window_id: ct.window_id,
+                                action_number: ct.action_number,
+                                accepted: true,
+                            });
+                        }
+                    }
                 }
                 ClientboundPlayPacket::BlockBreakAnim(bba) => {
                     let pos = (bba.position.x, bba.position.y, bba.position.z);
@@ -2591,15 +2623,25 @@ impl App {
                             self.player.capabilities.allow_flying = true;
                             if gm == 3 {
                                 self.player.capabilities.is_flying = true;
+                                if self.player_health <= 0.0 || self.death_time > 0 {
+                                    self.player_health = 20.0;
+                                    self.death_time = 0;
+                                    self.hurt_time = 0;
+                                }
                             }
                         } else {
                             self.player.capabilities.allow_flying = false;
                             self.player.capabilities.is_flying = false;
                         }
                         if let Some(sm) = &mut self.screen_manager {
+                            sm.reset_modals();
                             if let Some(ig) = &mut sm.in_game {
                                 ig.gamemode = gm;
                                 ig.is_creative = gm == 1;
+                                if gm == 3 && ig.hud_data.health <= 0.0 {
+                                    ig.hud_data.health = 20.0;
+                                    ig.death_ticks = 0;
+                                }
                             }
                         }
                     } else if cgs.state == 4 {
@@ -2875,7 +2917,12 @@ impl App {
             }
 
             let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-            let can_simulate_physics = self.has_spawned || (self.session.is_none() && is_in_game);
+            let (chunk_x, chunk_z) = world::World::chunk_coords(
+                self.player.pos.x.floor() as i32,
+                self.player.pos.z.floor() as i32,
+            );
+            let is_chunk_loaded = self.world.is_chunk_loaded(chunk_x, chunk_z);
+            let can_simulate_physics = (self.has_spawned || (self.session.is_none() && is_in_game)) && is_chunk_loaded;
             let prev_sprint = self.player.is_sprinting;
             let prev_sneak = self.player.is_sneaking;
 
@@ -3109,24 +3156,7 @@ impl App {
                             let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
                             let flag3 = d3 != 0.0 || d4 != 0.0;
 
-                            if self.teleport_confirmed_ticks > 0 {
-                                self.teleport_confirmed_ticks -= 1;
-                                // Crucial Anticheat/Spigot Teleport Confirmation parity:
-                                // For the first ticks following a teleport/setback, always transmit full PlayerPositionAndLook
-                                // to avoid sending empty PlayerMovement (0x03) before the server's teleportPos queue clears,
-                                // which prevents the infinite setback loop and anticheat bans.
-                                s.send(OutgoingPlayPacket::PlayerPositionAndLook {
-                                    x: self.player_pos.0,
-                                    y: self.player_pos.1,
-                                    z: self.player_pos.2,
-                                    yaw: self.player_look.0,
-                                    pitch: self.player_look.1,
-                                    on_ground: self.player_on_ground,
-                                });
-                                self.last_reported_pos = self.player_pos;
-                                self.last_reported_look = self.player_look;
-                                self.position_update_ticks = 0;
-                            } else if flag2 && flag3 {
+                            if flag2 && flag3 {
                                 s.send(OutgoingPlayPacket::PlayerPositionAndLook {
                                     x: self.player_pos.0,
                                     y: self.player_pos.1,
@@ -3163,8 +3193,8 @@ impl App {
                         }
                     }
                 }
-            } else if self.session.is_some() && !self.has_spawned {
-                // In multiplayer, freeze motion only before initial spawn (MCP parity)
+            } else if self.session.is_some() && (!self.has_spawned || !is_chunk_loaded) {
+                // In multiplayer, freeze motion while waiting for initial spawn or chunk data to load (MCP parity EntityPlayerSP.java line 170)
                 self.player.motion = glam::DVec3::ZERO;
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                 self.player_look = (self.player.yaw, self.player.pitch);
