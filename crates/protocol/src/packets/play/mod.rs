@@ -61,6 +61,7 @@ pub enum ClientboundPlayPacket {
     CustomPayload(ClientboundCustomPayloadPacket),
     AttachEntity(ClientboundAttachEntityPacket),
     Maps(ClientboundMapsPacket),
+    Camera(ClientboundCameraPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -220,6 +221,9 @@ impl ClientboundPlayPacket {
             }
             ClientboundMapsPacket::PACKET_ID => {
                 Ok(Self::Maps(ClientboundMapsPacket::decode(payload)?))
+            }
+            ClientboundCameraPacket::PACKET_ID => {
+                Ok(Self::Camera(ClientboundCameraPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,

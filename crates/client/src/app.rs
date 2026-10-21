@@ -494,7 +494,7 @@ impl App {
 
     pub fn handle_left_click(&mut self) {
         let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-        if (self.session.is_some() && !self.has_spawned) || !is_in_game {
+        if !is_in_game {
             return;
         }
         self.recalculate_current_target();
@@ -723,7 +723,7 @@ impl App {
 
     pub fn handle_right_click(&mut self) {
         let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-        if (self.session.is_some() && !self.has_spawned) || !is_in_game {
+        if !is_in_game {
             return;
         }
         self.recalculate_current_target();
@@ -1546,7 +1546,9 @@ impl App {
                 ClientboundPlayPacket::Respawn(rp) => {
                     info!(dimension = rp.dimension, "Respawned in dimension");
                     self.world.clear();
-                    self.has_spawned = false;
+                    // MCP NetHandlerPlayClient line 1071 setDimensionAndSpawnPlayer:
+                    // Player entity is spawned immediately; chunk loading guard handles motionless hold
+                    self.has_spawned = true;
                     self.world.dimension = rp.dimension as i8;
                     self.player_gamemode = rp.game_mode;
                     self.player.capabilities.is_creative = rp.game_mode == 1;
@@ -1586,8 +1588,8 @@ impl App {
                     self.breaking_block_pos = None;
                     self.riding_entity_id = None;
                     if let Some(w) = &self.window {
-                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Confined));
+                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
                         w.set_cursor_visible(false);
                         self.mouse_grabbed = true;
                     }
@@ -1692,8 +1694,6 @@ impl App {
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
                     self.breaking_block_pos = None;
-                    self.player.on_ground = false;
-                    self.player_on_ground = false;
                     self.player.fall_distance = 0.0;
 
                     // Revert any unconfirmed predicted blocks on setback/teleport to prevent ghost block stuttering
@@ -1741,8 +1741,8 @@ impl App {
                     // Ensure mouse is captured on spawn/teleport (MCP setIngameFocus parity)
                     if !self.is_cursor_needed() {
                         if let Some(w) = &self.window {
-                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Confined));
+                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
                             w.set_cursor_visible(false);
                             self.mouse_grabbed = true;
                         }
@@ -1813,6 +1813,7 @@ impl App {
                         {
                             self.player.on_ground = true;
                             self.player_on_ground = true;
+                            self.player.motion.y = 0.0;
                         }
                     }
                 }
@@ -1897,6 +1898,7 @@ impl App {
                         {
                             self.player.on_ground = true;
                             self.player_on_ground = true;
+                            self.player.motion.y = 0.0;
                         }
                     }
                 }
@@ -2273,8 +2275,8 @@ impl App {
                         }
                         if !self.is_cursor_needed() {
                             if let Some(w) = &self.window {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Confined));
+                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
                                 w.set_cursor_visible(false);
                                 self.mouse_grabbed = true;
                             }
@@ -2717,6 +2719,12 @@ impl App {
                         er.update_map_texture(&gpu.device, &gpu.queue, maps_pkt.map_id, map_entry);
                     }
                 }
+                ClientboundPlayPacket::Camera(cam) => {
+                    info!(camera_id = cam.camera_id, "Received camera packet");
+                    if cam.camera_id == self.player_entity_id {
+                        self.riding_entity_id = None;
+                    }
+                }
                 ClientboundPlayPacket::Unknown { payload_len, .. } => {
                     self.profiler.on_bytes_received(payload_len);
                 }
@@ -2947,7 +2955,12 @@ impl App {
             }
 
             let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-            let can_simulate_physics = self.has_spawned || (self.session.is_none() && is_in_game);
+            let (player_chunk_x, player_chunk_z) = world::World::chunk_coords(
+                self.player.pos.x.floor() as i32,
+                self.player.pos.z.floor() as i32,
+            );
+            let player_chunk_loaded = self.session.is_none() || self.world.is_chunk_loaded(player_chunk_x, player_chunk_z);
+            let can_simulate_physics = (self.has_spawned || (self.session.is_none() && is_in_game)) && player_chunk_loaded;
             let prev_sprint = self.player.is_sprinting;
             let prev_sneak = self.player.is_sneaking;
 
@@ -3218,9 +3231,10 @@ impl App {
                         }
                     }
                 }
-            } else if self.session.is_some() && !self.has_spawned {
-                // In multiplayer, freeze motion only before initial spawn packet (MCP parity doneLoadingTerrain)
+            } else if self.session.is_some() {
+                // In multiplayer, freeze motion while waiting for initial spawn or chunk data (MCP parity doneLoadingTerrain & EntityPlayerSP line 170)
                 self.player.motion = glam::DVec3::ZERO;
+                self.player.prev_pos = self.player.pos;
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                 self.player_look = (self.player.yaw, self.player.pitch);
                 self.player_on_ground = self.player.on_ground;
@@ -4147,7 +4161,7 @@ impl ApplicationHandler for App {
                 }
 
                 // Camera and player movement update (interpolated from 20 TPS physics ticks)
-                if self.has_spawned {
+                if self.has_spawned || is_in_game {
                     let dt_secs = self.last_physics_tick.elapsed().as_secs_f32();
                     let partial_ticks = (dt_secs / 0.05).clamp(0.0, 1.0);
 

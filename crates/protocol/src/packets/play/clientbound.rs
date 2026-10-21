@@ -2381,3 +2381,23 @@ impl ClientboundMapsPacket {
     }
 }
 
+/// Clientbound Camera packet (0x43). Sets camera view to entity ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundCameraPacket {
+    pub camera_id: i32,
+}
+
+impl ClientboundCameraPacket {
+    pub const PACKET_ID: i32 = 0x43;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let camera_id = buf.read_varint()?;
+        Ok(Self { camera_id })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        buf.write_varint(self.camera_id);
+        Ok(())
+    }
+}
+
