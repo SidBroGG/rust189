@@ -1333,7 +1333,7 @@ impl App {
                 }
             }
 
-            if let Some((inv_slot, slot_item)) = main_inv_found {
+            if let Some((inv_slot, _)) = main_inv_found {
                 let action_num = if let Some(sm) = &mut self.screen_manager {
                     if let Some(ig) = &mut sm.in_game {
                         let num = ig.player_inventory.next_action_number();
@@ -1363,7 +1363,7 @@ impl App {
                         button: self.selected_hotbar_slot as i8,
                         action_number: action_num,
                         mode: 2,
-                        item: Some(slot_item),
+                        item: None,
                     });
                 }
             }
@@ -2360,19 +2360,10 @@ impl App {
                         }
                     }
                 }
-                ClientboundPlayPacket::ConfirmTransaction(ct) => {
+                ClientboundPlayPacket::ConfirmTransaction(_ct) => {
                     // MCP NetHandlerPlayClient.handleConfirmTransaction parity:
-                    // Respond to unaccepted transactions through session.send to maintain strict FIFO
-                    // order with C06/C04 movement packets, avoiding anticheat teleport desyncs and bans.
-                    if !ct.accepted {
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::ConfirmTransaction {
-                                window_id: ct.window_id,
-                                action_number: ct.action_number,
-                                accepted: true,
-                            });
-                        }
-                    }
+                    // Unaccepted transactions are auto-responded immediately at the socket level
+                    // in session.rs with zero latency and strict FIFO packet ordering.
                 }
                 ClientboundPlayPacket::BlockBreakAnim(bba) => {
                     let pos = (bba.position.x, bba.position.y, bba.position.z);
@@ -4031,6 +4022,15 @@ impl ApplicationHandler for App {
                     GuiOutput::ContainerAction(action) => {
                         match action {
                             gui::ContainerAction::None => {}
+                            gui::ContainerAction::OpenInventory => {
+                                // Vanilla MCP Minecraft.java:2100 parity:
+                                // KeyBindInventory sends C16PacketClientStatus(OPEN_INVENTORY_ACHIEVEMENT)
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::ClientStatus(
+                                        protocol::ClientStatusAction::OpenInventoryAchievement,
+                                    ));
+                                }
+                            }
                             gui::ContainerAction::Click {
                                 window_id,
                                 slot,

@@ -17,6 +17,7 @@ use world::{
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContainerAction {
     None,
+    OpenInventory,
     Click {
         window_id: i8,
         slot: i16,
@@ -191,7 +192,7 @@ pub fn render_container(
 
     let title_id = format!("container_modal_{}", container.window_id);
 
-    Window::new(title_id)
+    let window_res = Window::new(title_id)
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
@@ -265,6 +266,32 @@ pub fn render_container(
             });
         });
 
+    // Check click outside container window to drop carried item (MCP GuiContainer / Container parity)
+    if action == ContainerAction::None && container.carried_item.is_some() {
+        if let Some(ref res) = window_res {
+            let outside_click = ctx.input(|i| {
+                if let Some(pos) = i.pointer.interact_pos() {
+                    !res.response.rect.contains(pos) && (i.pointer.primary_clicked() || i.pointer.secondary_clicked())
+                } else {
+                    false
+                }
+            });
+            if outside_click {
+                let is_right = ctx.input(|i| i.pointer.secondary_clicked());
+                let action_num = container.next_action_number();
+                let _ = container.handle_normal_click(-999, is_right);
+                action = ContainerAction::Click {
+                    window_id: container.window_id as i8,
+                    slot: -999,
+                    button: if is_right { 1 } else { 0 },
+                    action_number: action_num,
+                    mode: 0,
+                    item: None,
+                };
+            }
+        }
+    }
+
     // Render carried item floating on cursor
     if let Some(ref carried) = container.carried_item {
         let painter = ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("carried_item_layer")));
@@ -304,14 +331,6 @@ pub fn render_slot(
     let painter = ui.painter();
 
     let is_hovered = response.hovered();
-
-    let mut drag_state: ActiveDragState = ui.data_mut(|d| {
-        d.get_temp_mut_or_insert_with(egui::Id::new("active_drag_state_v1"), ActiveDragState::default)
-            .clone()
-    });
-
-    let is_lmb_down = ui.input(|i| i.pointer.primary_down());
-    let is_rmb_down = ui.input(|i| i.pointer.secondary_down());
     let is_shift = ui.input(|i| i.modifiers.shift);
 
     // Slot background & inset border
@@ -327,16 +346,6 @@ pub fn render_slot(
         Stroke::new(1.0_f32, Color32::from_rgb(50, 54, 66)),
         StrokeKind::Inside,
     );
-
-    // Highlight slot border if actively dragged over
-    if drag_state.is_dragging && drag_state.drag_slots.contains(&slot_idx) {
-        painter.rect_stroke(
-            rect,
-            CornerRadius::same(3),
-            Stroke::new(2.0_f32, Color32::from_rgb(255, 215, 0)),
-            StrokeKind::Inside,
-        );
-    }
 
     let item_opt = container.slots.get(slot_idx).cloned().flatten();
 
@@ -393,7 +402,8 @@ pub fn render_slot(
         }
     }
 
-    // Hotbar Swap: 1..9 keys swap hovered slot with hotbar
+    // Hotbar Swap: 1..9 keys swap hovered slot with hotbar (Mode 2)
+    // MCP Container.java parity: slotClick returns null for mode 2, clickedItem must be None.
     if is_hovered && container.carried_item.is_none() {
         let num_keys = [
             (Key::Num1, 0),
@@ -408,7 +418,6 @@ pub fn render_slot(
         ];
         for (k, hb_idx) in num_keys {
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, k)) {
-                let clicked_item = container.slots.get(slot_idx).cloned().flatten();
                 let action_num = container.next_action_number();
                 container.handle_hotbar_swap(slot_idx as i16, hb_idx);
                 *action = ContainerAction::Click {
@@ -417,17 +426,17 @@ pub fn render_slot(
                     button: hb_idx as i8,
                     action_number: action_num,
                     mode: 2,
-                    item: clicked_item,
+                    item: None,
                 };
-                break;
+                return;
             }
         }
     }
 
-    // Drop Key: Q drops 1 item, Ctrl+Q drops entire stack
+    // Drop Key: Q drops 1 item, Ctrl+Q drops entire stack (Mode 4)
+    // MCP Container.java parity: slotClick returns null for mode 4, clickedItem must be None.
     if is_hovered && ui.input(|i| i.key_pressed(Key::Q)) {
         let is_ctrl = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
-        let clicked_item = container.slots.get(slot_idx).cloned().flatten();
         let action_num = container.next_action_number();
         let _ = container.handle_drop(slot_idx as i16, is_ctrl);
         *action = ContainerAction::Click {
@@ -436,13 +445,14 @@ pub fn render_slot(
             button: if is_ctrl { 1 } else { 0 },
             action_number: action_num,
             mode: 4,
-            item: clicked_item,
+            item: None,
         };
+        return;
     }
 
-    // Double Click: collects all matching items into cursor stack
+    // Double Click: collects all matching items into cursor stack (Mode 6)
+    // MCP Container.java parity: slotClick returns null for mode 6, clickedItem must be None.
     if response.double_clicked() && container.carried_item.is_some() {
-        let clicked_item = container.slots.get(slot_idx).cloned().flatten();
         let action_num = container.next_action_number();
         container.handle_double_click(slot_idx as i16);
         *action = ContainerAction::Click {
@@ -451,8 +461,9 @@ pub fn render_slot(
             button: 0,
             action_number: action_num,
             mode: 6,
-            item: clicked_item,
+            item: None,
         };
+        return;
     }
 
     // Mouse Tweaks: Scroll wheel on slot (Up = pull 1 item, Down = push 1 item)
@@ -460,6 +471,7 @@ pub fn render_slot(
         let scroll_y = ui.input(|i| i.raw_scroll_delta.y);
         if scroll_y.abs() > 0.5 {
             let is_up = scroll_y > 0.0;
+            let clicked_item = container.slots.get(slot_idx).cloned().flatten();
             if container.handle_wheel_scroll(slot_idx, is_up) {
                 *action = ContainerAction::Click {
                     window_id: container.window_id as i8,
@@ -467,8 +479,9 @@ pub fn render_slot(
                     button: if is_up { 0 } else { 1 },
                     action_number: container.next_action_number(),
                     mode: 0,
-                    item: container.slots.get(slot_idx).cloned().flatten(),
+                    item: clicked_item,
                 };
+                return;
             }
         }
     }
@@ -476,69 +489,45 @@ pub fn render_slot(
     let primary_released = ui.input(|i| i.pointer.primary_released());
     let secondary_released = ui.input(|i| i.pointer.secondary_released());
 
-    // Mouse Tweaks & Vanilla Dragging
-    if !is_lmb_down && !is_rmb_down {
-        if drag_state.is_dragging {
-            if drag_state.drag_slots.len() > 1 {
-                container.handle_drag_finish(drag_state.drag_button, &drag_state.drag_slots);
-                *action = ContainerAction::Click {
-                    window_id: container.window_id as i8,
-                    slot: -999,
-                    button: if drag_state.drag_button == 0 { 2 } else { 6 },
-                    action_number: container.next_action_number(),
-                    mode: 5,
-                    item: None,
-                };
-            }
-            drag_state.is_dragging = false;
-            drag_state.drag_slots.clear();
-        }
-        drag_state.shift_drag_visited.clear();
-        drag_state.rmb_drag_visited.clear();
-    } else if is_hovered {
-        // Mouse Tweaks: Shift + LMB Drag (instant quick-move sweep across slots)
-        if is_shift && is_lmb_down {
-            if !drag_state.shift_drag_visited.contains(&slot_idx) {
-                drag_state.shift_drag_visited.push(slot_idx);
-                if container.slots.get(slot_idx).and_then(|s| s.as_ref()).is_some() {
-                    let clicked_item = container.slots.get(slot_idx).cloned().flatten();
-                    container.handle_shift_click(slot_idx as i16);
-                    *action = ContainerAction::Click {
-                        window_id: container.window_id as i8,
-                        slot: slot_idx as i16,
-                        button: 0,
-                        action_number: container.next_action_number(),
-                        mode: 1,
-                        item: clicked_item,
-                    };
-                }
-            }
-        } else if container.carried_item.is_some() {
-            // Vanilla LMB Drag (even split) or RMB Drag
-            if is_lmb_down {
-                drag_state.is_dragging = true;
-                drag_state.drag_button = 0;
-                if !drag_state.drag_slots.contains(&slot_idx) {
-                    drag_state.drag_slots.push(slot_idx);
-                }
-            } else if is_rmb_down {
-                drag_state.is_dragging = true;
-                drag_state.drag_button = 1;
-                if !drag_state.drag_slots.contains(&slot_idx) {
-                    drag_state.drag_slots.push(slot_idx);
-                }
-            }
-        }
-    }
-
     let mut click_processed = false;
 
-    // Release drop: if carrying an item and releasing mouse over hovered slot (and not multi-slot drag)
+    // 1. Release drop: if carrying an item and releasing/clicking mouse over hovered slot
     if is_hovered && (primary_released || secondary_released) && container.carried_item.is_some() {
-        if !drag_state.is_dragging || drag_state.drag_slots.len() <= 1 {
-            let is_right = secondary_released;
-            let clicked_item = container.slots.get(slot_idx).cloned().flatten();
-            let action_num = container.next_action_number();
+        let is_right = secondary_released;
+        let clicked_item = container.slots.get(slot_idx).cloned().flatten();
+        let action_num = container.next_action_number();
+        let _ = container.handle_normal_click(slot_idx as i16, is_right);
+        *action = ContainerAction::Click {
+            window_id: container.window_id as i8,
+            slot: slot_idx as i16,
+            button: if is_right { 1 } else { 0 },
+            action_number: action_num,
+            mode: 0,
+            item: clicked_item,
+        };
+        click_processed = true;
+    }
+
+    // 2. Normal Clicks and Shift-Clicks (executed if not already processed on release)
+    if !click_processed && (response.clicked() || response.secondary_clicked()) {
+        let clicked_item = container.slots.get(slot_idx).cloned().flatten();
+        let action_num = container.next_action_number();
+
+        if is_shift {
+            // Shift-click (Mode 1: Quick Move)
+            // MCP NetHandlerPlayServer & Container parity: clickedItem is stack before transfer
+            container.handle_shift_click(slot_idx as i16);
+            *action = ContainerAction::Click {
+                window_id: container.window_id as i8,
+                slot: slot_idx as i16,
+                button: if response.secondary_clicked() { 1 } else { 0 },
+                action_number: action_num,
+                mode: 1,
+                item: clicked_item,
+            };
+        } else {
+            // Normal click (Mode 0: Pick up / Swap)
+            let is_right = response.secondary_clicked();
             let _ = container.handle_normal_click(slot_idx as i16, is_right);
             *action = ContainerAction::Click {
                 window_id: container.window_id as i8,
@@ -548,42 +537,8 @@ pub fn render_slot(
                 mode: 0,
                 item: clicked_item,
             };
-            click_processed = true;
         }
     }
-
-    // Normal Clicks (executed if not already processed on release)
-    if !click_processed && (response.clicked() || response.secondary_clicked()) {
-        if !drag_state.is_dragging || drag_state.drag_slots.len() <= 1 {
-            let clicked_item = container.slots.get(slot_idx).cloned().flatten();
-            let action_num = container.next_action_number();
-
-            if is_shift {
-                container.handle_shift_click(slot_idx as i16);
-                *action = ContainerAction::Click {
-                    window_id: container.window_id as i8,
-                    slot: slot_idx as i16,
-                    button: if response.secondary_clicked() { 1 } else { 0 },
-                    action_number: action_num,
-                    mode: 1,
-                    item: clicked_item,
-                };
-            } else {
-                let is_right = response.secondary_clicked();
-                let _ = container.handle_normal_click(slot_idx as i16, is_right);
-                *action = ContainerAction::Click {
-                    window_id: container.window_id as i8,
-                    slot: slot_idx as i16,
-                    button: if is_right { 1 } else { 0 },
-                    action_number: action_num,
-                    mode: 0,
-                    item: clicked_item,
-                };
-            }
-        }
-    }
-
-    ui.data_mut(|d| d.insert_temp(egui::Id::new("active_drag_state_v1"), drag_state));
 }
 
 /// Renders rich Minecraft tooltip with custom name, enchantments, lore, durability, and stats.

@@ -377,6 +377,22 @@ impl PlaySessionHandle {
                                         let _ = incoming_tx.send(ClientboundPlayPacket::KeepAlive(ka));
                                     }
                                     Ok(ClientboundPlayPacket::ConfirmTransaction(ct)) => {
+                                        // Auto respond to unaccepted transactions immediately with 0 latency
+                                        // on the TCP socket to satisfy anticheats (GrimAC, Vulcan, Watchdog)
+                                        if !ct.accepted {
+                                            let mut resp_buf = BytesMut::new();
+                                            let resp = ServerboundConfirmTransactionPacket::new(
+                                                ct.window_id,
+                                                ct.action_number,
+                                                true,
+                                            );
+                                            if resp.encode(&mut resp_buf).is_ok() {
+                                                let _ = stream
+                                                    .write_packet(ServerboundConfirmTransactionPacket::PACKET_ID, &resp_buf)
+                                                    .await;
+                                            }
+                                        }
+
                                         if incoming_tx.send(ClientboundPlayPacket::ConfirmTransaction(ct)).is_err() {
                                             break;
                                         }

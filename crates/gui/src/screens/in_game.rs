@@ -334,6 +334,7 @@ impl InGameScreen {
                     return InGameAction::Container(crate::screens::container::ContainerAction::Close(0));
                 } else {
                     self.inventory_opened = true;
+                    return InGameAction::Container(crate::screens::container::ContainerAction::OpenInventory);
                 }
             }
         }
