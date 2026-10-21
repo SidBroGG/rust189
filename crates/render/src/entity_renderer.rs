@@ -437,6 +437,7 @@ impl EntityRenderer {
         partial_ticks: f32,
         local_player: Option<&TrackedEntity>,
         maps: Option<&hashbrown::HashMap<i32, world::map::MapData>>,
+        is_spectator: bool,
     ) {
         if tracker.count() == 0 && local_player.is_none() {
             return;
@@ -447,6 +448,15 @@ impl EntityRenderer {
 
         let all_entities = tracker.entities.values().chain(local_player);
         for entity in all_entities {
+            // Invisible entities are not rendered unless local player is in spectator mode (MCP RendererLivingEntity line 248)
+            if entity.is_invisible && !is_spectator {
+                continue;
+            }
+            // Armor stand markers are 0-sized and invisible (MCP EntityArmorStand line 896)
+            if entity.is_armor_stand_marker {
+                continue;
+            }
+
             let alpha = if entity.is_invisible { 0.15 } else { 1.0 };
             let color = if entity.hurt_time > 0 {
                 [1.0, 0.35, 0.35, alpha]
@@ -462,6 +472,12 @@ impl EntityRenderer {
                 }
                 EntityKind::Mob { mob_type } => {
                     match *mob_type {
+                        30 => {
+                            if !entity.is_armor_stand_marker {
+                                let (verts, inds) = collector.entry("entity/armorstand/wood".to_string()).or_default();
+                                crate::models::vehicles::build_armor_stand_model(verts, inds, entity, partial_ticks, color);
+                            }
+                        }
                         50 => {
                             let (verts, inds) = collector.entry("entity/creeper/creeper".to_string()).or_default();
                             crate::models::hostile::build_creeper_model(verts, inds, entity, partial_ticks, color);
@@ -639,10 +655,7 @@ impl EntityRenderer {
                             let (verts, inds) = collector.entry("entity/villager/villager".to_string()).or_default();
                             crate::models::peaceful::build_villager_model(verts, inds, entity, partial_ticks, color);
                         }
-                        _ => {
-                            let (verts, inds) = collector.entry("entity/zombie/zombie".to_string()).or_default();
-                            crate::models::hostile::build_zombie_model(verts, inds, entity, partial_ticks, color);
-                        }
+                        _ => {}
                     }
                 }
                 EntityKind::Object { object_type, data } => {
@@ -856,8 +869,10 @@ impl EntityRenderer {
                             crate::models::vehicles::build_leash_knot_model(verts, inds, entity, partial_ticks, color);
                         }
                         78 => {
-                            let (verts, inds) = collector.entry("entity/armorstand/wood".to_string()).or_default();
-                            crate::models::vehicles::build_armor_stand_model(verts, inds, entity, partial_ticks, color);
+                            if !entity.is_armor_stand_marker {
+                                let (verts, inds) = collector.entry("entity/armorstand/wood".to_string()).or_default();
+                                crate::models::vehicles::build_armor_stand_model(verts, inds, entity, partial_ticks, color);
+                            }
                         }
                         90 => {
                             let (verts, inds) = collector.entry("particle/particles".to_string()).or_default();

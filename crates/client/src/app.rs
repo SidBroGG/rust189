@@ -3803,6 +3803,13 @@ impl ApplicationHandler for App {
                                 None
                             }
                         }
+                        EntityKind::Object { object_type: 78, .. } => {
+                            if (entity.is_invisible || entity.custom_name_visible) && entity.custom_name.is_some() {
+                                entity.custom_name.clone()
+                            } else {
+                                None
+                            }
+                        }
                         _ => None,
                     };
 
@@ -3817,6 +3824,9 @@ impl ApplicationHandler for App {
                     let height = match &entity.kind {
                         EntityKind::Player { .. } => if entity.is_sneaking { 1.95 } else { 2.25 },
                         EntityKind::Mob { mob_type } if *mob_type == 30 => {
+                            if entity.is_invisible { 0.2 } else { 1.9 }
+                        }
+                        EntityKind::Object { object_type: 78, .. } => {
                             if entity.is_invisible { 0.2 } else { 1.9 }
                         }
                         _ => 1.9,
@@ -4407,6 +4417,7 @@ impl ApplicationHandler for App {
                                 partial_ticks,
                                 local_player_entity.as_ref(),
                                 Some(&self.world.maps),
+                                self.player.is_spectator,
                             );
                         }
 

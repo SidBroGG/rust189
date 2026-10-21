@@ -294,7 +294,7 @@ impl TrackedEntity {
     }
 
     /// Extracts sneak/sprint/invisible flags, ArmorStand flags, and custom name from entity metadata.
-    fn apply_metadata_flags(&mut self) {
+    pub fn apply_metadata_flags(&mut self) {
         for entry in &self.metadata {
             match entry.index {
                 0 => {
@@ -316,7 +316,7 @@ impl TrackedEntity {
                 }
                 10 => {
                     if let MetadataValue::Byte(b) = entry.value {
-                        if matches!(self.kind, EntityKind::Object { object_type: 78, .. }) {
+                        if matches!(self.kind, EntityKind::Object { object_type: 78, .. } | EntityKind::Mob { mob_type: 30 }) {
                             self.is_armor_stand_small = (b & 0x01) != 0;
                             self.is_armor_stand_marker = (b & 0x10) != 0;
                         }
@@ -340,7 +340,13 @@ impl TrackedEntity {
     pub fn can_be_collided_with(&self) -> bool {
         match self.kind {
             EntityKind::Player { .. } => true,
-            EntityKind::Mob { .. } => true,
+            EntityKind::Mob { mob_type } => {
+                if mob_type == 30 {
+                    !self.is_armor_stand_marker
+                } else {
+                    true
+                }
+            }
             EntityKind::Painting { .. } => true,
             EntityKind::Object { object_type, .. } => match object_type {
                 // ArmorStand: cannot be collided with if it has the marker flag (e.g. floating holograms)
@@ -407,6 +413,15 @@ impl TrackedEntity {
                 }
             }
             EntityKind::Mob { mob_type } => match *mob_type {
+                30 => {
+                    if self.is_armor_stand_marker {
+                        (0.0, 0.0)
+                    } else if self.is_armor_stand_small {
+                        (0.5, 0.9875)
+                    } else {
+                        (0.5, 1.975)
+                    }
+                }
                 50 => (0.6, 1.7),   // Creeper
                 51 => (0.6, 1.99),  // Skeleton
                 52 => (1.4, 0.9),   // Spider

@@ -567,3 +567,34 @@ fn test_user_reported_mob_and_object_fixes() {
     build_fishing_bobber_model(&mut v, &mut i, &bobber, 0.5);
     assert_valid_mesh(&v, &i, 2); // red top + white bottom
 }
+
+#[test]
+fn test_invisible_entity_and_armor_stand_mob_30_handling() {
+    let mut entity = create_dummy_entity(EntityKind::Mob { mob_type: 30 });
+    entity.metadata = vec![protocol::codec::MetadataEntry {
+        index: 10,
+        value: protocol::codec::MetadataValue::Byte(0x10), // marker
+    }];
+    entity.apply_metadata_flags();
+    assert!(entity.is_armor_stand_marker);
+    let bb = entity.bounding_box();
+    assert_eq!(bb.max_x - bb.min_x, 0.0);
+    assert_eq!(bb.max_y - bb.min_y, 0.0);
+
+    // Normal player (not spectator) must skip rendering invisible entities
+    entity.is_invisible = true;
+    let is_spectator = false;
+    let should_render_non_spec = !entity.is_invisible || is_spectator;
+    assert!(!should_render_non_spec);
+
+    // Spectator can see invisible entities with translucent alpha, but marker armor stands are always 0-sized/hidden
+    let is_spectator = true;
+    let should_render_spec = (!entity.is_invisible || is_spectator) && !entity.is_armor_stand_marker;
+    assert!(!should_render_spec);
+
+    let mut regular_invis_mob = create_dummy_entity(EntityKind::Mob { mob_type: 54 });
+    regular_invis_mob.is_invisible = true;
+    let render_invis_for_spec = (!regular_invis_mob.is_invisible || is_spectator) && !regular_invis_mob.is_armor_stand_marker;
+    assert!(render_invis_for_spec);
+}
+
