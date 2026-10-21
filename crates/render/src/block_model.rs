@@ -690,12 +690,15 @@ impl BakedModelRegistry {
 
                 // Fallback cube model if not mapped or missing in assets
                 if static_models[state_key as usize].is_none() && id != 0 {
-                    let region = regions
-                        .get(&Self::get_default_texture_name(id, meta))
-                        .copied()
-                        .unwrap_or(fallback);
-                    static_models[state_key as usize] =
-                        Some(Self::create_unit_cube_model(region, is_translucent));
+                    // Do not generate generic stone cube for pure TileEntity/TESR blocks
+                    if !matches!(id, 54 | 130 | 146 | 63 | 68 | 176 | 177 | 144 | 119 | 36) {
+                        let region = regions
+                            .get(&Self::get_default_texture_name(id, meta))
+                            .copied()
+                            .unwrap_or(fallback);
+                        static_models[state_key as usize] =
+                            Some(Self::create_unit_cube_model(region, is_translucent));
+                    }
                 }
             }
         }
@@ -1397,6 +1400,64 @@ impl BakedModelRegistry {
                     "half=bottom"
                 };
                 ("red_sandstone_slab".into(), half.into())
+            }
+            23 => {
+                let f = match meta & 7 {
+                    0 => "facing=down",
+                    1 => "facing=up",
+                    2 => "facing=north",
+                    3 => "facing=south",
+                    4 => "facing=west",
+                    5 => "facing=east",
+                    _ => "facing=north",
+                };
+                ("dispenser".into(), f.into())
+            }
+            25 => ("noteblock".into(), "normal".into()),
+            52 => ("mob_spawner".into(), "normal".into()),
+            61 => {
+                let f = match meta & 7 {
+                    3 => "facing=south",
+                    4 => "facing=west",
+                    5 => "facing=east",
+                    _ => "facing=north",
+                };
+                ("furnace".into(), f.into())
+            }
+            62 => {
+                let f = match meta & 7 {
+                    3 => "facing=south",
+                    4 => "facing=west",
+                    5 => "facing=east",
+                    _ => "facing=north",
+                };
+                ("lit_furnace".into(), f.into())
+            }
+            84 => ("jukebox".into(), "normal".into()),
+            116 => ("enchanting_table".into(), "normal".into()),
+            138 => ("beacon".into(), "normal".into()),
+            154 => {
+                let f = match meta & 7 {
+                    0 => "facing=down",
+                    2 => "facing=north",
+                    3 => "facing=south",
+                    4 => "facing=west",
+                    5 => "facing=east",
+                    _ => "facing=down",
+                };
+                ("hopper".into(), f.into())
+            }
+            158 => {
+                let f = match meta & 7 {
+                    0 => "facing=down",
+                    1 => "facing=up",
+                    2 => "facing=north",
+                    3 => "facing=south",
+                    4 => "facing=west",
+                    5 => "facing=east",
+                    _ => "facing=north",
+                };
+                ("dropper".into(), f.into())
             }
             _ => return None,
         };

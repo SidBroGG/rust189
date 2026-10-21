@@ -184,7 +184,7 @@ impl BlockEntityRenderer {
             index_buffer,
             vertex_capacity,
             index_capacity,
-            enable_static_baking: true,
+            enable_static_baking: false,
         }
     }
 
@@ -458,7 +458,7 @@ impl BlockEntityRenderer {
         add_box_geom(
             vertices,
             indices,
-            root_mat * Mat4::from_scale(Vec3::splat(1.0 / 16.0)),
+            root_mat,
             0.0,
             19.0,
             Vec3::new(1.0, 6.0, 1.0),
@@ -475,8 +475,7 @@ impl BlockEntityRenderer {
         let lid_mat = root_mat
             * Mat4::from_translation(Vec3::new(0.0, 7.0 / 16.0, 15.0 / 16.0))
             * Mat4::from_rotation_x(lid_angle)
-            * Mat4::from_translation(Vec3::new(0.0, -7.0 / 16.0, -15.0 / 16.0))
-            * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+            * Mat4::from_translation(Vec3::new(0.0, -7.0 / 16.0, -15.0 / 16.0));
 
         // Lid box: addBox(0, -5, -14, box_w, 5, 14) at (1, 7, 15)
         add_box_geom(
@@ -544,7 +543,7 @@ impl BlockEntityRenderer {
         add_box_geom(
             vertices,
             indices,
-            root_mat * Mat4::from_scale(Vec3::splat(1.0 / 16.0)),
+            root_mat,
             0.0,
             0.0,
             Vec3::new(-12.0, -14.0, -1.0),
@@ -561,7 +560,7 @@ impl BlockEntityRenderer {
             add_box_geom(
                 vertices,
                 indices,
-                root_mat * Mat4::from_scale(Vec3::splat(1.0 / 16.0)),
+                root_mat,
                 0.0,
                 14.0,
                 Vec3::new(-1.0, -2.0, -1.0),
@@ -688,7 +687,7 @@ impl BlockEntityRenderer {
             add_box_geom(
                 vertices,
                 indices,
-                root_mat * Mat4::from_scale(Vec3::splat(1.0 / 16.0)),
+                root_mat,
                 44.0,
                 0.0,
                 Vec3::new(-1.0, -30.0, -1.0),
@@ -705,7 +704,7 @@ impl BlockEntityRenderer {
         add_box_geom(
             vertices,
             indices,
-            root_mat * Mat4::from_scale(Vec3::splat(1.0 / 16.0)),
+            root_mat,
             0.0,
             42.0,
             Vec3::new(-10.0, -32.0, -1.0),
@@ -721,8 +720,7 @@ impl BlockEntityRenderer {
         let slate_rot = BannerBlockEntity::slate_rotation_radians(pos, world_time, partial_ticks);
         let slate_mat = root_mat
             * Mat4::from_translation(Vec3::new(0.0, -32.0 / 16.0, 0.0))
-            * Mat4::from_rotation_x(slate_rot)
-            * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+            * Mat4::from_rotation_x(slate_rot);
 
         let [r, g, b] = dye_color_rgb(banner.base_color);
         add_box_geom(
@@ -776,8 +774,7 @@ impl BlockEntityRenderer {
         let slate_rot = BannerBlockEntity::slate_rotation_radians(pos, world_time, partial_ticks);
         let slate_mat = root_mat
             * Mat4::from_translation(Vec3::new(0.0, -32.0 / 16.0, 0.0))
-            * Mat4::from_rotation_x(slate_rot)
-            * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+            * Mat4::from_rotation_x(slate_rot);
 
         let [r, g, b] = dye_color_rgb(dye_col);
         add_box_geom(
@@ -819,7 +816,7 @@ impl BlockEntityRenderer {
 
         let root_mat = Mat4::from_translation(root_pos)
             * Mat4::from_rotation_y(rot_y)
-            * Mat4::from_scale(Vec3::new(-1.0 / 16.0, -1.0 / 16.0, 1.0 / 16.0));
+            * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0));
 
         // 8x8x8 head box: addBox(-4, -8, -4, 8, 8, 8)
         add_box_geom(
@@ -872,14 +869,13 @@ impl BlockEntityRenderer {
 
         let root_mat = Mat4::from_translation(pos + Vec3::new(0.5, 0.75 + bob, 0.5))
             * Mat4::from_rotation_y(-book_rot)
-            * Mat4::from_rotation_z(80.0f32.to_radians())
-            * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+            * Mat4::from_rotation_z(80.0f32.to_radians());
 
         let open_angle = (1.25 + (f * 0.02).sin() * 0.1) * book_spread;
 
         // Right cover: addBox(-6, -5, 0, 6, 10, 0)
         let right_cover_mat = root_mat
-            * Mat4::from_translation(Vec3::new(0.0, 0.0, -1.0))
+            * Mat4::from_translation(Vec3::new(0.0, 0.0, -1.0 / 16.0))
             * Mat4::from_rotation_y(PI + open_angle);
         add_box_geom(
             vertices,
@@ -898,7 +894,7 @@ impl BlockEntityRenderer {
 
         // Left cover: addBox(0, -5, 0, 6, 10, 0)
         let left_cover_mat = root_mat
-            * Mat4::from_translation(Vec3::new(0.0, 0.0, 1.0))
+            * Mat4::from_translation(Vec3::new(0.0, 0.0, 1.0 / 16.0))
             * Mat4::from_rotation_y(-open_angle);
         add_box_geom(
             vertices,
@@ -934,7 +930,7 @@ impl BlockEntityRenderer {
 
         // Right pages: addBox(0, -4, -0.99, 5, 8, 1)
         let right_pages_mat = root_mat
-            * Mat4::from_translation(Vec3::new(open_angle.sin(), 0.0, 0.0))
+            * Mat4::from_translation(Vec3::new(open_angle.sin() / 16.0, 0.0, 0.0))
             * Mat4::from_rotation_y(open_angle);
         add_box_geom(
             vertices,
@@ -953,7 +949,7 @@ impl BlockEntityRenderer {
 
         // Left pages: addBox(0, -4, -0.01, 5, 8, 1)
         let left_pages_mat = root_mat
-            * Mat4::from_translation(Vec3::new(open_angle.sin(), 0.0, 0.0))
+            * Mat4::from_translation(Vec3::new(open_angle.sin() / 16.0, 0.0, 0.0))
             * Mat4::from_rotation_y(-open_angle);
         add_box_geom(
             vertices,
@@ -1103,7 +1099,7 @@ impl BlockEntityRenderer {
         partial_ticks: f32,
     ) {
         let rot_y = spawner.interpolated_rotation_degrees(partial_ticks).to_radians();
-        let scale = 0.4375f32 * (1.0 / 16.0);
+        let scale = 0.4375f32;
 
         let root_mat = Mat4::from_translation(pos + Vec3::new(0.5, 0.4, 0.5))
             * Mat4::from_rotation_y(rot_y)
@@ -1153,7 +1149,7 @@ impl BlockEntityRenderer {
         partial_ticks: f32,
     ) {
         let offset = piston.get_offset(partial_ticks);
-        let head_mat = Mat4::from_translation(pos + offset) * Mat4::from_scale(Vec3::splat(1.0 / 16.0));
+        let head_mat = Mat4::from_translation(pos + offset);
 
         // Piston head top plate: (16, 4, 16)
         add_box_geom(
