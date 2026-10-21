@@ -473,6 +473,9 @@ pub fn render_slot(
         }
     }
 
+    let primary_released = ui.input(|i| i.pointer.primary_released());
+    let secondary_released = ui.input(|i| i.pointer.secondary_released());
+
     // Mouse Tweaks & Vanilla Dragging
     if !is_lmb_down && !is_rmb_down {
         if drag_state.is_dragging {
@@ -498,6 +501,7 @@ pub fn render_slot(
             if !drag_state.shift_drag_visited.contains(&slot_idx) {
                 drag_state.shift_drag_visited.push(slot_idx);
                 if container.slots.get(slot_idx).and_then(|s| s.as_ref()).is_some() {
+                    let clicked_item = container.slots.get(slot_idx).cloned().flatten();
                     container.handle_shift_click(slot_idx as i16);
                     *action = ContainerAction::Click {
                         window_id: container.window_id as i8,
@@ -505,12 +509,12 @@ pub fn render_slot(
                         button: 0,
                         action_number: container.next_action_number(),
                         mode: 1,
-                        item: None,
+                        item: clicked_item,
                     };
                 }
             }
         } else if container.carried_item.is_some() {
-            // Vanilla LMB Drag (even split)
+            // Vanilla LMB Drag (even split) or RMB Drag
             if is_lmb_down {
                 drag_state.is_dragging = true;
                 drag_state.drag_button = 0;
@@ -518,42 +522,38 @@ pub fn render_slot(
                     drag_state.drag_slots.push(slot_idx);
                 }
             } else if is_rmb_down {
-                // Vanilla RMB Drag / Mouse Tweaks RMB continuous place
                 drag_state.is_dragging = true;
                 drag_state.drag_button = 1;
                 if !drag_state.drag_slots.contains(&slot_idx) {
                     drag_state.drag_slots.push(slot_idx);
                 }
-                if !drag_state.rmb_drag_visited.contains(&slot_idx) {
-                    drag_state.rmb_drag_visited.push(slot_idx);
-                    let can_place = match &container.slots.get(slot_idx).and_then(|s| s.as_ref()) {
-                        None => true,
-                        Some(s) => {
-                            let carried = container.carried_item.as_ref().unwrap();
-                            let max_stack = get_item_max_stack(carried.item_id) as i8;
-                            s.item_id == carried.item_id
-                                && s.item_damage == carried.item_damage
-                                && s.item_count < max_stack
-                        }
-                    };
-                    if can_place {
-                        let _ = container.handle_normal_click(slot_idx as i16, true);
-                        *action = ContainerAction::Click {
-                            window_id: container.window_id as i8,
-                            slot: slot_idx as i16,
-                            button: 1,
-                            action_number: container.next_action_number(),
-                            mode: 0,
-                            item: container.slots.get(slot_idx).cloned().flatten(),
-                        };
-                    }
-                }
             }
         }
     }
 
-    // Normal Clicks (executed if not in a multi-slot drag)
-    if response.clicked() || response.secondary_clicked() {
+    let mut click_processed = false;
+
+    // Release drop: if carrying an item and releasing mouse over hovered slot (and not multi-slot drag)
+    if is_hovered && (primary_released || secondary_released) && container.carried_item.is_some() {
+        if !drag_state.is_dragging || drag_state.drag_slots.len() <= 1 {
+            let is_right = secondary_released;
+            let clicked_item = container.slots.get(slot_idx).cloned().flatten();
+            let action_num = container.next_action_number();
+            let _ = container.handle_normal_click(slot_idx as i16, is_right);
+            *action = ContainerAction::Click {
+                window_id: container.window_id as i8,
+                slot: slot_idx as i16,
+                button: if is_right { 1 } else { 0 },
+                action_number: action_num,
+                mode: 0,
+                item: clicked_item,
+            };
+            click_processed = true;
+        }
+    }
+
+    // Normal Clicks (executed if not already processed on release)
+    if !click_processed && (response.clicked() || response.secondary_clicked()) {
         if !drag_state.is_dragging || drag_state.drag_slots.len() <= 1 {
             let clicked_item = container.slots.get(slot_idx).cloned().flatten();
             let action_num = container.next_action_number();

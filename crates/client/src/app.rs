@@ -112,6 +112,7 @@ pub struct App {
     pub attacked_at_yaw: f32,
     pub death_time: u32,
     pub riding_entity_id: Option<i32>,
+    pub predicted_blocks: std::collections::HashMap<(i32, i32, i32), u32>,
 }
 
 impl App {
@@ -189,6 +190,7 @@ impl App {
             attacked_at_yaw: 0.0,
             death_time: 0,
             riding_entity_id: None,
+            predicted_blocks: std::collections::HashMap::new(),
         }
     }
 
@@ -516,6 +518,23 @@ impl App {
                             action: UseEntityAction::Attack,
                             target: None,
                         });
+                    }
+
+                    // MCP 1.8.9 EntityPlayer.java:1360 parity:
+                    // Attacking while sprinting reduces horizontal motion by 0.6 and stops sprinting.
+                    // This matches server anticheat (GrimAC, Vulcan) physics simulation,
+                    // preventing speed setbacks and anticheat bans when hitting players while walking/sprinting.
+                    if self.player.is_sprinting {
+                        self.player.motion.x *= 0.6;
+                        self.player.motion.z *= 0.6;
+                        self.player.is_sprinting = false;
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::EntityAction {
+                                entity_id: self.player_entity_id,
+                                action: protocol::EntityAction::StopSprinting,
+                                jump_boost: 0,
+                            });
+                        }
                     }
 
                     let is_crit = is_critical_hit(
@@ -867,7 +886,7 @@ impl App {
                     );
 
                     // Check solid collision with player or entities
-                    let can_predict_locally = true;
+                    let mut can_predict_locally = true;
                     let has_solid_collision = block_blocks_movement(self.held_item_id as u16);
                     if has_solid_collision {
                         let (px, py, pz) = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
@@ -884,12 +903,13 @@ impl App {
                         });
 
                         if collides_player || collides_entity {
-                            // MCP 1.8.9 ItemBlock.canPlaceBlockAt: strictly prevent placing blocks inside player (feet/head) or entity
-                            return;
+                            // MCP 1.8.9 ItemBlock.canPlaceBlockAt parity: do not predict block locally inside entity,
+                            // but still send C08 packet to the server as server might validate/process it (e.g. jump-bridging).
+                            can_predict_locally = false;
                         }
                     }
 
-                    // Always send PlayerBlockPlacement to server regardless of local collision
+                    // Always send PlayerBlockPlacement to server regardless of local collision (MCP PlayerControllerMP.onPlayerRightClick parity)
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
                             position: Position::new(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2),
@@ -917,6 +937,7 @@ impl App {
                             place_pos.2,
                             BlockState::new(self.held_item_id as u16, meta),
                         );
+                        self.predicted_blocks.insert(place_pos, self.position_update_ticks);
                         let chunk_x = place_pos.0 >> 4;
                         let chunk_z = place_pos.2 >> 4;
                         let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
@@ -1671,6 +1692,22 @@ impl App {
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
                     self.breaking_block_pos = None;
+                    self.player.on_ground = false;
+                    self.player_on_ground = false;
+                    self.player.fall_distance = 0.0;
+
+                    // Revert any unconfirmed predicted blocks on setback/teleport to prevent ghost block stuttering
+                    for (pos, _) in self.predicted_blocks.drain() {
+                        if self.world.get_block(pos.0, pos.1, pos.2).id() != 0 {
+                            self.world.set_block(pos.0, pos.1, pos.2, BlockState::AIR);
+                            let chunk_x = pos.0 >> 4;
+                            let chunk_z = pos.2 >> 4;
+                            let sec_idx = ((pos.1 >> 4) as usize).min(15);
+                            if let Some(cm) = &mut self.chunk_manager {
+                                cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                            }
+                        }
+                    }
 
                     // MCP parity: teleport confirmed immediately to server with C06.
                     // Sync last_reported_pos and last_reported_look with the confirmed position
@@ -1864,6 +1901,7 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::BlockChange(bc) => {
+                    self.predicted_blocks.remove(&(bc.position.x, bc.position.y, bc.position.z));
                     self.world.set_block(
                         bc.position.x,
                         bc.position.y,
@@ -1905,6 +1943,7 @@ impl App {
                         let world_x = (mbc.chunk_x << 4) + rel_x;
                         let world_z = (mbc.chunk_z << 4) + rel_z;
                         let y = rec.y as i32;
+                        self.predicted_blocks.remove(&(world_x, y, world_z));
                         self.world.set_block(
                             world_x,
                             y,
@@ -2917,12 +2956,7 @@ impl App {
             }
 
             let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
-            let (chunk_x, chunk_z) = world::World::chunk_coords(
-                self.player.pos.x.floor() as i32,
-                self.player.pos.z.floor() as i32,
-            );
-            let is_chunk_loaded = self.world.is_chunk_loaded(chunk_x, chunk_z);
-            let can_simulate_physics = (self.has_spawned || (self.session.is_none() && is_in_game)) && is_chunk_loaded;
+            let can_simulate_physics = self.has_spawned || (self.session.is_none() && is_in_game);
             let prev_sprint = self.player.is_sprinting;
             let prev_sneak = self.player.is_sneaking;
 
@@ -3193,8 +3227,8 @@ impl App {
                         }
                     }
                 }
-            } else if self.session.is_some() && (!self.has_spawned || !is_chunk_loaded) {
-                // In multiplayer, freeze motion while waiting for initial spawn or chunk data to load (MCP parity EntityPlayerSP.java line 170)
+            } else if self.session.is_some() && !self.has_spawned {
+                // In multiplayer, freeze motion only before initial spawn packet (MCP parity doneLoadingTerrain)
                 self.player.motion = glam::DVec3::ZERO;
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                 self.player_look = (self.player.yaw, self.player.pitch);
@@ -4342,10 +4376,10 @@ impl ApplicationHandler for App {
                                     })
                                 };
                                 lp.equipment[0] = to_slot(&self.hotbar_items[self.selected_hotbar_slot as usize]);
-                                lp.equipment[1] = to_slot(&self.armor_items[0]); // boots
-                                lp.equipment[2] = to_slot(&self.armor_items[1]); // leggings
-                                lp.equipment[3] = to_slot(&self.armor_items[2]); // chestplate
-                                lp.equipment[4] = to_slot(&self.armor_items[3]); // helmet
+                                lp.equipment[1] = to_slot(&self.armor_items[3]); // boots
+                                lp.equipment[2] = to_slot(&self.armor_items[2]); // leggings
+                                lp.equipment[3] = to_slot(&self.armor_items[1]); // chestplate
+                                lp.equipment[4] = to_slot(&self.armor_items[0]); // helmet
                                 Some(lp)
                             } else {
                                 None

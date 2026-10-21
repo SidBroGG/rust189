@@ -210,3 +210,34 @@ fn test_container_packets_roundtrip() {
     assert_eq!(sign.position, Position::new(10, 64, -20));
     assert_eq!(sign.lines[0], "Line 1");
 }
+
+#[test]
+fn test_armor_slot_validation_and_shift_click() {
+    let mut inv = ContainerState::new_player_inventory();
+
+    // 1. Shift-click helmet (id 310: Diamond Helmet) from slot 36 equips into slot 5
+    inv.set_slot(36, Some(Slot::new(310, 1, 0, None)));
+    inv.handle_shift_click(36);
+    assert!(inv.slots[36].is_none(), "Origin slot 36 should be empty after equipping armor");
+    assert_eq!(inv.slots[5].as_ref().map(|s| s.item_id), Some(310), "Slot 5 should hold Diamond Helmet");
+
+    // 2. Shift-click boots (id 313: Diamond Boots) from slot 37 equips into slot 8
+    inv.set_slot(37, Some(Slot::new(313, 1, 0, None)));
+    inv.handle_shift_click(37);
+    assert!(inv.slots[37].is_none());
+    assert_eq!(inv.slots[8].as_ref().map(|s| s.item_id), Some(313));
+
+    // 3. Normal click on armor slot with invalid item (Cobblestone id 4) should be rejected
+    inv.carried_item = Some(Slot::new(4, 64, 0, None));
+    let res = inv.handle_normal_click(6, false); // chestplate slot
+    assert!(res.is_none());
+    assert_eq!(inv.carried_item.as_ref().map(|s| s.item_id), Some(4));
+    assert!(inv.slots[6].is_none(), "Chestplate slot 6 should not accept cobblestone");
+
+    // 4. Normal click on armor slot with valid item (Diamond Chestplate id 311) puts down 1 piece
+    inv.carried_item = Some(Slot::new(311, 1, 0, None));
+    inv.handle_normal_click(6, false);
+    assert!(inv.carried_item.is_none());
+    assert_eq!(inv.slots[6].as_ref().map(|s| s.item_id), Some(311));
+}
+

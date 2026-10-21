@@ -300,6 +300,24 @@ impl ContainerState {
             return None;
         }
 
+        let is_armor_slot = self.kind == ContainerKind::Player && (5..=8).contains(&idx);
+        if is_armor_slot {
+            if let Some(ref carried) = self.carried_item {
+                let required_slot = (idx - 5) as u8;
+                let def = get_item_def(carried.item_id);
+                let is_valid = match def {
+                    Some(d) => {
+                        d.armor_slot == Some(required_slot)
+                            || (required_slot == 0 && (carried.item_id == 86 || carried.item_id == 397))
+                    }
+                    None => false,
+                };
+                if !is_valid {
+                    return None;
+                }
+            }
+        }
+
         match (&mut self.carried_item, slot_item) {
             // Case 1: Cursor empty, Slot has item -> pick up
             (None, Some(item)) => {
@@ -321,7 +339,11 @@ impl ContainerState {
             }
             // Case 2: Cursor has item, Slot empty -> put down
             (Some(ref mut carried), None) => {
-                let max_stack = get_item_max_stack(carried.item_id) as i8;
+                let max_stack = if is_armor_slot {
+                    1
+                } else {
+                    get_item_max_stack(carried.item_id) as i8
+                };
                 if is_right_click {
                     // Right click: put 1 item
                     self.slots[idx] = Some(Slot::new(carried.item_id, 1, carried.item_damage, carried.nbt.clone()));
@@ -423,9 +445,14 @@ impl ContainerState {
                     if let Some(armor_slot) = def.armor_slot {
                         let target_slot = 5 + (armor_slot as usize);
                         if self.slots[target_slot].is_none() {
-                            self.slots[target_slot] = Some(item.clone());
+                            self.slots[target_slot] = Some(Slot::new(item.item_id, 1, item.item_damage, item.nbt.clone()));
+                            item.item_count -= 1;
                             armor_placed = true;
                         }
+                    } else if (item.item_id == 86 || item.item_id == 397) && self.slots[5].is_none() {
+                        self.slots[5] = Some(Slot::new(item.item_id, 1, item.item_damage, item.nbt.clone()));
+                        item.item_count -= 1;
+                        armor_placed = true;
                     }
                 }
             }
