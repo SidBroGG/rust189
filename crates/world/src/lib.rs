@@ -1,4 +1,5 @@
 pub mod block;
+pub mod block_entity;
 pub mod chat;
 pub mod chunk;
 pub mod entity;
@@ -14,6 +15,7 @@ pub mod section;
 pub mod tab_list;
 pub mod world;
 
+pub use block_entity::*;
 pub use map::{MapData, MapDecoration, MAP_BASE_COLORS, MAP_SHADE_MULTIPLIERS};
 
 pub use inventory::{

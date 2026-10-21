@@ -273,7 +273,7 @@ impl EntityRenderer {
         }
     }
 
-    fn create_gpu_skin(
+    pub fn create_gpu_skin(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         layout: &wgpu::BindGroupLayout,
@@ -1196,7 +1196,7 @@ pub fn get_item_render_texture_key(item_id: i16, damage: i16) -> (String, bool) 
 }
 
 /// Helper function to load texture image from filesystem with safe procedural fallbacks.
-fn load_entity_texture(key: &str) -> RgbaImage {
+pub fn load_entity_texture(key: &str) -> RgbaImage {
     let clean_key = key.trim_start_matches('/');
     let mut key_variants = vec![clean_key.to_string()];
 

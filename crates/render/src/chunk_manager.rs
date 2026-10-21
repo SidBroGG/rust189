@@ -22,6 +22,7 @@ pub struct NeighborhoodSnapshot {
     pub blocks: Box<[BlockState; NEIGHBORHOOD_VOL]>,
     pub block_light: Box<[u8; NEIGHBORHOOD_VOL]>,
     pub sky_light: Box<[u8; NEIGHBORHOOD_VOL]>,
+    pub animating_positions: hashbrown::HashSet<(i32, i32, i32)>,
 }
 
 impl NeighborhoodSnapshot {
@@ -126,6 +127,18 @@ impl NeighborhoodSnapshot {
             }
         }
 
+        let mut animating_positions = hashbrown::HashSet::new();
+        for (&(x, y, z), _be) in &world.block_entities {
+            if x >= base_x - 1 && x <= base_x + 16
+                && y >= base_y - 1 && y <= base_y + 16
+                && z >= base_z - 1 && z <= base_z + 16
+            {
+                if world.is_block_entity_animating(x, y, z) {
+                    animating_positions.insert((x, y, z));
+                }
+            }
+        }
+
         Self {
             base_x,
             base_y,
@@ -133,6 +146,7 @@ impl NeighborhoodSnapshot {
             blocks: blocks.try_into().unwrap(),
             block_light: block_light.try_into().unwrap(),
             sky_light: sky_light.try_into().unwrap(),
+            animating_positions,
         }
     }
 }
@@ -181,6 +195,11 @@ impl BlockWorldAccessor for NeighborhoodSnapshot {
         } else {
             15
         }
+    }
+
+    #[inline]
+    fn is_block_entity_animating(&self, x: i32, y: i32, z: i32) -> bool {
+        self.animating_positions.contains(&(x, y, z))
     }
 }
 
@@ -265,6 +284,14 @@ impl ChunkMeshManager {
     pub fn mark_section_dirty(&mut self, chunk_x: i32, section_y: usize, chunk_z: i32) {
         if section_y < 16 {
             self.dirty_sections.insert((chunk_x, chunk_z, section_y));
+        }
+    }
+
+    /// Marks the chunk section containing voxel (x, y, z) as dirty.
+    #[inline]
+    pub fn mark_block_dirty(&mut self, x: i32, y: i32, z: i32) {
+        if (0..256).contains(&y) {
+            self.mark_section_dirty(x >> 4, (y >> 4) as usize, z >> 4);
         }
     }
 

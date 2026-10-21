@@ -1,5 +1,6 @@
 use crate::codec::buf_ext::{BufExt, BufMutExt};
 use crate::codec::metadata::MetadataEntry;
+use crate::codec::nbt::{read_named_compound, write_named_compound, NbtTag};
 use crate::codec::position::Position;
 use crate::codec::slot::{read_slot, write_slot, Slot};
 use crate::error::ProtocolError;
@@ -2400,4 +2401,121 @@ impl ClientboundCameraPacket {
         Ok(())
     }
 }
+
+/// Clientbound Block Action / Block Event packet (0x24).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundBlockActionPacket {
+    pub position: Position,
+    pub data1: u8,
+    pub data2: u8,
+    pub block_type: i32,
+}
+
+impl ClientboundBlockActionPacket {
+    pub const PACKET_ID: i32 = 0x24;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let position = Position::read(buf)?;
+        if buf.remaining() < 2 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 2,
+                available: buf.remaining(),
+            });
+        }
+        let data1 = buf.get_u8();
+        let data2 = buf.get_u8();
+        let block_type = buf.read_varint()? & 4095;
+        Ok(Self {
+            position,
+            data1,
+            data2,
+            block_type,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        self.position.write(buf);
+        buf.extend_from_slice(&[self.data1, self.data2]);
+        buf.write_varint(self.block_type & 4095);
+        Ok(())
+    }
+}
+
+/// Clientbound Update Sign packet (0x33).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientboundUpdateSignPacket {
+    pub position: Position,
+    pub lines: [String; 4],
+}
+
+impl ClientboundUpdateSignPacket {
+    pub const PACKET_ID: i32 = 0x33;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let position = Position::read(buf)?;
+        let mut lines = [String::new(), String::new(), String::new(), String::new()];
+        for line in &mut lines {
+            *line = buf.read_string(32767)?;
+        }
+        Ok(Self { position, lines })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        self.position.write(buf);
+        for line in &self.lines {
+            buf.write_string(line)?;
+        }
+        Ok(())
+    }
+}
+
+/// Clientbound Update Tile Entity packet (0x35).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientboundUpdateTileEntityPacket {
+    pub position: Position,
+    pub action: u8,
+    pub nbt_data: Option<NbtTag>,
+}
+
+impl ClientboundUpdateTileEntityPacket {
+    pub const PACKET_ID: i32 = 0x35;
+
+    pub fn decode(buf: &mut Bytes) -> Result<Self, ProtocolError> {
+        let position = Position::read(buf)?;
+        if buf.remaining() < 1 {
+            return Err(ProtocolError::BufferUnderflow {
+                needed: 1,
+                available: buf.remaining(),
+            });
+        }
+        let action = buf.get_u8();
+        let nbt_data = if buf.has_remaining() {
+            let (_, tag) = read_named_compound(buf)?;
+            if matches!(tag, NbtTag::End) {
+                None
+            } else {
+                Some(tag)
+            }
+        } else {
+            None
+        };
+        Ok(Self {
+            position,
+            action,
+            nbt_data,
+        })
+    }
+
+    pub fn encode(&self, buf: &mut BytesMut) -> Result<(), ProtocolError> {
+        self.position.write(buf);
+        buf.extend_from_slice(&[self.action]);
+        if let Some(tag) = &self.nbt_data {
+            write_named_compound("", tag, buf)?;
+        } else {
+            buf.extend_from_slice(&[0u8]); // Tag_End
+        }
+        Ok(())
+    }
+}
+
 

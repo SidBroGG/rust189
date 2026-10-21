@@ -2470,6 +2470,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "bytes",
  "glam",
  "hashbrown 0.15.5",
  "image",

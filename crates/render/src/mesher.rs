@@ -31,6 +31,10 @@ pub trait BlockWorldAccessor {
     fn block_at(&self, x: i32, y: i32, z: i32) -> BlockState;
     fn block_light_at(&self, x: i32, y: i32, z: i32) -> u8;
     fn sky_light_at(&self, x: i32, y: i32, z: i32) -> u8;
+    #[inline]
+    fn is_block_entity_animating(&self, _x: i32, _y: i32, _z: i32) -> bool {
+        false
+    }
 }
 
 /// High-performance chunk mesher with assets-based models, blockstates, textures,
@@ -237,6 +241,54 @@ impl ChunkMesher {
                             &mut mesh.translucent_indices,
                         );
                         continue;
+                    }
+
+                    // Dynamic-only block entities are rendered by BlockEntityRenderer
+                    if matches!(block_id, 63 | 68 | 176 | 177 | 119 | 36) {
+                        continue;
+                    }
+
+                    // Static Block Entity Baking (Chests ID 54, 130, 146 & Skulls ID 144)
+                    if matches!(block_id, 54 | 130 | 146) {
+                        if world.is_block_entity_animating(wx, wy, wz) {
+                            continue;
+                        } else {
+                            Self::bake_static_chest(
+                                block,
+                                wx,
+                                wy,
+                                wz,
+                                lx as f32,
+                                ly as f32,
+                                lz as f32,
+                                world,
+                                atlas,
+                                &mut mesh.opaque_vertices,
+                                &mut mesh.opaque_indices,
+                            );
+                            continue;
+                        }
+                    }
+
+                    if block_id == 144 {
+                        if world.is_block_entity_animating(wx, wy, wz) {
+                            continue;
+                        } else {
+                            Self::bake_static_skull(
+                                block,
+                                wx,
+                                wy,
+                                wz,
+                                lx as f32,
+                                ly as f32,
+                                lz as f32,
+                                world,
+                                atlas,
+                                &mut mesh.opaque_vertices,
+                                &mut mesh.opaque_indices,
+                            );
+                            continue;
+                        }
                     }
 
                     let model = match atlas.models.get_model(block, wx, wy, wz, world) {
@@ -929,6 +981,168 @@ impl ChunkMesher {
 
         (ao, [avg_bl, avg_sl])
     }
+
+    /// Bakes a static closed chest directly into chunk geometry for maximum storage-room performance.
+    fn bake_static_chest<W: BlockWorldAccessor>(
+        block: BlockState,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        lx: f32,
+        ly: f32,
+        lz: f32,
+        world: &W,
+        atlas: &TextureAtlas,
+        vertices: &mut Vec<BlockVertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        let tex_name = match block.id() {
+            130 => "chest_ender",
+            146 => "chest_trapped",
+            _ => "chest_normal",
+        };
+        let region = atlas
+            .regions
+            .get(tex_name)
+            .or_else(|| atlas.regions.get("planks_oak"))
+            .copied()
+            .unwrap_or(atlas.fallback_region);
+
+        // Chest box: 14x14x14 units (0.0625 to 0.9375, height 0.875)
+        let x0 = lx + 0.0625;
+        let x1 = lx + 0.9375;
+        let y0 = ly;
+        let y1 = ly + 0.875;
+        let z0 = lz + 0.0625;
+        let z1 = lz + 0.9375;
+
+        let bl = world.block_light_at(wx, wy + 1, wz);
+        let sl = world.sky_light_at(wx, wy + 1, wz);
+        let light = [bl as f32 / 15.0, sl as f32 / 15.0];
+        let ao = 3u8;
+        let tint = [1.0, 1.0, 1.0];
+
+        // 6 faces: Up, Down, North, South, West, East
+        let faces = [
+            (
+                [[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]],
+                BlockFace::Up,
+            ),
+            (
+                [[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]],
+                BlockFace::Down,
+            ),
+            (
+                [[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]],
+                BlockFace::North,
+            ),
+            (
+                [[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]],
+                BlockFace::South,
+            ),
+            (
+                [[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]],
+                BlockFace::West,
+            ),
+            (
+                [[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]],
+                BlockFace::East,
+            ),
+        ];
+
+        for (pos_arr, face) in faces {
+            let uvs = [
+                [region.u_min, region.v_max],
+                [region.u_max, region.v_max],
+                [region.u_max, region.v_min],
+                [region.u_min, region.v_min],
+            ];
+            let base = vertices.len() as u32;
+            for i in 0..4 {
+                vertices.push(BlockVertex::pack(
+                    pos_arr[i],
+                    uvs[i],
+                    light,
+                    ao,
+                    tint,
+                    face.index(),
+                    (0, 0),
+                    false,
+                    true,
+                ));
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
+
+    /// Bakes a static skull/head directly into chunk geometry.
+    fn bake_static_skull<W: BlockWorldAccessor>(
+        _block: BlockState,
+        wx: i32,
+        wy: i32,
+        wz: i32,
+        lx: f32,
+        ly: f32,
+        lz: f32,
+        world: &W,
+        atlas: &TextureAtlas,
+        vertices: &mut Vec<BlockVertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        let region = atlas
+            .regions
+            .get("soul_sand")
+            .or_else(|| atlas.regions.get("stone"))
+            .copied()
+            .unwrap_or(atlas.fallback_region);
+
+        // Skull 8x8x8 centered box: [0.25..0.75, 0..0.5, 0.25..0.75]
+        let x0 = lx + 0.25;
+        let x1 = lx + 0.75;
+        let y0 = ly;
+        let y1 = ly + 0.5;
+        let z0 = lz + 0.25;
+        let z1 = lz + 0.75;
+
+        let bl = world.block_light_at(wx, wy + 1, wz);
+        let sl = world.sky_light_at(wx, wy + 1, wz);
+        let light = [bl as f32 / 15.0, sl as f32 / 15.0];
+        let ao = 3u8;
+        let tint = [1.0, 1.0, 1.0];
+
+        let faces = [
+            ([[x0, y1, z1], [x1, y1, z1], [x1, y1, z0], [x0, y1, z0]], BlockFace::Up),
+            ([[x0, y0, z0], [x1, y0, z0], [x1, y0, z1], [x0, y0, z1]], BlockFace::Down),
+            ([[x1, y0, z0], [x0, y0, z0], [x0, y1, z0], [x1, y1, z0]], BlockFace::North),
+            ([[x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]], BlockFace::South),
+            ([[x0, y0, z0], [x0, y0, z1], [x0, y1, z1], [x0, y1, z0]], BlockFace::West),
+            ([[x1, y0, z1], [x1, y0, z0], [x1, y1, z0], [x1, y1, z1]], BlockFace::East),
+        ];
+
+        for (pos_arr, face) in faces {
+            let uvs = [
+                [region.u_min, region.v_max],
+                [region.u_max, region.v_max],
+                [region.u_max, region.v_min],
+                [region.u_min, region.v_min],
+            ];
+            let base = vertices.len() as u32;
+            for i in 0..4 {
+                vertices.push(BlockVertex::pack(
+                    pos_arr[i],
+                    uvs[i],
+                    light,
+                    ao,
+                    tint,
+                    face.index(),
+                    (0, 0),
+                    false,
+                    true,
+                ));
+            }
+            indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+        }
+    }
 }
 
 impl BlockWorldAccessor for world::World {
@@ -945,6 +1159,11 @@ impl BlockWorldAccessor for world::World {
     #[inline]
     fn sky_light_at(&self, x: i32, y: i32, z: i32) -> u8 {
         self.sky_light_at(x, y, z)
+    }
+
+    #[inline]
+    fn is_block_entity_animating(&self, x: i32, y: i32, z: i32) -> bool {
+        self.is_block_entity_animating(x, y, z)
     }
 }
 

@@ -62,6 +62,9 @@ pub enum ClientboundPlayPacket {
     AttachEntity(ClientboundAttachEntityPacket),
     Maps(ClientboundMapsPacket),
     Camera(ClientboundCameraPacket),
+    BlockAction(ClientboundBlockActionPacket),
+    UpdateSign(ClientboundUpdateSignPacket),
+    UpdateTileEntity(ClientboundUpdateTileEntityPacket),
     Unknown { id: i32, payload_len: usize },
 }
 
@@ -224,6 +227,15 @@ impl ClientboundPlayPacket {
             }
             ClientboundCameraPacket::PACKET_ID => {
                 Ok(Self::Camera(ClientboundCameraPacket::decode(payload)?))
+            }
+            ClientboundBlockActionPacket::PACKET_ID => {
+                Ok(Self::BlockAction(ClientboundBlockActionPacket::decode(payload)?))
+            }
+            ClientboundUpdateSignPacket::PACKET_ID => {
+                Ok(Self::UpdateSign(ClientboundUpdateSignPacket::decode(payload)?))
+            }
+            ClientboundUpdateTileEntityPacket::PACKET_ID => {
+                Ok(Self::UpdateTileEntity(ClientboundUpdateTileEntityPacket::decode(payload)?))
             }
             other => Ok(Self::Unknown {
                 id: other,

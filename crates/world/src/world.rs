@@ -1,4 +1,9 @@
 use crate::block::BlockState;
+use crate::block_entity::{
+    BannerBlockEntity, BeaconBlockEntity, BlockEntity, ChestBlockEntity, ChestType, DoubleChestType,
+    EnchantmentTableBlockEntity, EndPortalBlockEntity, MobSpawnerBlockEntity, PistonBlockEntity,
+    SignBlockEntity, SkullBlockEntity,
+};
 use crate::chunk::{ChunkColumn, WorldError};
 use crate::entity::EntityTracker;
 use crate::map::MapData;
@@ -9,6 +14,7 @@ use hashbrown::HashMap;
 pub struct World {
     pub chunks: HashMap<(i32, i32), ChunkColumn>,
     pub entity_tracker: EntityTracker,
+    pub block_entities: HashMap<(i32, i32, i32), BlockEntity>,
     pub maps: HashMap<i32, MapData>,
     pub dimension: i8, // 0 = Overworld, -1 = Nether, 1 = End
     pub time: i64,
@@ -20,6 +26,7 @@ impl World {
         Self {
             chunks: HashMap::new(),
             entity_tracker: EntityTracker::new(),
+            block_entities: HashMap::new(),
             maps: HashMap::new(),
             dimension: 0,
             time: 0,
@@ -73,6 +80,7 @@ impl World {
             .entry(chunk_pos)
             .or_insert_with(|| ChunkColumn::new(chunk_pos.0, chunk_pos.1, has_sky));
         chunk.set_block(rel_x, y as usize, rel_z, state);
+        self.update_block_entity_on_set(x, y, z, state);
     }
 
     #[inline]
@@ -128,6 +136,8 @@ impl World {
 
     #[inline]
     pub fn unload_chunk(&mut self, x: i32, z: i32) -> Option<ChunkColumn> {
+        self.block_entities
+            .retain(|&(bx, _, bz), _| (bx >> 4) != x || (bz >> 4) != z);
         self.chunks.remove(&(x, z))
     }
 
@@ -162,9 +172,186 @@ impl World {
         self.chunks.len()
     }
 
+    #[inline]
+    pub fn get_block_entity(&self, x: i32, y: i32, z: i32) -> Option<&BlockEntity> {
+        self.block_entities.get(&(x, y, z))
+    }
+
+    #[inline]
+    pub fn get_block_entity_mut(&mut self, x: i32, y: i32, z: i32) -> Option<&mut BlockEntity> {
+        self.block_entities.get_mut(&(x, y, z))
+    }
+
+    #[inline]
+    pub fn set_block_entity(&mut self, x: i32, y: i32, z: i32, entity: BlockEntity) {
+        self.block_entities.insert((x, y, z), entity);
+    }
+
+    #[inline]
+    pub fn remove_block_entity(&mut self, x: i32, y: i32, z: i32) -> Option<BlockEntity> {
+        self.block_entities.remove(&(x, y, z))
+    }
+
+    /// Automatically initialises or removes block entities when a block changes.
+    pub fn update_block_entity_on_set(&mut self, x: i32, y: i32, z: i32, state: BlockState) {
+        let id = state.id();
+        let meta = state.meta();
+        match id {
+            54 | 146 | 130 => {
+                let chest_type = match id {
+                    130 => ChestType::Ender,
+                    146 => ChestType::Trapped,
+                    _ => ChestType::Normal,
+                };
+                let facing = if (2..=5).contains(&meta) { meta } else { 2 };
+                let mut chest = ChestBlockEntity::new(chest_type, facing, DoubleChestType::Single);
+                if chest_type != ChestType::Ender {
+                    for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                        let nx = x + dx;
+                        let nz = z + dz;
+                        let n_state = self.block_at(nx, y, nz);
+                        if n_state.id() == id {
+                            match facing {
+                                2 => {
+                                    if dx < 0 {
+                                        chest.double_type = DoubleChestType::Right;
+                                    } else if dx > 0 {
+                                        chest.double_type = DoubleChestType::Left;
+                                    }
+                                }
+                                3 => {
+                                    if dx < 0 {
+                                        chest.double_type = DoubleChestType::Left;
+                                    } else if dx > 0 {
+                                        chest.double_type = DoubleChestType::Right;
+                                    }
+                                }
+                                4 => {
+                                    if dz < 0 {
+                                        chest.double_type = DoubleChestType::Left;
+                                    } else if dz > 0 {
+                                        chest.double_type = DoubleChestType::Right;
+                                    }
+                                }
+                                _ => {
+                                    if dz < 0 {
+                                        chest.double_type = DoubleChestType::Right;
+                                    } else if dz > 0 {
+                                        chest.double_type = DoubleChestType::Left;
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                self.block_entities
+                    .insert((x, y, z), BlockEntity::Chest(chest));
+            }
+            63 => {
+                self.block_entities
+                    .insert((x, y, z), BlockEntity::Sign(SignBlockEntity::new(false, meta)));
+            }
+            68 => {
+                self.block_entities
+                    .insert((x, y, z), BlockEntity::Sign(SignBlockEntity::new(true, meta)));
+            }
+            176 => {
+                self.block_entities.insert(
+                    (x, y, z),
+                    BlockEntity::Banner(BannerBlockEntity::new(meta, false, meta)),
+                );
+            }
+            177 => {
+                self.block_entities.insert(
+                    (x, y, z),
+                    BlockEntity::Banner(BannerBlockEntity::new(meta, true, meta)),
+                );
+            }
+            144 => {
+                self.block_entities
+                    .insert((x, y, z), BlockEntity::Skull(SkullBlockEntity::new(0, 0, meta)));
+            }
+            116 => {
+                self.block_entities.insert(
+                    (x, y, z),
+                    BlockEntity::EnchantmentTable(EnchantmentTableBlockEntity::new()),
+                );
+            }
+            138 => {
+                let mut beacon = BeaconBlockEntity::new();
+                beacon.recalculate_beam(y, |by| {
+                    let b = self.block_at(x, by, z);
+                    (b.id(), b.meta())
+                });
+                self.block_entities
+                    .insert((x, y, z), BlockEntity::Beacon(beacon));
+            }
+            119 => {
+                self.block_entities.insert(
+                    (x, y, z),
+                    BlockEntity::EndPortal(EndPortalBlockEntity::default()),
+                );
+            }
+            52 => {
+                self.block_entities.insert(
+                    (x, y, z),
+                    BlockEntity::MobSpawner(MobSpawnerBlockEntity::default()),
+                );
+            }
+            36 => {
+                self.block_entities.insert(
+                    (x, y, z),
+                    BlockEntity::Piston(PistonBlockEntity::new(
+                        BlockState::AIR,
+                        meta & 7,
+                        (meta & 8) != 0,
+                    )),
+                );
+            }
+            0 => {
+                self.block_entities.remove(&(x, y, z));
+            }
+            _ => {}
+        }
+    }
+
+    /// 20 TPS physics tick for all dynamic block entities.
+    pub fn tick_block_entities(&mut self, player_pos: glam::Vec3) {
+        for (&pos, be) in self.block_entities.iter_mut() {
+            match be {
+                BlockEntity::Chest(c) => c.tick(),
+                BlockEntity::EnchantmentTable(e) => {
+                    e.tick(
+                        Some(player_pos),
+                        glam::Vec3::new(pos.0 as f32, pos.1 as f32, pos.2 as f32),
+                    );
+                }
+                BlockEntity::MobSpawner(s) => s.tick(),
+                BlockEntity::Piston(p) => p.tick(),
+                _ => {}
+            }
+        }
+    }
+
+    /// Checks whether the block entity at (x, y, z) is currently animating (e.g. chest opening/closing).
+    pub fn is_block_entity_animating(&self, x: i32, y: i32, z: i32) -> bool {
+        if let Some(be) = self.block_entities.get(&(x, y, z)) {
+            match be {
+                BlockEntity::Chest(c) => !c.is_static_closed(),
+                BlockEntity::Skull(_) => false,
+                _ => true,
+            }
+        } else {
+            false
+        }
+    }
+
     pub fn clear(&mut self) {
         self.chunks.clear();
         self.entity_tracker.clear();
+        self.block_entities.clear();
+        self.maps.clear();
         self.time = 0;
         self.age = 0;
     }

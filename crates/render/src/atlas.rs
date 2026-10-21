@@ -109,6 +109,24 @@ impl TextureAtlas {
             }
         }
 
+        // Load entity chest textures for static block entity baking
+        if let Some(parent) = blocks_dir.parent() {
+            let chest_dir = parent.join("entity/chest");
+            if chest_dir.exists() {
+                let mappings = [
+                    ("chest_normal", "normal.png"),
+                    ("chest_trapped", "trapped.png"),
+                    ("chest_ender", "ender.png"),
+                ];
+                for (name, fname) in mappings {
+                    let p = chest_dir.join(fname);
+                    if let Ok(img) = image::open(&p) {
+                        loaded_textures.push((name.to_string(), img, None));
+                    }
+                }
+            }
+        }
+
         loaded_textures.sort_by(|a, b| a.0.cmp(&b.0));
 
         let fallback_img = Self::create_fallback_texture();

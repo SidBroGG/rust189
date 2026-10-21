@@ -9,11 +9,11 @@ use gui::{
 };
 use protocol::{
     connect_offline, BlockFace, ClientStatusAction, ClientboundPlayPacket, DiggingAction,
-    OutgoingPlayPacket, PlaySessionHandle, Position, Slot, UseEntityAction,
+    NbtTag, OutgoingPlayPacket, PlaySessionHandle, Position, Slot, UseEntityAction,
 };
 use render::{
-    Camera, ChunkMeshManager, EntityRenderer, Frustum, GpuContext, InteractionRenderer,
-    TerrainRenderer, TextureAtlas,
+    BlockEntityRenderer, Camera, ChunkMeshManager, EntityRenderer, Frustum, GpuContext,
+    InteractionRenderer, TerrainRenderer, TextureAtlas,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -70,6 +70,7 @@ pub struct App {
     pub terrain_renderer: Option<TerrainRenderer>,
     pub chunk_manager: Option<ChunkMeshManager>,
     pub entity_renderer: Option<EntityRenderer>,
+    pub block_entity_renderer: Option<BlockEntityRenderer>,
     pub skin_manager: SkinManager,
     pub camera: Camera,
     pub mouse_grabbed: bool,
@@ -151,6 +152,7 @@ impl App {
             terrain_renderer: None,
             chunk_manager: None,
             entity_renderer: None,
+            block_entity_renderer: None,
             skin_manager: SkinManager::new(Path::new("assets")),
             camera: Camera::default(),
             mouse_grabbed: false,
@@ -2725,6 +2727,108 @@ impl App {
                         self.riding_entity_id = None;
                     }
                 }
+                ClientboundPlayPacket::BlockAction(ba) => {
+                    let pos = (ba.position.x, ba.position.y, ba.position.z);
+                    if let Some(world::BlockEntity::Chest(chest)) = self.world.block_entities.get_mut(&pos) {
+                        let was_closed = chest.is_static_closed();
+                        if ba.data1 == 1 {
+                            chest.num_players_using = ba.data2 as i32;
+                        }
+                        let is_closed = chest.is_static_closed();
+                        if was_closed != is_closed {
+                            if let Some(cm) = &mut self.chunk_manager {
+                                cm.mark_block_dirty(pos.0, pos.1, pos.2);
+                            }
+                        }
+                    }
+                }
+                ClientboundPlayPacket::UpdateSign(us) => {
+                    let pos = (us.position.x, us.position.y, us.position.z);
+                    if let Some(world::BlockEntity::Sign(sign)) = self.world.block_entities.get_mut(&pos) {
+                        sign.lines = us.lines;
+                    } else {
+                        let mut sign = world::SignBlockEntity::new(false, 0);
+                        sign.lines = us.lines;
+                        self.world.block_entities.insert(pos, world::BlockEntity::Sign(sign));
+                    }
+                }
+                ClientboundPlayPacket::UpdateTileEntity(ute) => {
+                    let pos = (ute.position.x, ute.position.y, ute.position.z);
+                    if let Some(NbtTag::Compound(map)) = &ute.nbt_data {
+                        match ute.action {
+                            1 => {
+                                if let Some(NbtTag::String(id_str)) = map.get("EntityId") {
+                                    if let Some(world::BlockEntity::MobSpawner(spawner)) = self.world.block_entities.get_mut(&pos) {
+                                        spawner.mob_type = id_str.clone();
+                                    }
+                                }
+                            }
+                            3 => {
+                                let column_blocks: Vec<(u16, u8)> = ((pos.1 + 1)..256)
+                                    .map(|by| {
+                                        let b = self.world.block_at(pos.0, by, pos.2);
+                                        (b.id(), b.meta())
+                                    })
+                                    .collect();
+                                if let Some(world::BlockEntity::Beacon(beacon)) = self.world.block_entities.get_mut(&pos) {
+                                    beacon.is_active = true;
+                                    beacon.recalculate_beam(pos.1, |by| {
+                                        let idx = (by - (pos.1 + 1)) as usize;
+                                        column_blocks.get(idx).copied().unwrap_or((0, 0))
+                                    });
+                                }
+                            }
+                            4 => {
+                                let skull_type = map.get("SkullType").and_then(|t| match t {
+                                    NbtTag::Byte(b) => Some(*b as u8),
+                                    _ => None,
+                                }).unwrap_or(0);
+                                let rot = map.get("Rot").and_then(|t| match t {
+                                    NbtTag::Byte(b) => Some(*b as u8),
+                                    _ => None,
+                                }).unwrap_or(0);
+                                if let Some(world::BlockEntity::Skull(skull)) = self.world.block_entities.get_mut(&pos) {
+                                    skull.skull_type = skull_type;
+                                    skull.rotation = rot;
+                                } else {
+                                    let skull = world::SkullBlockEntity::new(skull_type, rot, 1);
+                                    self.world.block_entities.insert(pos, world::BlockEntity::Skull(skull));
+                                }
+                            }
+                            6 => {
+                                let base_col = map.get("Base").and_then(|t| match t {
+                                    NbtTag::Int(i) => Some(*i as u8),
+                                    _ => None,
+                                }).unwrap_or(0);
+                                let mut patterns = Vec::new();
+                                if let Some(NbtTag::List { elements, .. }) = map.get("Patterns") {
+                                    for elem in elements {
+                                        if let NbtTag::Compound(comp) = elem {
+                                            let pat = comp.get("Pattern").and_then(|p| match p {
+                                                NbtTag::String(s) => Some(s.clone()),
+                                                _ => None,
+                                            }).unwrap_or_default();
+                                            let col = comp.get("Color").and_then(|c| match c {
+                                                NbtTag::Int(i) => Some(*i as u8),
+                                                _ => None,
+                                            }).unwrap_or(0);
+                                            patterns.push((pat, col));
+                                        }
+                                    }
+                                }
+                                if let Some(world::BlockEntity::Banner(banner)) = self.world.block_entities.get_mut(&pos) {
+                                    banner.base_color = base_col;
+                                    banner.patterns = patterns;
+                                } else {
+                                    let mut banner = world::BannerBlockEntity::new(base_col, false, 0);
+                                    banner.patterns = patterns;
+                                    self.world.block_entities.insert(pos, world::BlockEntity::Banner(banner));
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 ClientboundPlayPacket::Unknown { payload_len, .. } => {
                     self.profiler.on_bytes_received(payload_len);
                 }
@@ -2742,6 +2846,22 @@ impl App {
             self.last_physics_tick += Duration::from_millis(50);
             ticks_run += 1;
             self.world.entity_tracker.tick();
+            let ppos = glam::Vec3::new(self.player.pos.x as f32, self.player.pos.y as f32, self.player.pos.z as f32);
+            self.world.tick_block_entities(ppos);
+
+            let mut finished_closing = Vec::new();
+            for (&pos, be) in &self.world.block_entities {
+                if let world::BlockEntity::Chest(c) = be {
+                    if c.is_static_closed() && c.prev_lid_angle > 0.0 {
+                        finished_closing.push(pos);
+                    }
+                }
+            }
+            if let Some(cm) = &mut self.chunk_manager {
+                for pos in finished_closing {
+                    cm.mark_block_dirty(pos.0, pos.1, pos.2);
+                }
+            }
 
             // Client-side physics refinement and block collision for arrows and dropped items
             let mut physics_updates = Vec::new();
@@ -3332,6 +3452,10 @@ impl ApplicationHandler for App {
             &default_steve,
             arrow_img.as_ref(),
         );
+        let block_entity_renderer = BlockEntityRenderer::new(
+            &gpu.device,
+            gpu.surface_config.format,
+        );
 
         self.camera.aspect = (gpu.size.width as f32) / (gpu.size.height.max(1) as f32);
         self.camera.fov = self.config.video.fov as f32;
@@ -3348,6 +3472,7 @@ impl ApplicationHandler for App {
         self.terrain_renderer = Some(terrain_renderer);
         self.chunk_manager = Some(chunk_manager);
         self.entity_renderer = Some(entity_renderer);
+        self.block_entity_renderer = Some(block_entity_renderer);
         self.interaction_renderer = Some(interaction_renderer);
 
         self.window = Some(window);
@@ -4418,6 +4543,20 @@ impl ApplicationHandler for App {
                                 local_player_entity.as_ref(),
                                 Some(&self.world.maps),
                                 self.player.is_spectator,
+                            );
+                        }
+
+                        // 2.5. Render dynamic block entities (TESRs)
+                        if let Some(ber) = &mut self.block_entity_renderer {
+                            let dt_ms = (self.last_physics_tick.elapsed().as_millis() as f32).clamp(0.0, 50.0);
+                            let partial_ticks = (dt_ms / 50.0).clamp(0.0, 1.0);
+                            ber.render(
+                                &gpu.device,
+                                &gpu.queue,
+                                &mut rpass,
+                                &self.world,
+                                &self.camera,
+                                partial_ticks,
                             );
                         }
 
