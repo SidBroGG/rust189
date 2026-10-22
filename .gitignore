@@ -39,3 +39,5 @@ profile_benchmark.json
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+/.omp/
