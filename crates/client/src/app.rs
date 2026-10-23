@@ -1686,6 +1686,8 @@ impl App {
                         // MCP parity: Close all open screens on teleport (NetHandlerPlayClient line 725 displayGuiScreen(null))
                         sm.reset_modals();
                         if let Some(ig) = &mut sm.in_game {
+                            ig.hud_data.health = self.player_health;
+                            ig.death_ticks = 0;
                             ig.pos = self.player_pos;
                             ig.look = self.player_look;
                         }
@@ -2364,10 +2366,20 @@ impl App {
                         }
                     }
                 }
-                ClientboundPlayPacket::ConfirmTransaction(_ct) => {
+                ClientboundPlayPacket::ConfirmTransaction(ct) => {
                     // MCP NetHandlerPlayClient.handleConfirmTransaction parity:
-                    // Unaccepted transactions are auto-responded immediately at the socket level
-                    // in session.rs with zero latency and strict FIFO packet ordering.
+                    // Server/anticheats (GrimAC, Vulcan, Watchdog) send transactions to synchronize player ticks.
+                    // Responding in exact FIFO order via the outgoing session queue ensures that
+                    // teleport confirmations (C06) and movement packets are never overtaken by C0F.
+                    if !ct.accepted {
+                        if let Some(s) = &self.session {
+                            s.send(OutgoingPlayPacket::ConfirmTransaction {
+                                window_id: ct.window_id,
+                                action_number: ct.action_number,
+                                accepted: true,
+                            });
+                        }
+                    }
                 }
                 ClientboundPlayPacket::BlockBreakAnim(bba) => {
                     let pos = (bba.position.x, bba.position.y, bba.position.z);
@@ -2404,6 +2416,25 @@ impl App {
                                 ig.escape_menu_opened = false;
                                 ig.chat_opened = false;
                                 ig.hud_editor_opened = false;
+                            }
+                        }
+                    } else if prev_health <= 0.0 && self.player_health > 0.0 {
+                        // Minigame respawn / auto-heal without vanilla C16 respawn packet:
+                        // Server restored player health. Reset death state and reclaim cursor focus!
+                        self.death_time = 0;
+                        if let Some(sm) = &mut self.screen_manager {
+                            sm.reset_modals();
+                            if let Some(ig) = &mut sm.in_game {
+                                ig.hud_data.health = self.player_health;
+                                ig.death_ticks = 0;
+                            }
+                        }
+                        if !self.is_cursor_needed() {
+                            if let Some(w) = &self.window {
+                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                w.set_cursor_visible(false);
+                                self.mouse_grabbed = true;
                             }
                         }
                     }
@@ -2686,6 +2717,14 @@ impl App {
                                     ig.hud_data.health = 20.0;
                                     ig.death_ticks = 0;
                                 }
+                            }
+                        }
+                        if !self.is_cursor_needed() {
+                            if let Some(w) = &self.window {
+                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                w.set_cursor_visible(false);
+                                self.mouse_grabbed = true;
                             }
                         }
                     } else if cgs.state == 4 {
@@ -3090,7 +3129,7 @@ impl App {
                 self.player.pos.z.floor() as i32,
             );
             let player_chunk_loaded = self.session.is_none() || self.world.is_chunk_loaded(player_chunk_x, player_chunk_z);
-            let can_simulate_physics = (self.has_spawned || (self.session.is_none() && is_in_game)) && player_chunk_loaded;
+            let can_simulate_physics = self.has_spawned || (self.session.is_none() && is_in_game);
             let prev_sprint = self.player.is_sprinting;
             let prev_sneak = self.player.is_sneaking;
 
@@ -3241,8 +3280,14 @@ impl App {
                     if !vehicle_exists {
                         self.riding_entity_id = None;
                     }
-                } else {
+                } else if player_chunk_loaded {
                     self.player.tick(&self.world, &input);
+                } else {
+                    // While waiting for chunk data at new teleport coordinates, maintain position
+                    // to prevent falling through unloaded void, but continue ticking 20 TPS movement
+                    // packets so server anticheats (GrimAC, Vulcan) never detect Timer 0 TPS or starvation.
+                    self.player.motion = glam::DVec3::ZERO;
+                    self.player.prev_pos = self.player.pos;
                 }
 
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
@@ -3362,7 +3407,7 @@ impl App {
                     }
                 }
             } else if self.session.is_some() {
-                // In multiplayer, freeze motion while waiting for initial spawn or chunk data (MCP parity doneLoadingTerrain & EntityPlayerSP line 170)
+                // In multiplayer, freeze motion while waiting for initial spawn
                 self.player.motion = glam::DVec3::ZERO;
                 self.player.prev_pos = self.player.pos;
                 self.player_pos = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
