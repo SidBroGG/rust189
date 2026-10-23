@@ -299,6 +299,7 @@ impl EntitySpatialHash {
         dir: DVec3,
         max_distance: f64,
         ignore_id: Option<i32>,
+        partial_ticks: f32,
     ) -> Option<EntityRayHit> {
         if max_distance <= 0.0 || dir.length_squared() < 1e-12 {
             return None;
@@ -310,20 +311,24 @@ impl EntitySpatialHash {
         let mut min_dist = max_distance;
 
         // Iterate tracker entities directly for guaranteed consistency, zero quantization error,
-        // and instant targeting without awaiting physics ticks.
+        // and exact visual hitbox alignment via partial_ticks interpolation.
         for entity in tracker.entities.values() {
             if Some(entity.id) == ignore_id || !entity.can_be_collided_with() {
                 continue;
             }
 
+            let interp_pos = entity.interpolated_pos(partial_ticks);
+
             // Quick radial reject: if entity center is farther than max_distance + 3.0 blocks, skip.
-            let dist_sq = (entity.pos - start).length_squared();
+            let dist_sq = (interp_pos - start).length_squared();
             let max_r = max_distance + 3.0;
             if dist_sq > max_r * max_r {
                 continue;
             }
 
             let mut bb = entity.bounding_box();
+            let offset = interp_pos - entity.pos;
+            bb = bb.offset(offset.x, offset.y, offset.z);
             bb.min_x -= border_size;
             bb.min_y -= border_size;
             bb.min_z -= border_size;
@@ -355,11 +360,16 @@ pub fn pick_target(
     look_dir: DVec3,
     is_creative: bool,
     ignore_entity_id: Option<i32>,
+    partial_ticks: f32,
 ) -> TargetHit {
     let block_reach = if is_creative { CREATIVE_BLOCK_REACH } else { SURVIVAL_BLOCK_REACH };
+    let entity_reach = if is_creative { CREATIVE_BLOCK_REACH } else { 3.0 };
 
     let block_hit = ray_trace_voxels(world, eye_pos, look_dir, block_reach);
-    let search_distance = block_reach;
+    let mut search_distance = block_reach;
+    if let Some(bh) = &block_hit {
+        search_distance = bh.distance;
+    }
 
     let entity_hit = spatial_hash.ray_trace_entities(
         &world.entity_tracker,
@@ -367,12 +377,18 @@ pub fn pick_target(
         look_dir,
         search_distance,
         ignore_entity_id,
+        partial_ticks,
     );
 
     if let Some(eh) = entity_hit {
-        let closer_than_block = block_hit.as_ref().map_or(true, |b| eh.distance <= b.distance);
-        if closer_than_block {
-            return TargetHit::Entity(eh);
+        // MCP 1.8.9 EntityRenderer.java:470 parity:
+        // Entity attack reach is capped at 3.0 blocks in survival.
+        // If entity is within reach and closer than the targeted block, select entity.
+        if eh.distance <= entity_reach {
+            let closer_than_block = block_hit.as_ref().map_or(true, |b| eh.distance <= b.distance);
+            if closer_than_block {
+                return TargetHit::Entity(eh);
+            }
         }
     }
 

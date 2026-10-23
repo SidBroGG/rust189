@@ -305,6 +305,9 @@ impl PlayerMovement {
         self.motion.x = vx;
         self.motion.y = vy;
         self.motion.z = vz;
+        if vy > 0.0 {
+            self.on_ground = false;
+        }
     }
 
     /// Applies explosion impulse (from server packet 0x27 Explosion).
@@ -312,6 +315,9 @@ impl PlayerMovement {
         self.motion.x += mx;
         self.motion.y += my;
         self.motion.z += mz;
+        if my > 0.0 {
+            self.on_ground = false;
+        }
     }
 
     /// Checks environment at current player position.

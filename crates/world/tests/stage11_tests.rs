@@ -85,14 +85,14 @@ fn test_entity_spatial_hashing_and_raycast() {
     let start = DVec3::new(0.0, 65.0, 0.0);
     let dir = DVec3::new(0.0, 0.0, 1.0);
 
-    let hit = spatial_hash.ray_trace_entities(&tracker, start, dir, 15.0, None);
+    let hit = spatial_hash.ray_trace_entities(&tracker, start, dir, 15.0, None, 1.0);
     assert!(hit.is_some(), "Should hit the first entity (Zombie 100)");
     let hit = hit.unwrap();
     assert_eq!(hit.entity_id, 100);
     assert!((hit.distance - 4.6).abs() < 0.2);
 
     // Ignore zombie (id 100), should hit player behind (id 101)
-    let hit_behind = spatial_hash.ray_trace_entities(&tracker, start, dir, 15.0, Some(100));
+    let hit_behind = spatial_hash.ray_trace_entities(&tracker, start, dir, 15.0, Some(100), 1.0);
     assert!(hit_behind.is_some(), "Should hit second entity when first is ignored");
     assert_eq!(hit_behind.unwrap().entity_id, 101);
 }
@@ -113,7 +113,7 @@ fn test_unified_target_picking() {
     let look_dir = DVec3::new(0.0, 0.0, 1.0);
 
     // Entity in front should be picked over the block behind it
-    let target = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None);
+    let target = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None, 1.0);
     match target {
         TargetHit::Entity(eh) => assert_eq!(eh.entity_id, 200),
         _ => panic!("Expected Entity hit"),
@@ -122,7 +122,7 @@ fn test_unified_target_picking() {
     // When entity is removed, block should be picked
     world.entity_tracker.entities.clear();
     spatial_hash.rebuild(&world.entity_tracker);
-    let target2 = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None);
+    let target2 = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None, 1.0);
     match target2 {
         TargetHit::Block(bh) => assert_eq!(bh.block_pos, (0, 64, 4)),
         _ => panic!("Expected Block hit"),
@@ -146,7 +146,7 @@ fn test_npc_armor_stand_interaction_and_marker_exclusion() {
     let look_dir = DVec3::new(0.0, 0.0, 1.0);
 
     // Raycast should hit the ArmorStand NPC at height 1.975 (not the block behind)
-    let target = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None);
+    let target = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None, 1.0);
     match target {
         TargetHit::Entity(eh) => {
             assert_eq!(eh.entity_id, 300);
@@ -165,7 +165,7 @@ fn test_npc_armor_stand_interaction_and_marker_exclusion() {
     world.entity_tracker.update_metadata(301, marker_metadata);
 
     // Marker armorstand must NOT be collided with, ray must pass through to NPC (id 300)
-    let target_through_marker = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None);
+    let target_through_marker = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None, 1.0);
     match target_through_marker {
         TargetHit::Entity(eh) => assert_eq!(eh.entity_id, 300, "Should hit NPC behind marker hologram"),
         _ => panic!("Expected ArmorStand NPC hit through marker"),

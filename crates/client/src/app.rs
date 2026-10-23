@@ -259,6 +259,53 @@ impl App {
         None
     }
 
+    /// Extracts an enchantment level from a Slot's NBT data.
+    pub fn get_slot_enchantment_level(slot: &Slot, ench_id: i16) -> u32 {
+        let Some(NbtTag::Compound(root)) = &slot.nbt else { return 0; };
+        let list_opt = root.get("ench").or_else(|| root.get("StoredEnchantments"));
+        let Some(NbtTag::List { elements, .. }) = list_opt else { return 0; };
+        for elem in elements {
+            if let NbtTag::Compound(map) = elem {
+                let id = match map.get("id") {
+                    Some(NbtTag::Short(s)) => *s,
+                    Some(NbtTag::Int(i)) => *i as i16,
+                    _ => -1,
+                };
+                if id == ench_id {
+                    return match map.get("lvl") {
+                        Some(NbtTag::Short(lvl)) => (*lvl).max(0) as u32,
+                        Some(NbtTag::Int(lvl)) => (*lvl).max(0) as u32,
+                        _ => 0,
+                    };
+                }
+            }
+        }
+        0
+    }
+
+    /// Retrieves active player mining parameters (Efficiency, Haste, Mining Fatigue, Aqua Affinity).
+    pub fn get_player_mining_params(&self) -> (u32, u32, u32, bool) {
+        let held_slot = self.get_current_held_slot();
+        let efficiency_level = held_slot.as_ref().map(|s| Self::get_slot_enchantment_level(s, 32)).unwrap_or(0);
+
+        let haste_level = self.active_potions.iter()
+            .find(|p| p.id == 3)
+            .map(|p| (p.amplifier as u32) + 1)
+            .unwrap_or(0);
+
+        let mining_fatigue_level = self.active_potions.iter()
+            .find(|p| p.id == 4)
+            .map(|p| (p.amplifier as u32) + 1)
+            .unwrap_or(0);
+
+        let helmet_slot = self.screen_manager.as_ref()
+            .and_then(|sm| sm.in_game.as_ref())
+            .and_then(|ig| ig.player_inventory.slots.get(5).cloned().flatten());
+        let has_aqua_affinity = helmet_slot.as_ref().map(|s| Self::get_slot_enchantment_level(s, 6) > 0).unwrap_or(false);
+
+        (efficiency_level, haste_level, mining_fatigue_level, has_aqua_affinity)
+    }
+
     /// Converts a Protocol 47 Slot into displayable HUD item info with name and max durability.
     pub fn get_item_info_from_slot(slot: &Slot) -> HudItemInfo {
         let (name, max_dur) = match slot.item_id {
@@ -477,11 +524,10 @@ impl App {
         self.camera.bob_x = pose.bob_x;
         self.camera.bob_y = pose.bob_y;
 
-        let eye_pos = glam::DVec3::new(
-            self.camera.position.x as f64,
-            self.camera.position.y as f64,
-            self.camera.position.z as f64,
-        );
+        // MCP 1.8.9 EntityRenderer.getMouseOver parity:
+        // Ray origin is ALWAYS player's eyes (interpolated position + eye height),
+        // NEVER the camera position (which in F5 perspective is 4 blocks away and is offset by bobbing).
+        let eye_pos = self.player.get_interpolated_eye_pos(pt);
         let fwd = self.camera.forward();
         let look_dir = glam::DVec3::new(fwd.x as f64, fwd.y as f64, fwd.z as f64);
         self.current_target = pick_target(
@@ -491,6 +537,7 @@ impl App {
             look_dir,
             self.is_creative_mode(),
             Some(self.player_entity_id),
+            pt,
         );
     }
 
@@ -515,6 +562,8 @@ impl App {
                 let attack_reach = if is_creative { 6.0 } else { 3.0 };
                 if eh.distance <= attack_reach {
                     if let Some(s) = &self.session {
+                        // MCP PlayerControllerMP.attackEntity: sync current held item before attack packet
+                        s.send(OutgoingPlayPacket::HeldItemChange(self.selected_hotbar_slot as i16));
                         s.send(OutgoingPlayPacket::UseEntity {
                             entity_id,
                             action: UseEntityAction::Attack,
@@ -524,27 +573,19 @@ impl App {
 
                     // MCP 1.8.9 EntityPlayer.java:1360 parity:
                     // Attacking while sprinting reduces horizontal motion by 0.6 and stops sprinting.
-                    // This matches server anticheat (GrimAC, Vulcan) physics simulation,
-                    // preventing speed setbacks and anticheat bans when hitting players while walking/sprinting.
+                    // StopSprinting packet is sent synchronously on physical tick in onUpdateWalkingPlayer.
                     if self.player.is_sprinting {
                         self.player.motion.x *= 0.6;
                         self.player.motion.z *= 0.6;
                         self.player.is_sprinting = false;
-                        if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::EntityAction {
-                                entity_id: self.player_entity_id,
-                                action: protocol::EntityAction::StopSprinting,
-                                jump_boost: 0,
-                            });
-                        }
                     }
 
                     let is_crit = is_critical_hit(
                         self.player.fall_distance,
                         self.player_on_ground,
-                        false,
-                        false,
-                        false,
+                        self.player.is_on_ladder,
+                        self.player.is_in_water,
+                        self.riding_entity_id.is_some(),
                         false,
                     );
 
@@ -607,14 +648,16 @@ impl App {
                         .id(),
                 );
 
+                let (eff_lvl, haste_lvl, fatigue_lvl, aqua_aff) = self.get_player_mining_params();
+
                 let rel_damage = get_player_relative_block_hardness(
                     block.id(),
                     self.held_item_id,
-                    0,
-                    0,
-                    0,
+                    eff_lvl,
+                    haste_lvl,
+                    fatigue_lvl,
                     in_water,
-                    false,
+                    aqua_aff,
                     self.player_on_ground,
                     false,
                 );
@@ -622,6 +665,7 @@ impl App {
                 if rel_damage >= 1.0 {
                     // Instant destroy (survival zero-hardness block)
                     if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::HeldItemChange(self.selected_hotbar_slot as i16));
                         s.send(OutgoingPlayPacket::PlayerDigging {
                             status: DiggingAction::StartDestroyBlock,
                             position: Position::new(pos.0, pos.1, pos.2),
@@ -651,10 +695,13 @@ impl App {
                     self.recalculate_current_target();
                 } else {
                     self.breaking_block_pos = Some(pos);
-                    self.breaking_block_damage = rel_damage;
+                    // Vanilla MCP PlayerControllerMP.clickBlock parity:
+                    // Damage counter starts at 0.0 and accumulates strictly per physical tick.
+                    self.breaking_block_damage = 0.0;
                     self.breaking_block_face = bh.face;
 
                     if let Some(s) = &self.session {
+                        s.send(OutgoingPlayPacket::HeldItemChange(self.selected_hotbar_slot as i16));
                         s.send(OutgoingPlayPacket::PlayerDigging {
                             status: DiggingAction::StartDestroyBlock,
                             position: Position::new(pos.0, pos.1, pos.2),
@@ -3170,8 +3217,11 @@ impl App {
                     self.recalculate_current_target();
                     if self.is_creative_mode() {
                         if self.block_hit_delay == 0 {
-                            if let TargetHit::Block(_) = self.current_target {
-                                self.handle_left_click();
+                            match self.current_target {
+                                TargetHit::Block(_) | TargetHit::Entity(_) => {
+                                    self.handle_left_click();
+                                }
+                                _ => {}
                             }
                         }
                     } else if let Some(pos) = self.breaking_block_pos {
@@ -3192,14 +3242,16 @@ impl App {
                                     .id(),
                             );
 
+                            let (eff_lvl, haste_lvl, fatigue_lvl, aqua_aff) = self.get_player_mining_params();
+
                             let rel_damage = get_player_relative_block_hardness(
                                 block.id(),
                                 self.held_item_id,
-                                0,
-                                0,
-                                0,
+                                eff_lvl,
+                                haste_lvl,
+                                fatigue_lvl,
                                 in_water,
-                                false,
+                                aqua_aff,
                                 self.player_on_ground,
                                 false,
                             );
@@ -3261,8 +3313,16 @@ impl App {
                                 self.handle_left_click();
                             }
                         }
-                    } else if let TargetHit::Block(_) = self.current_target {
-                        self.handle_left_click();
+                    } else {
+                        match self.current_target {
+                            TargetHit::Block(_) => self.handle_left_click(),
+                            TargetHit::Entity(_) => {
+                                if self.block_hit_delay == 0 {
+                                    self.handle_left_click();
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
 
@@ -4479,11 +4539,9 @@ impl ApplicationHandler for App {
                         let (visible_opaque, visible_translucent) =
                             cm.get_visible_sections(&frustum, self.camera.position);
 
-                        let eye_pos = glam::DVec3::new(
-                            self.camera.position.x as f64,
-                            self.camera.position.y as f64,
-                            self.camera.position.z as f64,
-                        );
+                        let dt_secs = self.last_physics_tick.elapsed().as_secs_f32();
+                        let partial_ticks = (dt_secs / 0.05).clamp(0.0, 1.0);
+                        let eye_pos = self.player.get_interpolated_eye_pos(partial_ticks);
                         let fwd = self.camera.forward();
                         let look_dir = glam::DVec3::new(fwd.x as f64, fwd.y as f64, fwd.z as f64);
                         self.current_target = pick_target(
@@ -4493,6 +4551,7 @@ impl ApplicationHandler for App {
                             look_dir,
                             self.player.capabilities.is_creative,
                             Some(self.player_entity_id),
+                            partial_ticks,
                         );
 
                         if let Some(ir) = &mut self.interaction_renderer {
