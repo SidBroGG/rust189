@@ -587,7 +587,7 @@ impl PlayerMovement {
             let mut f4 = 0.91;
             if self.on_ground {
                 let block_x = self.pos.x.floor() as i32;
-                let block_y = (self.get_aabb().min_y - 0.2).floor() as i32;
+                let block_y = self.get_aabb().min_y.floor() as i32 - 1;
                 let block_z = self.pos.z.floor() as i32;
                 let block_under = world.block_at(block_x, block_y, block_z).id();
                 slipperiness = get_block_slipperiness(block_under) as f64;

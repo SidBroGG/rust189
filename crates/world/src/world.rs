@@ -133,22 +133,31 @@ impl World {
         chunk.load_from_raw_payload(data, bit_mask, ground_up, has_sky)?;
 
         // Scan newly loaded sections for block entities
+        self.scan_and_register_block_entities(x, z, bit_mask);
+
+        Ok(())
+    }
+
+    /// Scans loaded sections of a chunk for tile entities (chests, signs, skulls, etc.) and registers them in `self.block_entities`.
+    pub fn scan_and_register_block_entities(&mut self, chunk_x: i32, chunk_z: i32, bit_mask: u16) {
         let mut new_bes = Vec::new();
-        for sec_idx in 0..16 {
-            if (bit_mask & (1 << sec_idx)) != 0 {
-                if let Some(sec) = &chunk.sections[sec_idx] {
-                    let sec_y_base = (sec_idx as i32) * 16;
-                    for ly in 0..16 {
-                        for lz in 0..16 {
-                            for lx in 0..16 {
-                                let block = sec.block_at(lx, ly, lz);
-                                let id = block.id();
-                                if matches!(id, 54 | 130 | 146 | 63 | 68 | 176 | 177 | 144 | 116 | 138 | 119 | 52 | 36) {
-                                    let wx = x * 16 + lx as i32;
-                                    let wy = sec_y_base + ly as i32;
-                                    let wz = z * 16 + lz as i32;
-                                    if !self.block_entities.contains_key(&(wx, wy, wz)) {
-                                        new_bes.push((wx, wy, wz, block));
+        if let Some(chunk) = self.chunks.get(&(chunk_x, chunk_z)) {
+            for sec_idx in 0..16 {
+                if (bit_mask & (1 << sec_idx)) != 0 {
+                    if let Some(sec) = &chunk.sections[sec_idx] {
+                        let sec_y_base = (sec_idx as i32) * 16;
+                        for ly in 0..16 {
+                            for lz in 0..16 {
+                                for lx in 0..16 {
+                                    let block = sec.block_at(lx, ly, lz);
+                                    let id = block.id();
+                                    if matches!(id, 54 | 130 | 146 | 63 | 68 | 176 | 177 | 144 | 116 | 138 | 119 | 52 | 36) {
+                                        let wx = chunk_x * 16 + lx as i32;
+                                        let wy = sec_y_base + ly as i32;
+                                        let wz = chunk_z * 16 + lz as i32;
+                                        if !self.block_entities.contains_key(&(wx, wy, wz)) {
+                                            new_bes.push((wx, wy, wz, block));
+                                        }
                                     }
                                 }
                             }
@@ -161,8 +170,6 @@ impl World {
         for (wx, wy, wz, block) in new_bes {
             self.update_block_entity_on_set(wx, wy, wz, block);
         }
-
-        Ok(())
     }
 
     #[inline]

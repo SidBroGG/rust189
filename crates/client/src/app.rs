@@ -1890,6 +1890,12 @@ impl App {
                             }
                         }
                     }
+
+                    // Scan and register block entities (chests, signs, skulls, etc.) for all loaded chunks
+                    for &(chunk_x, chunk_z, bit_mask) in &loaded_meta {
+                        self.world.scan_and_register_block_entities(chunk_x, chunk_z, bit_mask);
+                    }
+
                     self.profiler.loaded_chunks = self.world.chunk_count();
 
                     if self.has_spawned && !self.player.on_ground {
@@ -2371,7 +2377,11 @@ impl App {
                     // Server/anticheats (GrimAC, Vulcan, Watchdog) send transactions to synchronize player ticks.
                     // Responding in exact FIFO order via the outgoing session queue ensures that
                     // teleport confirmations (C06) and movement packets are never overtaken by C0F.
-                    if !ct.accepted {
+                    let is_valid_window = ct.window_id == 0 || self.screen_manager.as_ref()
+                        .and_then(|sm| sm.in_game.as_ref())
+                        .and_then(|ig| ig.active_container.as_ref())
+                        .map_or(false, |c| c.window_id == ct.window_id as u8);
+                    if is_valid_window && !ct.accepted {
                         if let Some(s) = &self.session {
                             s.send(OutgoingPlayPacket::ConfirmTransaction {
                                 window_id: ct.window_id,
@@ -2885,13 +2895,13 @@ impl App {
         }
 
         // 20 TPS Fixed Physics & Entity Tick
-        // Prevent huge lag-spike catchups from flooding movement packets to server (violating anticheat Timer check)
-        if self.last_physics_tick.elapsed() > Duration::from_millis(150) {
+        // Catch up to 10 ticks per frame without dropping ticks (matching MCP Timer.elapsedTicks clamp)
+        if self.last_physics_tick.elapsed() > Duration::from_millis(1000) {
             self.last_physics_tick = Instant::now() - Duration::from_millis(50);
         }
 
         let mut ticks_run = 0;
-        while self.last_physics_tick.elapsed() >= Duration::from_millis(50) && ticks_run < 2 {
+        while self.last_physics_tick.elapsed() >= Duration::from_millis(50) && ticks_run < 10 {
             self.last_physics_tick += Duration::from_millis(50);
             ticks_run += 1;
             self.world.entity_tracker.tick();

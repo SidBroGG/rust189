@@ -171,8 +171,13 @@ pub fn render_container(
     let window_title = if container.title.is_empty() {
         match container.kind {
             ContainerKind::Player => "Inventory".to_string(),
-            ContainerKind::Chest => "Chest".to_string(),
-            ContainerKind::DoubleChest => "Large Chest".to_string(),
+            ContainerKind::Chest { rows } => {
+                if rows > 3 {
+                    "Large Chest".to_string()
+                } else {
+                    "Chest".to_string()
+                }
+            }
             ContainerKind::EnderChest => "Ender Chest".to_string(),
             ContainerKind::Workbench => "Crafting".to_string(),
             ContainerKind::Furnace => "Furnace".to_string(),
@@ -226,11 +231,11 @@ pub fn render_container(
                     ContainerKind::Player => {
                         render_player_inventory_body(ui, container, &mut action);
                     }
-                    ContainerKind::Chest | ContainerKind::EnderChest => {
-                        render_chest_body(ui, container, 3, &mut action);
+                    ContainerKind::Chest { rows } => {
+                        render_chest_body(ui, container, rows as usize, &mut action);
                     }
-                    ContainerKind::DoubleChest => {
-                        render_chest_body(ui, container, 6, &mut action);
+                    ContainerKind::EnderChest => {
+                        render_chest_body(ui, container, 3, &mut action);
                     }
                     ContainerKind::Workbench => {
                         render_workbench_body(ui, container, &mut action);

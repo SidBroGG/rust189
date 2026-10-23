@@ -63,8 +63,7 @@ impl MerchantTradeRecipe {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContainerKind {
     Player,
-    Chest,
-    DoubleChest,
+    Chest { rows: u8 },
     EnderChest,
     Workbench,
     Furnace,
@@ -83,11 +82,8 @@ impl ContainerKind {
     pub fn from_inventory_type(gui_id: &str, slot_count: u8) -> Self {
         match gui_id {
             "minecraft:chest" | "minecraft:container" => {
-                if slot_count > 27 {
-                    Self::DoubleChest
-                } else {
-                    Self::Chest
-                }
+                let rows = ((slot_count as usize) / 9).clamp(1, 6) as u8;
+                Self::Chest { rows }
             }
             "minecraft:crafting_table" => Self::Workbench,
             "minecraft:furnace" => Self::Furnace,
@@ -101,11 +97,8 @@ impl ContainerKind {
             "minecraft:beacon" => Self::Beacon,
             "EntityHorse" => Self::Horse,
             _ => {
-                if slot_count > 27 {
-                    Self::DoubleChest
-                } else {
-                    Self::Chest
-                }
+                let rows = ((slot_count as usize) / 9).clamp(1, 6) as u8;
+                Self::Chest { rows }
             }
         }
     }
@@ -114,8 +107,7 @@ impl ContainerKind {
     pub fn total_slot_count(&self) -> usize {
         match self {
             Self::Player => 45,       // 1 result + 4 craft + 4 armor + 27 main + 9 hotbar
-            Self::Chest => 27 + 36,   // 63
-            Self::DoubleChest => 54 + 36, // 90
+            Self::Chest { rows } => (*rows as usize) * 9 + 36,
             Self::EnderChest => 27 + 36,  // 63
             Self::Workbench => 1 + 9 + 36, // 46
             Self::Furnace => 3 + 36,      // 39
@@ -134,8 +126,8 @@ impl ContainerKind {
     pub fn player_slots_start(&self) -> usize {
         match self {
             Self::Player => 9,
-            Self::Chest | Self::EnderChest => 27,
-            Self::DoubleChest => 54,
+            Self::Chest { rows } => (*rows as usize) * 9,
+            Self::EnderChest => 27,
             Self::Workbench => 10,
             Self::Furnace => 3,
             Self::Dispenser | Self::Dropper => 9,
@@ -1110,6 +1102,38 @@ mod tests {
 
         // Diamond Pickaxe (278) in result
         assert_eq!(bench.slots[0].as_ref().map(|s| s.item_id), Some(278));
+    }
+
+    #[test]
+    fn test_custom_chest_sync_5_rows() {
+        let mut player_inv = ContainerState::new_player_inventory();
+        // Put Wooden Sword (268) in player hotbar slot 0 (index 36)
+        player_inv.set_slot(36, Some(Slot::new(268, 1, 0, None)));
+
+        // Open 45-slot (5-row) custom chest (e.g. Bedwars Shop)
+        let mut shop = ContainerState::from_open_window(1, "minecraft:container", "Shop".into(), 45);
+        assert_eq!(shop.kind, ContainerKind::Chest { rows: 5 });
+        assert_eq!(shop.slots.len(), 45 + 36);
+
+        // Sync player slots from player_inv into shop container
+        shop.sync_player_slots_from(&player_inv);
+        // Player hotbar in shop container is at index 45 + 27 = 72
+        assert_eq!(shop.slots[72].as_ref().map(|s| s.item_id), Some(268));
+
+        // Sync back to a fresh player inventory
+        let mut target_inv = ContainerState::new_player_inventory();
+        shop.sync_player_slots_to(&mut target_inv);
+
+        // Slot 36 (hotbar 0) MUST have the Wooden Sword
+        assert_eq!(target_inv.slots[36].as_ref().map(|s| s.item_id), Some(268));
+        // Row 2 (slots 27..35) MUST be empty, NOT duplicated with hotbar!
+        for slot_idx in 27..36 {
+            assert!(
+                target_inv.slots[slot_idx].is_none(),
+                "Slot {} in pre-last row should be empty, not duplicate hotbar",
+                slot_idx
+            );
+        }
     }
 }
 

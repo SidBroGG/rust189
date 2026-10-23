@@ -13,6 +13,7 @@ use tokio::net::TcpStream;
 /// Returns the parsed `ServerStatus` and the round-trip latency duration.
 pub async fn ping_server(host: &str, port: u16) -> Result<(ServerStatus, Duration), ProtocolError> {
     let tcp_stream = TcpStream::connect((host, port)).await?;
+    let _ = tcp_stream.set_nodelay(true);
     let mut stream = AsyncPacketStream::new(tcp_stream);
 
     // 1. Handshake (state = Status)
@@ -76,6 +77,7 @@ pub async fn connect_offline(
     username: &str,
 ) -> Result<(AsyncPacketStream<TcpStream>, LoginSuccessPacket), ProtocolError> {
     let tcp_stream = TcpStream::connect((host, port)).await?;
+    let _ = tcp_stream.set_nodelay(true);
     let mut stream = AsyncPacketStream::new(tcp_stream);
 
     // 1. Handshake (state = Login)
