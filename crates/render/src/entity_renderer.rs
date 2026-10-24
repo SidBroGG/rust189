@@ -465,10 +465,11 @@ impl EntityRenderer {
             };
 
             match &entity.kind {
-                EntityKind::Player { uuid, .. } => {
+                EntityKind::Player { uuid, held_item, .. } => {
                     let key = format!("player_{}", uuid);
                     let (verts, inds) = collector.entry(key).or_default();
                     build_player_model(verts, inds, entity, partial_ticks, color);
+                    render_entity_equipment(&mut collector, entity, *held_item, partial_ticks, color);
                 }
                 EntityKind::Mob { mob_type } => {
                     match *mob_type {
@@ -476,6 +477,7 @@ impl EntityRenderer {
                             if !entity.is_armor_stand_marker {
                                 let (verts, inds) = collector.entry("entity/armorstand/wood".to_string()).or_default();
                                 crate::models::vehicles::build_armor_stand_model(verts, inds, entity, partial_ticks, color);
+                                render_entity_equipment(&mut collector, entity, 0, partial_ticks, color);
                             }
                         }
                         50 => {
@@ -492,10 +494,11 @@ impl EntityRenderer {
                             let key = if is_wither { "entity/skeleton/wither_skeleton" } else { "entity/skeleton/skeleton" };
                             let (verts, inds) = collector.entry(key.to_string()).or_default();
                             crate::models::hostile::build_skeleton_model(verts, inds, entity, partial_ticks, is_wither, color);
-                            if !is_wither {
+                            if !is_wither && entity.equipment[0].is_none() {
                                 let (bverts, binds) = collector.entry("items/bow_standby".to_string()).or_default();
                                 crate::models::hostile::build_skeleton_bow(bverts, binds, entity, partial_ticks);
                             }
+                            render_entity_equipment(&mut collector, entity, 0, partial_ticks, color);
                         }
                         52 => {
                             let (verts, inds) = collector.entry("entity/spider/spider".to_string()).or_default();
@@ -510,6 +513,7 @@ impl EntityRenderer {
                         54 => {
                             let (verts, inds) = collector.entry("entity/zombie/zombie".to_string()).or_default();
                             crate::models::hostile::build_zombie_model(verts, inds, entity, partial_ticks, color);
+                            render_entity_equipment(&mut collector, entity, 0, partial_ticks, color);
                         }
                         55 => {
                             let (verts, inds) = collector.entry("entity/slime/slime".to_string()).or_default();
@@ -523,6 +527,7 @@ impl EntityRenderer {
                         57 => {
                             let (verts, inds) = collector.entry("entity/zombie_pigman".to_string()).or_default();
                             crate::models::hostile::build_zombie_model(verts, inds, entity, partial_ticks, color);
+                            render_entity_equipment(&mut collector, entity, 0, partial_ticks, color);
                         }
                         58 => {
                             let (verts, inds) = collector.entry("entity/enderman/enderman".to_string()).or_default();
@@ -1511,10 +1516,9 @@ pub fn build_player_model(
     let mut r_arm_rot_z = 0.0f32;
 
     // Check held item
-    let has_held_item = if let EntityKind::Player { held_item, .. } = &entity.kind {
-        *held_item != 0
-    } else {
-        false
+    let has_held_item = match &entity.kind {
+        EntityKind::Player { held_item, .. } => *held_item != 0 || entity.equipment[0].as_ref().map_or(false, |s| s.item_id > 0),
+        _ => entity.equipment[0].as_ref().map_or(false, |s| s.item_id > 0),
     };
     if has_held_item {
         r_arm_rot_x = r_arm_rot_x * 0.5 - (PI / 10.0);
@@ -1576,28 +1580,6 @@ pub fn build_player_model(
         64.0,
         color,
     );
-
-    // Held 3D item attached to right arm
-    if has_held_item {
-        let item_local = Mat4::from_translation(Vec3::new(-1.0, 10.0, 0.0) * (1.0 / 16.0))
-            * Mat4::from_rotation_x(0.8)
-            * Mat4::from_rotation_z(0.3);
-        let item_matrix = r_arm_matrix * item_local;
-        add_box_geom(
-            vertices,
-            indices,
-            item_matrix,
-            0.0,
-            0.0,
-            Vec3::new(-0.5, -6.0, -0.5),
-            Vec3::new(1.0, 14.0, 1.0),
-            0.0,
-            false,
-            64.0,
-            64.0,
-            [0.85, 0.85, 1.0, 1.0],
-        );
-    }
 
     // 4. Left Arm & Left Armwear
     let mut l_arm_pivot = Vec3::new(5.0, 2.0, 0.0);
@@ -1753,6 +1735,207 @@ pub fn build_player_model(
         32.0,
         [0.9 * color[0], 0.2 * color[1], 0.2 * color[2], color[3]],
     );
+}
+
+/// Resolves armor item ID to material name, armor layer (1 or 2), and biped armor slot index (0..3).
+pub fn get_armor_material_and_layer(item_id: i16) -> Option<(&'static str, usize, usize)> {
+    match item_id {
+        // Leather (0: Boots, 1: Leggings, 2: Chestplate, 3: Helmet)
+        298 => Some(("leather", 1, 3)),
+        299 => Some(("leather", 1, 2)),
+        300 => Some(("leather", 2, 1)),
+        301 => Some(("leather", 1, 0)),
+        // Chainmail
+        302 => Some(("chainmail", 1, 3)),
+        303 => Some(("chainmail", 1, 2)),
+        304 => Some(("chainmail", 2, 1)),
+        305 => Some(("chainmail", 1, 0)),
+        // Iron
+        306 => Some(("iron", 1, 3)),
+        307 => Some(("iron", 1, 2)),
+        308 => Some(("iron", 2, 1)),
+        309 => Some(("iron", 1, 0)),
+        // Diamond
+        310 => Some(("diamond", 1, 3)),
+        311 => Some(("diamond", 1, 2)),
+        312 => Some(("diamond", 2, 1)),
+        313 => Some(("diamond", 1, 0)),
+        // Gold
+        314 => Some(("gold", 1, 3)),
+        315 => Some(("gold", 1, 2)),
+        316 => Some(("gold", 2, 1)),
+        317 => Some(("gold", 1, 0)),
+        _ => None,
+    }
+}
+
+/// Builds 3D held item in the entity's right hand with actual item/block texture.
+pub fn build_biped_held_item(
+    vertices: &mut Vec<EntityVertex>,
+    indices: &mut Vec<u32>,
+    entity: &TrackedEntity,
+    is_block: bool,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let pos = entity.interpolated_pos(partial_ticks);
+    let body_yaw = entity.interpolated_render_yaw_offset(partial_ticks);
+    let (limb_swing, limb_amount) = entity.interpolated_limb_swing(partial_ticks);
+    let swing_prog = entity.swing_progress;
+    let age_in_ticks = entity.ticks_existed as f32 + partial_ticks;
+    let is_sneak = entity.is_sneaking;
+
+    let mut root_matrix = Mat4::from_translation(Vec3::new(pos.x as f32, pos.y as f32, pos.z as f32))
+        * Mat4::from_rotation_y((180.0 - body_yaw).to_radians())
+        * Mat4::from_scale(Vec3::new(-1.0, -1.0, 1.0))
+        * Mat4::from_translation(Vec3::new(0.0, -1.5078125, 0.0));
+
+    if is_sneak {
+        root_matrix *= Mat4::from_translation(Vec3::new(0.0, 0.2, 0.0));
+    }
+
+    let head_rot_x = entity.interpolated_pitch(partial_ticks).to_radians();
+    let body_rot_y = (swing_prog * PI).sin() * 0.2;
+
+    let mut r_arm_pivot = Vec3::new(-5.0, 2.0, 0.0);
+    let mut r_arm_rot_x = (limb_swing * 0.6662 + PI).cos() * 2.0 * limb_amount * 0.5;
+    let mut r_arm_rot_y = 0.0f32;
+    let mut r_arm_rot_z = 0.0f32;
+
+    r_arm_rot_x = r_arm_rot_x * 0.5 - (PI / 10.0);
+
+    if swing_prog > 0.0 {
+        r_arm_pivot.z = body_rot_y.sin() * 5.0;
+        r_arm_pivot.x = -body_rot_y.cos() * 5.0;
+        r_arm_rot_y += body_rot_y * 2.0;
+        r_arm_rot_z += (swing_prog * PI).sin() * -0.4;
+
+        let f = 1.0 - swing_prog;
+        let punch = 1.0 - f * f * f * f;
+        let f1 = (punch * PI).sin();
+        let f2 = (swing_prog * PI).sin() * -(head_rot_x - 0.7) * 0.75;
+        r_arm_rot_x -= f1 * 1.2 + f2;
+    }
+
+    if is_sneak {
+        r_arm_rot_x += 0.4;
+    }
+
+    r_arm_rot_z += (age_in_ticks * 0.09).cos() * 0.05 + 0.05;
+    r_arm_rot_x += (age_in_ticks * 0.067).sin() * 0.05;
+
+    let r_arm_matrix = root_matrix
+        * Mat4::from_translation(r_arm_pivot * (1.0 / 16.0))
+        * Mat4::from_rotation_z(r_arm_rot_z)
+        * Mat4::from_rotation_y(r_arm_rot_y)
+        * Mat4::from_rotation_x(r_arm_rot_x);
+
+    if is_block {
+        let item_local = Mat4::from_translation(Vec3::new(-1.0, 10.0, 0.0) * (1.0 / 16.0))
+            * Mat4::from_rotation_x((20.0_f32).to_radians())
+            * Mat4::from_rotation_y((45.0_f32).to_radians())
+            * Mat4::from_scale(Vec3::splat(0.375));
+        let item_matrix = r_arm_matrix * item_local;
+        add_box(
+            vertices,
+            indices,
+            item_matrix,
+            Vec3::splat(-0.5),
+            Vec3::splat(0.5),
+            0.0,
+            0.0,
+            16.0,
+            16.0,
+            16.0,
+            color,
+        );
+    } else {
+        let item_local = Mat4::from_translation(Vec3::new(-1.0, 10.0, 0.0) * (1.0 / 16.0))
+            * Mat4::from_rotation_x((90.0_f32).to_radians())
+            * Mat4::from_rotation_y((180.0_f32).to_radians())
+            * Mat4::from_rotation_z((-45.0_f32).to_radians())
+            * Mat4::from_scale(Vec3::splat(0.4));
+        let item_matrix = r_arm_matrix * item_local;
+
+        let s = 0.5f32;
+        let tz = 0.025f32;
+
+        let p0 = (item_matrix * Vec3::new(-s, -s, tz).extend(1.0)).truncate();
+        let p1 = (item_matrix * Vec3::new(s, -s, tz).extend(1.0)).truncate();
+        let p2 = (item_matrix * Vec3::new(s, s, tz).extend(1.0)).truncate();
+        let p3 = (item_matrix * Vec3::new(-s, s, tz).extend(1.0)).truncate();
+
+        let norm_f = (item_matrix * Vec3::new(0.0, 0.0, 1.0).extend(0.0)).truncate().to_array();
+        let norm_b = (item_matrix * Vec3::new(0.0, 0.0, -1.0).extend(0.0)).truncate().to_array();
+
+        let base_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: p0.to_array(), uv: [0.0, 1.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p1.to_array(), uv: [1.0, 1.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p2.to_array(), uv: [1.0, 0.0], normal: norm_f, color });
+        vertices.push(EntityVertex { position: p3.to_array(), uv: [0.0, 0.0], normal: norm_f, color });
+        indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2, base_idx, base_idx + 2, base_idx + 3]);
+
+        let b0 = (item_matrix * Vec3::new(s, -s, -tz).extend(1.0)).truncate();
+        let b1 = (item_matrix * Vec3::new(-s, -s, -tz).extend(1.0)).truncate();
+        let b2 = (item_matrix * Vec3::new(-s, s, -tz).extend(1.0)).truncate();
+        let b3 = (item_matrix * Vec3::new(s, s, -tz).extend(1.0)).truncate();
+
+        let b_idx = vertices.len() as u32;
+        vertices.push(EntityVertex { position: b0.to_array(), uv: [1.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: b1.to_array(), uv: [0.0, 1.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: b2.to_array(), uv: [0.0, 0.0], normal: norm_b, color });
+        vertices.push(EntityVertex { position: b3.to_array(), uv: [1.0, 0.0], normal: norm_b, color });
+        indices.extend_from_slice(&[b_idx, b_idx + 1, b_idx + 2, b_idx, b_idx + 2, b_idx + 3]);
+    }
+}
+
+/// Renders held item and worn armor layers into the geometry collector for an entity.
+pub fn render_entity_equipment(
+    collector: &mut HashMap<String, (Vec<EntityVertex>, Vec<u32>)>,
+    entity: &TrackedEntity,
+    held_fallback: i16,
+    partial_ticks: f32,
+    color: [f32; 4],
+) {
+    let held_id = entity.equipment[0].as_ref().map_or(held_fallback, |s| s.item_id);
+    let held_dmg = entity.equipment[0].as_ref().map_or(0, |s| s.item_damage);
+    if held_id > 0 {
+        let (tex_key, is_block) = get_item_render_texture_key(held_id, held_dmg);
+        let (hverts, hinds) = collector.entry(tex_key).or_default();
+        build_biped_held_item(hverts, hinds, entity, is_block, partial_ticks, color);
+    }
+
+    for slot_opt in entity.equipment.iter().skip(1) {
+        if let Some(slot) = slot_opt {
+            if let Some((mat, layer, biped_slot)) = get_armor_material_and_layer(slot.item_id) {
+                let tex_key = format!("models/armor/{}_layer_{}", mat, layer);
+                let (averts, ainds) = collector.entry(tex_key).or_default();
+                let mut armor_color = color;
+                if mat == "leather" {
+                    if let Some(protocol::codec::NbtTag::Compound(nbt)) = &slot.nbt {
+                        if let Some(protocol::codec::NbtTag::Compound(disp)) = nbt.get("display") {
+                            if let Some(protocol::codec::NbtTag::Int(c)) = disp.get("color") {
+                                let r = ((*c >> 16) & 0xFF) as f32 / 255.0;
+                                let g = ((*c >> 8) & 0xFF) as f32 / 255.0;
+                                let b = (*c & 0xFF) as f32 / 255.0;
+                                armor_color = [r, g, b, color[3]];
+                            }
+                        }
+                    } else {
+                        armor_color = [0.65, 0.43, 0.28, color[3]];
+                    }
+                }
+                crate::models::layers::render_biped_armor_layer(
+                    averts,
+                    ainds,
+                    entity,
+                    partial_ticks,
+                    armor_color,
+                    biped_slot,
+                );
+            }
+        }
+    }
 }
 
 /// Builds mob models (e.g. Zombie / Skeleton humanoid with forward arms, Creeper).
@@ -2057,5 +2240,19 @@ mod tests {
         let (key, is_block) = get_item_render_texture_key(363, 0);
         assert_eq!(key, "items/beef_raw");
         assert!(!is_block);
+    }
+
+    #[test]
+    fn test_armor_material_and_layer_resolution() {
+        // Diamond helmet (310) -> layer 1, slot 3
+        assert_eq!(get_armor_material_and_layer(310), Some(("diamond", 1, 3)));
+        // Diamond leggings (312) -> layer 2, slot 1
+        assert_eq!(get_armor_material_and_layer(312), Some(("diamond", 2, 1)));
+        // Iron chestplate (307) -> layer 1, slot 2
+        assert_eq!(get_armor_material_and_layer(307), Some(("iron", 1, 2)));
+        // Leather boots (301) -> layer 1, slot 0
+        assert_eq!(get_armor_material_and_layer(301), Some(("leather", 1, 0)));
+        // Non-armor (e.g. stick 280) -> None
+        assert_eq!(get_armor_material_and_layer(280), None);
     }
 }

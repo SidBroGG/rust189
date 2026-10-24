@@ -573,6 +573,15 @@ impl EntityTracker {
         entity.metadata = metadata;
         entity.apply_metadata_flags();
 
+        if current_item > 0 {
+            entity.equipment[0] = Some(Slot {
+                item_id: current_item,
+                item_count: 1,
+                item_damage: 0,
+                nbt: None,
+            });
+        }
+
         self.entities.insert(entity_id, entity);
     }
 

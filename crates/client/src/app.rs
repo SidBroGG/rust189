@@ -114,6 +114,7 @@ pub struct App {
     pub death_time: u32,
     pub riding_entity_id: Option<i32>,
     pub predicted_blocks: std::collections::HashMap<(i32, i32, i32), u32>,
+    pub pending_transactions: Vec<(u8, i16, bool)>,
 }
 
 impl App {
@@ -193,6 +194,7 @@ impl App {
             death_time: 0,
             riding_entity_id: None,
             predicted_blocks: std::collections::HashMap::new(),
+            pending_transactions: Vec::new(),
         }
     }
 
@@ -1747,18 +1749,8 @@ impl App {
                     self.breaking_block_pos = None;
                     self.player.fall_distance = 0.0;
 
-                    // Revert any unconfirmed predicted blocks on setback/teleport to prevent ghost block stuttering
-                    for (pos, _) in self.predicted_blocks.drain() {
-                        if self.world.get_block(pos.0, pos.1, pos.2).id() != 0 {
-                            self.world.set_block(pos.0, pos.1, pos.2, BlockState::AIR);
-                            let chunk_x = pos.0 >> 4;
-                            let chunk_z = pos.2 >> 4;
-                            let sec_idx = ((pos.1 >> 4) as usize).min(15);
-                            if let Some(cm) = &mut self.chunk_manager {
-                                cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
-                            }
-                        }
-                    }
+                    // Do not arbitrarily erase placed blocks on setback/teleport; server sends authoritative BlockChange if rejected
+                    self.predicted_blocks.clear();
 
                     // MCP parity: teleport confirmed immediately to server with C06.
                     // Sync last_reported_pos and last_reported_look with the confirmed position
@@ -2422,14 +2414,16 @@ impl App {
                 ClientboundPlayPacket::ConfirmTransaction(ct) => {
                     // MCP NetHandlerPlayClient.handleConfirmTransaction parity:
                     // Server/anticheats (GrimAC, Vulcan, Watchdog) send transactions to synchronize player ticks.
-                    // Responding in exact FIFO order via the outgoing session queue ensures that
-                    // teleport confirmations (C06) and movement packets are never overtaken by C0F.
+                    // Responding in exact FIFO order buffered inside the 20 TPS physics tick ensures that
+                    // C0F is sent in the exact same tick and batch as player movement packets (C03-C06).
                     let is_valid_window = ct.window_id == 0 || self.screen_manager.as_ref()
                         .and_then(|sm| sm.in_game.as_ref())
                         .and_then(|ig| ig.active_container.as_ref())
                         .map_or(false, |c| c.window_id == ct.window_id as u8);
                     if is_valid_window && !ct.accepted {
-                        if let Some(s) = &self.session {
+                        if ct.window_id == 0 {
+                            self.pending_transactions.push((ct.window_id, ct.action_number, true));
+                        } else if let Some(s) = &self.session {
                             s.send(OutgoingPlayPacket::ConfirmTransaction {
                                 window_id: ct.window_id,
                                 action_number: ct.action_number,
@@ -3412,6 +3406,15 @@ impl App {
                             });
                         }
 
+                        // Flush buffered window 0 ConfirmTransaction packets immediately before movement packets
+                        for (win_id, action_num, accepted) in self.pending_transactions.drain(..) {
+                            s.send(OutgoingPlayPacket::ConfirmTransaction {
+                                window_id: win_id,
+                                action_number: action_num,
+                                accepted,
+                            });
+                        }
+
                         if let Some(_riding_id) = self.riding_entity_id {
                             s.send(OutgoingPlayPacket::PlayerLook {
                                 yaw: self.player_look.0,
@@ -3749,7 +3752,9 @@ impl ApplicationHandler for App {
                                     }
                                 } else if is_in_game && self.mouse_grabbed {
                                     self.is_right_clicking = true;
-                                    self.handle_right_click();
+                                    if self.right_click_delay_timer == 0 {
+                                        self.handle_right_click();
+                                    }
                                 }
                             }
                             winit::event::ElementState::Released => {
@@ -4197,6 +4202,7 @@ impl ApplicationHandler for App {
                         }
                         self.profiler.loaded_chunks = 0;
                         self.held_item_id = 0;
+                        self.pending_transactions.clear();
                         self.hotbar_items = [None, None, None, None, None, None, None, None, None];
                         self.armor_items = [None, None, None, None];
                         if let Some(sm) = &mut self.screen_manager {
@@ -4632,7 +4638,7 @@ impl ApplicationHandler for App {
                                     EntityKind::Player {
                                         uuid,
                                         name: self.config.auth.nickname.clone(),
-                                        held_item: 0,
+                                        held_item: self.held_item_id,
                                     },
                                     self.player.pos,
                                     self.player.yaw,
