@@ -170,6 +170,20 @@ fn test_npc_armor_stand_interaction_and_marker_exclusion() {
         TargetHit::Entity(eh) => assert_eq!(eh.entity_id, 300, "Should hit NPC behind marker hologram"),
         _ => panic!("Expected ArmorStand NPC hit through marker"),
     }
+
+    // Also test invisible armor stand (hologram floating text over chests)
+    let invisible_metadata = vec![protocol::codec::MetadataEntry {
+        index: 0,
+        value: protocol::codec::MetadataValue::Byte(0x20), // Bit 5 = invisible
+    }];
+    world.entity_tracker.spawn_object(302, 78, 0, 2048, 48, 0, 0, 0, 0, 0, 0);
+    world.entity_tracker.update_metadata(302, invisible_metadata);
+
+    let target_through_invisible = pick_target(&world, &spatial_hash, eye_pos, look_dir, false, None, 1.0);
+    match target_through_invisible {
+        TargetHit::Entity(eh) => assert_eq!(eh.entity_id, 300, "Should hit NPC behind invisible hologram"),
+        _ => panic!("Expected ArmorStand NPC hit through invisible hologram"),
+    }
 }
 
 #[test]

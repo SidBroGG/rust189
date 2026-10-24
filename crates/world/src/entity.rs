@@ -342,15 +342,15 @@ impl TrackedEntity {
             EntityKind::Player { .. } => true,
             EntityKind::Mob { mob_type } => {
                 if mob_type == 30 {
-                    !self.is_armor_stand_marker
+                    !self.is_armor_stand_marker && !self.is_invisible
                 } else {
                     true
                 }
             }
             EntityKind::Painting { .. } => true,
             EntityKind::Object { object_type, .. } => match object_type {
-                // ArmorStand: cannot be collided with if it has the marker flag (e.g. floating holograms)
-                78 => !self.is_armor_stand_marker,
+                // ArmorStand: cannot be collided with if it has the marker flag or is invisible (e.g. floating holograms)
+                78 => !self.is_armor_stand_marker && !self.is_invisible,
                 // Boat, Minecart, Item Frame, Ender Crystal, Primed TNT, Falling Block
                 1 | 10 | 71 | 51 | 50 | 70 => true,
                 // Items, arrows, snowballs, potions, xp orbs, etc. cannot be clicked

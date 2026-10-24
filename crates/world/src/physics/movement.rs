@@ -14,6 +14,7 @@ pub struct PlayerCapabilities {
     pub allow_flying: bool,
     pub is_creative: bool,
     pub is_invulnerable: bool,
+    pub allow_edit: bool,
     pub fly_speed: f32,
     pub walk_speed: f32,
 }
@@ -25,6 +26,7 @@ impl Default for PlayerCapabilities {
             allow_flying: false,
             is_creative: false,
             is_invulnerable: false,
+            allow_edit: true,
             fly_speed: 0.05,
             walk_speed: 0.1,
         }

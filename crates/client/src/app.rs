@@ -102,6 +102,7 @@ pub struct App {
     pub player_exp_level: i32,
     pub player_exp_progress: f32,
     pub selected_hotbar_slot: usize,
+    pub current_reported_held_slot: usize,
     pub hotbar_items: [Option<HudItemInfo>; 9],
     pub armor_items: [Option<HudItemInfo>; 4],
     pub active_potions: Vec<HudPotionInfo>,
@@ -182,6 +183,7 @@ impl App {
             player_exp_level: 0,
             player_exp_progress: 0.0,
             selected_hotbar_slot: 0,
+            current_reported_held_slot: 0,
             hotbar_items: [None, None, None, None, None, None, None, None, None],
             armor_items: [None, None, None, None],
             active_potions: Vec::new(),
@@ -215,6 +217,65 @@ impl App {
             }
         }
         None
+    }
+
+    /// Synchronizes the player's held hotbar slot with the server if it has changed (MCP PlayerControllerMP.syncCurrentPlayItem).
+    pub fn sync_current_play_item(&mut self) {
+        if self.current_reported_held_slot != self.selected_hotbar_slot {
+            self.current_reported_held_slot = self.selected_hotbar_slot;
+            if let Some(s) = &self.session {
+                s.send(OutgoingPlayPacket::HeldItemChange(self.selected_hotbar_slot as i16));
+            }
+        }
+    }
+
+    /// Checks whether the player is allowed to mine/destroy a block at this moment (MCP 1.8.9 PlayerControllerMP parity).
+    pub fn can_destroy_block(&self, block_id: u16) -> bool {
+        // Air cannot be broken
+        if block_id == 0 {
+            return false;
+        }
+
+        // Spectator mode can never destroy blocks (MCP PlayerControllerMP.java:128, 203)
+        if self.player_gamemode == 3 || self.player.is_spectator {
+            return false;
+        }
+
+        // Creative mode can destroy any block except bedrock (MCP PlayerControllerMP.java:149, 230)
+        if self.is_creative_mode() {
+            return block_id != 7;
+        }
+
+        // Bedrock is indestructible
+        if block_id == 7 {
+            return false;
+        }
+
+        // Adventure mode (gamemode 2) requires allow_edit capability OR CanDestroy NBT tag on held item
+        if self.player_gamemode == 2 {
+            if self.player.capabilities.allow_edit {
+                return true;
+            }
+            let held_slot = self.get_current_held_slot();
+            if let Some(slot) = held_slot {
+                if let Some(protocol::NbtTag::Compound(map)) = &slot.nbt {
+                    if let Some(protocol::NbtTag::List { elements, .. }) = map.get("CanDestroy") {
+                        let block_name = Self::block_name_from_id(block_id);
+                        for elem in elements {
+                            if let protocol::NbtTag::String(target_name) = elem {
+                                let norm_target = target_name.strip_prefix("minecraft:").unwrap_or(target_name);
+                                if norm_target.eq_ignore_ascii_case(block_name) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        true
     }
 
     /// Returns true if the player is currently in creative mode (either via capabilities or gamemode 1).
@@ -482,6 +543,41 @@ impl App {
         }
     }
 
+    /// Returns the vanilla block registry name from its numerical ID (for CanDestroy tag matching).
+    pub fn block_name_from_id(id: u16) -> &'static str {
+        match id {
+            1 => "stone",
+            2 => "grass",
+            3 => "dirt",
+            4 => "cobblestone",
+            5 => "planks",
+            7 => "bedrock",
+            12 => "sand",
+            13 => "gravel",
+            14 => "gold_ore",
+            15 => "iron_ore",
+            16 => "coal_ore",
+            17 => "log",
+            18 => "leaves",
+            19 => "sponge",
+            20 => "glass",
+            24 => "sandstone",
+            35 => "wool",
+            45 => "brick_block",
+            49 => "obsidian",
+            54 => "chest",
+            56 => "diamond_ore",
+            57 => "diamond_block",
+            58 => "crafting_table",
+            61 => "furnace",
+            80 => "snow",
+            82 => "clay",
+            98 => "stonebrick",
+            121 => "end_stone",
+            _ => "stone",
+        }
+    }
+
     pub fn is_cursor_needed(&self) -> bool {
         if self.player_health <= 0.0 {
             return true;
@@ -546,6 +642,7 @@ impl App {
         if !is_in_game {
             return;
         }
+        self.sync_current_play_item();
         self.recalculate_current_target();
         self.click_tracker.register_left_click();
 
@@ -562,8 +659,6 @@ impl App {
                 let attack_reach = if is_creative { 6.0 } else { 3.0 };
                 if eh.distance <= attack_reach {
                     if let Some(s) = &self.session {
-                        // MCP PlayerControllerMP.attackEntity: sync current held item before attack packet
-                        s.send(OutgoingPlayPacket::HeldItemChange(self.selected_hotbar_slot as i16));
                         s.send(OutgoingPlayPacket::UseEntity {
                             entity_id,
                             action: UseEntityAction::Attack,
@@ -604,7 +699,7 @@ impl App {
             TargetHit::Block(bh) => {
                 let pos = bh.block_pos;
                 let block = self.world.get_block(pos.0, pos.1, pos.2);
-                if block.id() == 0 {
+                if block.id() == 0 || !self.can_destroy_block(block.id()) {
                     return;
                 }
 
@@ -665,7 +760,6 @@ impl App {
                 if rel_damage >= 1.0 {
                     // Instant destroy (survival zero-hardness block)
                     if let Some(s) = &self.session {
-                        s.send(OutgoingPlayPacket::HeldItemChange(self.selected_hotbar_slot as i16));
                         s.send(OutgoingPlayPacket::PlayerDigging {
                             status: DiggingAction::StartDestroyBlock,
                             position: Position::new(pos.0, pos.1, pos.2),
@@ -701,7 +795,6 @@ impl App {
                     self.breaking_block_face = bh.face;
 
                     if let Some(s) = &self.session {
-                        s.send(OutgoingPlayPacket::HeldItemChange(self.selected_hotbar_slot as i16));
                         s.send(OutgoingPlayPacket::PlayerDigging {
                             status: DiggingAction::StartDestroyBlock,
                             position: Position::new(pos.0, pos.1, pos.2),
@@ -775,6 +868,7 @@ impl App {
         if !is_in_game {
             return;
         }
+        self.sync_current_play_item();
         self.recalculate_current_target();
         self.click_tracker.register_right_click();
         self.right_click_delay_timer = 4;
@@ -1326,9 +1420,7 @@ impl App {
                 } else {
                     self.held_item_id = 0;
                 }
-                if let Some(s) = &self.session {
-                    s.send(OutgoingPlayPacket::HeldItemChange(slot_idx as i16));
-                }
+                self.sync_current_play_item();
             }
             return;
         }
@@ -1359,8 +1451,8 @@ impl App {
                 }
             }
 
+            self.sync_current_play_item();
             if let Some(s) = &self.session {
-                s.send(OutgoingPlayPacket::HeldItemChange(target_hotbar_idx as i16));
                 s.send(OutgoingPlayPacket::CreativeInventoryAction {
                     slot: server_slot,
                     item: Some(slot_obj),
@@ -1545,8 +1637,11 @@ impl App {
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
                     self.breaking_block_pos = None;
+                    self.breaking_block_damage = 0.0;
+                    self.current_reported_held_slot = self.selected_hotbar_slot;
                     self.riding_entity_id = None;
                     self.player.capabilities.is_creative = jg.game_mode == 1;
+                    self.player.capabilities.allow_edit = jg.game_mode != 2;
                     self.player.is_spectator = jg.game_mode == 3;
                     if jg.game_mode == 1 || jg.game_mode == 3 {
                         self.player.capabilities.allow_flying = true;
@@ -1602,6 +1697,7 @@ impl App {
                     self.world.dimension = rp.dimension as i8;
                     self.player_gamemode = rp.game_mode;
                     self.player.capabilities.is_creative = rp.game_mode == 1;
+                    self.player.capabilities.allow_edit = rp.game_mode != 2;
                     self.player.is_spectator = rp.game_mode == 3;
                     if rp.game_mode == 1 || rp.game_mode == 3 {
                         self.player.capabilities.allow_flying = true;
@@ -1645,6 +1741,8 @@ impl App {
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
                     self.breaking_block_pos = None;
+                    self.breaking_block_damage = 0.0;
+                    self.current_reported_held_slot = self.selected_hotbar_slot;
                     self.riding_entity_id = None;
                     if let Some(w) = &self.window {
                         let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
@@ -1739,17 +1837,17 @@ impl App {
                         self.player_on_ground = false;
                     }
 
-                    if let Some(sm) = &mut self.screen_manager {
-                        // MCP parity: Close all open screens on teleport (NetHandlerPlayClient line 725 displayGuiScreen(null))
-                        if let Some(ig) = &mut sm.in_game {
-                            if let Some(ref c) = ig.active_container {
-                                let win_id = c.window_id as i8;
-                                if let Some(s) = &self.session {
-                                    s.send(OutgoingPlayPacket::CloseWindow(win_id));
-                                }
-                            }
+                    // MCP NetHandlerPlayClient line 725 displayGuiScreen(null):
+                    // displayGuiScreen(null) is ONLY called if !this.doneLoadingTerrain (initial spawn).
+                    // In-game setbacks/teleports (when has_spawned is true) must NOT close active containers
+                    // or send CloseWindow, otherwise chest interactions get closed immediately upon anticheat sync.
+                    if !self.has_spawned {
+                        self.has_spawned = true;
+                        if let Some(sm) = &mut self.screen_manager {
+                            sm.reset_modals();
                         }
-                        sm.reset_modals();
+                    }
+                    if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.hud_data.health = self.player_health;
                             ig.death_ticks = 0;
@@ -2431,13 +2529,10 @@ impl App {
                 ClientboundPlayPacket::ConfirmTransaction(ct) => {
                     // MCP NetHandlerPlayClient.handleConfirmTransaction parity:
                     // Server and anticheats (GrimAC, Vulcan, Watchdog) send transactions to synchronize player ticks.
-                    // Responding immediately in exact FIFO order via outgoing network queue prevents transaction
-                    // queue timeout (max-transaction-time: 30) and avoids desyncing C0F with teleport confirmations (C06).
-                    let is_valid_window = ct.window_id == 0 || self.screen_manager.as_ref()
-                        .and_then(|sm| sm.in_game.as_ref())
-                        .and_then(|ig| ig.active_container.as_ref())
-                        .map_or(false, |c| c.window_id == ct.window_id as u8);
-                    if is_valid_window && !ct.accepted {
+                    // Anticheats send transactions with window_id 0, 255 (-1), or arbitrary IDs even when no container is open.
+                    // If not accepted (!ct.accepted), the client MUST unconditionally confirm with accepted: true,
+                    // otherwise anticheats trigger a 30-second timeout kick (max-transaction-time: 30).
+                    if !ct.accepted {
                         if let Some(s) = &self.session {
                             s.send(OutgoingPlayPacket::ConfirmTransaction {
                                 window_id: ct.window_id,
@@ -2541,6 +2636,7 @@ impl App {
                 }
                 ClientboundPlayPacket::HeldItemChange(hic) => {
                     self.selected_hotbar_slot = hic.slot.clamp(0, 8) as usize;
+                    self.current_reported_held_slot = self.selected_hotbar_slot;
                     if let Some(item) = &self.hotbar_items[self.selected_hotbar_slot] {
                         self.held_item_id = item.item_id;
                     } else {
@@ -2759,6 +2855,7 @@ impl App {
                         let gm = cgs.value as u8;
                         self.player_gamemode = gm;
                         self.player.capabilities.is_creative = gm == 1;
+                        self.player.capabilities.allow_edit = gm != 2;
                         self.player.is_spectator = gm == 3;
                         if gm == 1 || gm == 3 {
                             self.player.capabilities.allow_flying = true;
@@ -3221,13 +3318,22 @@ impl App {
                     self.block_hit_delay -= 1;
                 }
 
+                // Sync held item slot changes with the server at fixed 20 TPS physics rate
+                self.sync_current_play_item();
+
                 // Block destruction continuous tick
                 if self.is_left_clicking {
                     self.recalculate_current_target();
                     if self.is_creative_mode() {
                         if self.block_hit_delay == 0 {
                             match self.current_target {
-                                TargetHit::Block(_) | TargetHit::Entity(_) => {
+                                TargetHit::Block(ref b) => {
+                                    let block = self.world.get_block(b.block_pos.0, b.block_pos.1, b.block_pos.2);
+                                    if self.can_destroy_block(block.id()) {
+                                        self.handle_left_click();
+                                    }
+                                }
+                                TargetHit::Entity(_) => {
                                     self.handle_left_click();
                                 }
                                 _ => {}
@@ -3241,70 +3347,86 @@ impl App {
 
                         if is_still_targeting {
                             let block = self.world.get_block(pos.0, pos.1, pos.2);
-                            let in_water = is_water_block(
-                                self.world
-                                    .get_block(
-                                        self.player.pos.x.floor() as i32,
-                                        (self.player.pos.y + 0.6).floor() as i32,
-                                        self.player.pos.z.floor() as i32,
-                                    )
-                                    .id(),
-                            );
-
-                            let (eff_lvl, haste_lvl, fatigue_lvl, aqua_aff) = self.get_player_mining_params();
-
-                            let rel_damage = get_player_relative_block_hardness(
-                                block.id(),
-                                self.held_item_id,
-                                eff_lvl,
-                                haste_lvl,
-                                fatigue_lvl,
-                                in_water,
-                                aqua_aff,
-                                self.player_on_ground,
-                                false,
-                            );
-
-                            self.breaking_block_damage += rel_damage;
-
-                            if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
-                                let tex_name = Self::block_texture_name(block.id());
-                                let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
-                                let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
-                                ir.spawn_digging_particles(center, region, 2);
-                            }
-
-                            if self.breaking_block_damage >= 1.0 {
+                            if block.id() == 0 || !self.can_destroy_block(block.id()) {
                                 if let Some(s) = &self.session {
                                     s.send(OutgoingPlayPacket::PlayerDigging {
-                                        status: DiggingAction::StopDestroyBlock,
+                                        status: DiggingAction::AbortDestroyBlock,
                                         position: Position::new(pos.0, pos.1, pos.2),
                                         facing: self.breaking_block_face,
                                     });
                                 }
+                                self.breaking_block_pos = None;
+                                self.breaking_block_damage = 0.0;
+                            } else {
+                                self.sync_current_play_item();
+                                let in_water = is_water_block(
+                                    self.world
+                                        .get_block(
+                                            self.player.pos.x.floor() as i32,
+                                            (self.player.pos.y + 0.6).floor() as i32,
+                                            self.player.pos.z.floor() as i32,
+                                        )
+                                        .id(),
+                                );
 
-                                self.world.set_block(pos.0, pos.1, pos.2, BlockState::AIR);
-                                let chunk_x = pos.0 >> 4;
-                                let chunk_z = pos.2 >> 4;
-                                let sec_idx = ((pos.1 >> 4) as usize).min(15);
-                                if let Some(cm) = &mut self.chunk_manager {
-                                    cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
-                                }
+                                let (eff_lvl, haste_lvl, fatigue_lvl, aqua_aff) = self.get_player_mining_params();
+
+                                let rel_damage = get_player_relative_block_hardness(
+                                    block.id(),
+                                    self.held_item_id,
+                                    eff_lvl,
+                                    haste_lvl,
+                                    fatigue_lvl,
+                                    in_water,
+                                    aqua_aff,
+                                    self.player_on_ground,
+                                    false,
+                                );
+
+                                self.breaking_block_damage += rel_damage;
 
                                 if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
                                     let tex_name = Self::block_texture_name(block.id());
                                     let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
                                     let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
-                                    ir.spawn_digging_particles(center, region, 16);
+                                    ir.spawn_digging_particles(center, region, 2);
                                 }
 
-                                self.breaking_block_pos = None;
-                                self.breaking_block_damage = 0.0;
+                                if self.breaking_block_damage >= 1.0 {
+                                    if let Some(s) = &self.session {
+                                        s.send(OutgoingPlayPacket::PlayerDigging {
+                                            status: DiggingAction::StopDestroyBlock,
+                                            position: Position::new(pos.0, pos.1, pos.2),
+                                            facing: self.breaking_block_face,
+                                        });
+                                    }
 
-                                // Continuous mining: automatically begin mining next targeted block
-                                self.recalculate_current_target();
-                                if let TargetHit::Block(_) = self.current_target {
-                                    self.handle_left_click();
+                                    self.world.set_block(pos.0, pos.1, pos.2, BlockState::AIR);
+                                    let chunk_x = pos.0 >> 4;
+                                    let chunk_z = pos.2 >> 4;
+                                    let sec_idx = ((pos.1 >> 4) as usize).min(15);
+                                    if let Some(cm) = &mut self.chunk_manager {
+                                        cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
+                                    }
+
+                                    if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
+                                        let tex_name = Self::block_texture_name(block.id());
+                                        let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
+                                        let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                                        ir.spawn_digging_particles(center, region, 16);
+                                    }
+
+                                    self.breaking_block_pos = None;
+                                    self.breaking_block_damage = 0.0;
+
+                                    // Continuous mining: automatically begin mining next targeted block if allowed
+                                    self.recalculate_current_target();
+                                    if let TargetHit::Block(ref b) = self.current_target {
+                                        let next_block = self.world.get_block(b.block_pos.0, b.block_pos.1, b.block_pos.2);
+                                        if self.can_destroy_block(next_block.id()) {
+                                            self.handle_left_click();
+                                        }
+                                    }
                                 }
                             }
                         } else {
@@ -3318,13 +3440,21 @@ impl App {
                             self.breaking_block_pos = None;
                             self.breaking_block_damage = 0.0;
 
-                            if let TargetHit::Block(_) = self.current_target {
-                                self.handle_left_click();
+                            if let TargetHit::Block(ref b) = self.current_target {
+                                let next_block = self.world.get_block(b.block_pos.0, b.block_pos.1, b.block_pos.2);
+                                if self.can_destroy_block(next_block.id()) {
+                                    self.handle_left_click();
+                                }
                             }
                         }
                     } else {
                         match self.current_target {
-                            TargetHit::Block(_) => self.handle_left_click(),
+                            TargetHit::Block(ref b) => {
+                                let block = self.world.get_block(b.block_pos.0, b.block_pos.1, b.block_pos.2);
+                                if self.can_destroy_block(block.id()) {
+                                    self.handle_left_click();
+                                }
+                            }
                             TargetHit::Entity(_) => {
                                 if self.block_hit_delay == 0 {
                                     self.handle_left_click();
@@ -3820,9 +3950,6 @@ impl ApplicationHandler for App {
                             } else {
                                 self.held_item_id = 0;
                             }
-                            if let Some(s) = &self.session {
-                                s.send(OutgoingPlayPacket::HeldItemChange(next_slot as i16));
-                            }
                             if self.item_use_state.active_action != ItemUseAction::None {
                                 self.item_use_state.stop();
                             }
@@ -3929,9 +4056,6 @@ impl ApplicationHandler for App {
                                     self.held_item_id = item.item_id;
                                 } else {
                                     self.held_item_id = 0;
-                                }
-                                if let Some(s) = &self.session {
-                                    s.send(OutgoingPlayPacket::HeldItemChange(slot_idx as i16));
                                 }
                                 if self.item_use_state.active_action != ItemUseAction::None {
                                     self.item_use_state.stop();
@@ -4330,6 +4454,7 @@ impl ApplicationHandler for App {
                                 mode,
                                 item,
                             } => {
+                                self.sync_current_play_item();
                                 if let Some(s) = &self.session {
                                     s.send(OutgoingPlayPacket::ClickWindow {
                                         window_id,
@@ -4806,5 +4931,99 @@ impl ApplicationHandler for App {
         if let Some(window) = &self.window {
             window.request_redraw();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::Slot;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_block_name_from_id_mapping() {
+        assert_eq!(App::block_name_from_id(1), "stone");
+        assert_eq!(App::block_name_from_id(2), "grass");
+        assert_eq!(App::block_name_from_id(3), "dirt");
+        assert_eq!(App::block_name_from_id(4), "cobblestone");
+        assert_eq!(App::block_name_from_id(7), "bedrock");
+        assert_eq!(App::block_name_from_id(12), "sand");
+        assert_eq!(App::block_name_from_id(54), "chest");
+    }
+
+    #[tokio::test]
+    async fn test_can_destroy_block_rules() {
+        let mut app = App::new(crate::config::ClientConfig::default(), std::path::PathBuf::from("config.toml"));
+
+        // Air (0) and Bedrock (7) are never breakable
+        assert!(!app.can_destroy_block(0));
+        assert!(!app.can_destroy_block(7));
+
+        // Survival mode (gamemode 0) can break regular blocks
+        app.player_gamemode = 0;
+        app.player.capabilities.is_creative = false;
+        app.player.capabilities.allow_edit = true;
+        assert!(app.can_destroy_block(1));
+        assert!(app.can_destroy_block(54));
+
+        // Spectator mode (gamemode 3) cannot destroy anything
+        app.player_gamemode = 3;
+        assert!(!app.can_destroy_block(1));
+        assert!(!app.can_destroy_block(54));
+
+        // Creative mode (gamemode 1) can destroy regular blocks but not bedrock
+        app.player_gamemode = 1;
+        app.player.capabilities.is_creative = true;
+        assert!(app.can_destroy_block(1));
+        assert!(!app.can_destroy_block(7));
+
+        // Adventure mode (gamemode 2) without allow_edit and without CanDestroy item cannot destroy anything
+        app.player_gamemode = 2;
+        app.player.capabilities.is_creative = false;
+        app.player.capabilities.allow_edit = false;
+        assert!(!app.can_destroy_block(1));
+        assert!(!app.can_destroy_block(54));
+
+        // Adventure mode with allow_edit = true can destroy blocks
+        app.player.capabilities.allow_edit = true;
+        assert!(app.can_destroy_block(1));
+        app.player.capabilities.allow_edit = false;
+
+        // Adventure mode with CanDestroy tag on held item
+        let mut nbt_map = HashMap::new();
+        nbt_map.insert(
+            "CanDestroy".to_string(),
+            protocol::NbtTag::List {
+                element_type: 8,
+                elements: vec![
+                    protocol::NbtTag::String("minecraft:stone".to_string()),
+                    protocol::NbtTag::String("cobblestone".to_string()),
+                ],
+            },
+        );
+
+        let lang = Language::from_code(&app.config.general.language);
+        let mut sm = ScreenManager::new(
+            app.config.auth.nickname.clone(),
+            PathBuf::from("servers.dat"),
+            lang,
+            (&app.config.video).into(),
+            (&app.config.audio).into(),
+            (&app.config.keybinds).into(),
+            (&app.config.chat).into(),
+            (&app.config.scoreboard).into(),
+        );
+        sm.start_in_game("127.0.0.1".into(), "Player".into());
+        let held_item = Slot::new(278, 1, 0, Some(protocol::NbtTag::Compound(nbt_map)));
+        if let Some(ig) = &mut sm.in_game {
+            ig.player_inventory.slots[36] = Some(held_item);
+        }
+        app.screen_manager = Some(sm);
+        app.selected_hotbar_slot = 0;
+
+        // Can destroy stone (id 1) and cobblestone (id 4), but NOT dirt (id 3)
+        assert!(app.can_destroy_block(1), "Adventure mode should allow destroying stone with CanDestroy tag");
+        assert!(app.can_destroy_block(4), "Adventure mode should allow destroying cobblestone with CanDestroy tag");
+        assert!(!app.can_destroy_block(3), "Adventure mode must forbid destroying dirt without CanDestroy tag");
     }
 }
