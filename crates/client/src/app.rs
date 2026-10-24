@@ -114,7 +114,6 @@ pub struct App {
     pub death_time: u32,
     pub riding_entity_id: Option<i32>,
     pub predicted_blocks: std::collections::HashMap<(i32, i32, i32), u32>,
-    pub pending_transactions: Vec<(u8, i16, bool)>,
 }
 
 impl App {
@@ -194,7 +193,6 @@ impl App {
             death_time: 0,
             riding_entity_id: None,
             predicted_blocks: std::collections::HashMap::new(),
-            pending_transactions: Vec::new(),
         }
     }
 
@@ -1571,6 +1569,7 @@ impl App {
                             ig.add_chat_message("§aSuccessfully connected to world!".into());
                         }
                     }
+                    self.last_physics_tick = Instant::now();
 
                     // Automatically grab mouse cursor on entering world
                     if let Some(w) = &self.window {
@@ -1622,6 +1621,14 @@ impl App {
                     }
                     self.profiler.loaded_chunks = 0;
                     if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            if let Some(ref c) = ig.active_container {
+                                let win_id = c.window_id as i8;
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::CloseWindow(win_id));
+                                }
+                            }
+                        }
                         sm.reset_modals();
                         if let Some(ig) = &mut sm.in_game {
                             ig.scoreboard.clear();
@@ -1632,6 +1639,7 @@ impl App {
                             ig.death_ticks = 0;
                         }
                     }
+                    self.last_physics_tick = Instant::now();
                     self.pressed_keys.clear();
                     self.is_left_clicking = false;
                     self.is_right_clicking = false;
@@ -1733,6 +1741,14 @@ impl App {
 
                     if let Some(sm) = &mut self.screen_manager {
                         // MCP parity: Close all open screens on teleport (NetHandlerPlayClient line 725 displayGuiScreen(null))
+                        if let Some(ig) = &mut sm.in_game {
+                            if let Some(ref c) = ig.active_container {
+                                let win_id = c.window_id as i8;
+                                if let Some(s) = &self.session {
+                                    s.send(OutgoingPlayPacket::CloseWindow(win_id));
+                                }
+                            }
+                        }
                         sm.reset_modals();
                         if let Some(ig) = &mut sm.in_game {
                             ig.hud_data.health = self.player_health;
@@ -1741,6 +1757,7 @@ impl App {
                             ig.look = self.player_look;
                         }
                     }
+                    self.last_physics_tick = Instant::now();
 
                     // Reset mining and item usage states on teleport to avoid walking into anticheat setbacks
                     self.is_left_clicking = false;
@@ -2413,17 +2430,15 @@ impl App {
                 }
                 ClientboundPlayPacket::ConfirmTransaction(ct) => {
                     // MCP NetHandlerPlayClient.handleConfirmTransaction parity:
-                    // Server/anticheats (GrimAC, Vulcan, Watchdog) send transactions to synchronize player ticks.
-                    // Responding in exact FIFO order buffered inside the 20 TPS physics tick ensures that
-                    // C0F is sent in the exact same tick and batch as player movement packets (C03-C06).
+                    // Server and anticheats (GrimAC, Vulcan, Watchdog) send transactions to synchronize player ticks.
+                    // Responding immediately in exact FIFO order via outgoing network queue prevents transaction
+                    // queue timeout (max-transaction-time: 30) and avoids desyncing C0F with teleport confirmations (C06).
                     let is_valid_window = ct.window_id == 0 || self.screen_manager.as_ref()
                         .and_then(|sm| sm.in_game.as_ref())
                         .and_then(|ig| ig.active_container.as_ref())
                         .map_or(false, |c| c.window_id == ct.window_id as u8);
                     if is_valid_window && !ct.accepted {
-                        if ct.window_id == 0 {
-                            self.pending_transactions.push((ct.window_id, ct.action_number, true));
-                        } else if let Some(s) = &self.session {
+                        if let Some(s) = &self.session {
                             s.send(OutgoingPlayPacket::ConfirmTransaction {
                                 window_id: ct.window_id,
                                 action_number: ct.action_number,
@@ -3406,15 +3421,6 @@ impl App {
                             });
                         }
 
-                        // Flush buffered window 0 ConfirmTransaction packets immediately before movement packets
-                        for (win_id, action_num, accepted) in self.pending_transactions.drain(..) {
-                            s.send(OutgoingPlayPacket::ConfirmTransaction {
-                                window_id: win_id,
-                                action_number: action_num,
-                                accepted,
-                            });
-                        }
-
                         if let Some(_riding_id) = self.riding_entity_id {
                             s.send(OutgoingPlayPacket::PlayerLook {
                                 yaw: self.player_look.0,
@@ -3494,6 +3500,12 @@ impl App {
                     ig.look = self.player_look;
                 }
             }
+        }
+
+        if self.last_physics_tick.elapsed() >= Duration::from_millis(50) {
+            // Drop excess lagging debt past the 10-tick clamp matching MCP Timer.java (elapsedTicks clamp)
+            // to prevent multiple consecutive 10-tick bursts from depleting the anticheat Timer balance.
+            self.last_physics_tick = Instant::now();
         }
 
         // Update profiler snapshot in HUD
@@ -4202,7 +4214,6 @@ impl ApplicationHandler for App {
                         }
                         self.profiler.loaded_chunks = 0;
                         self.held_item_id = 0;
-                        self.pending_transactions.clear();
                         self.hotbar_items = [None, None, None, None, None, None, None, None, None];
                         self.armor_items = [None, None, None, None];
                         if let Some(sm) = &mut self.screen_manager {
