@@ -9,6 +9,7 @@ pub struct Camera {
     pub roll: f32,  // Degrees (view bobbing)
     pub bob_x: f32, // Camera-space view bobbing horizontal translation
     pub bob_y: f32, // Camera-space view bobbing vertical translation
+    pub bob_pitch: f32, // Camera-space view bobbing pitch rotation
     pub fov: f32,   // Degrees (vertical FOV)
     pub aspect: f32,
     pub near: f32,
@@ -24,6 +25,7 @@ impl Default for Camera {
             roll: 0.0,
             bob_x: 0.0,
             bob_y: 0.0,
+            bob_pitch: 0.0,
             fov: 70.0,
             aspect: 16.0 / 9.0,
             near: 0.05,
@@ -41,6 +43,7 @@ impl Camera {
             roll: 0.0,
             bob_x: 0.0,
             bob_y: 0.0,
+            bob_pitch: 0.0,
             fov,
             aspect,
             near: 0.05,
@@ -71,7 +74,7 @@ impl Camera {
     pub fn view_matrix(&self) -> Mat4 {
         Mat4::from_translation(Vec3::new(self.bob_x, self.bob_y, 0.0))
             * Mat4::from_rotation_z(self.roll.to_radians())
-            * Mat4::from_rotation_x(self.pitch.to_radians())
+            * Mat4::from_rotation_x((self.pitch + self.bob_pitch).to_radians())
             * Mat4::from_rotation_y((self.yaw + 180.0).to_radians())
             * Mat4::from_translation(-self.position)
     }

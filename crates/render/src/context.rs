@@ -140,11 +140,8 @@ pub(crate) fn choose_present_mode(
     vsync: bool,
 ) -> wgpu::PresentMode {
     if vsync {
-        if surface_caps.present_modes.contains(&wgpu::PresentMode::AutoVsync) {
-            wgpu::PresentMode::AutoVsync
-        } else {
-            wgpu::PresentMode::Fifo
-        }
+        // Fifo is guaranteed by the spec to be supported on all platforms and provides true, stable VSync without tearing or jitter.
+        wgpu::PresentMode::Fifo
     } else if surface_caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
         wgpu::PresentMode::Mailbox
     } else if surface_caps.present_modes.contains(&wgpu::PresentMode::AutoNoVsync) {
@@ -172,7 +169,7 @@ mod tests {
     #[test]
     fn test_choose_present_mode_vsync() {
         let caps = mock_caps(vec![wgpu::PresentMode::Fifo, wgpu::PresentMode::AutoVsync]);
-        assert_eq!(choose_present_mode(&caps, true), wgpu::PresentMode::AutoVsync);
+        assert_eq!(choose_present_mode(&caps, true), wgpu::PresentMode::Fifo);
 
         let caps_fifo_only = mock_caps(vec![wgpu::PresentMode::Fifo]);
         assert_eq!(choose_present_mode(&caps_fifo_only, true), wgpu::PresentMode::Fifo);

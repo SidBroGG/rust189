@@ -62,6 +62,7 @@ pub struct CameraPose {
     pub roll: f32,
     pub bob_x: f32,
     pub bob_y: f32,
+    pub bob_pitch: f32,
 }
 
 /// Controller managing camera view bobbing, mouse look, cinematic smoothing,
@@ -149,9 +150,10 @@ impl CameraController {
     ) -> CameraPose {
         let eye_pos = player.get_interpolated_eye_pos(partial_ticks);
 
-        // Interpolate yaw and pitch
+        // Interpolate yaw and pitch (wrapping yaw delta across 360-degree boundary)
         let pt = partial_ticks;
-        let yaw = player.prev_yaw + (player.yaw - player.prev_yaw) * pt;
+        let diff = crate::entity::wrap_degrees(player.yaw - player.prev_yaw);
+        let yaw = player.prev_yaw + diff * pt;
         let pitch = player.prev_pitch + (player.pitch - player.prev_pitch) * pt;
 
         // View bobbing calculation (MCP `EntityRenderer.setupViewBobbing`)
@@ -182,10 +184,11 @@ impl CameraController {
                     eye_pos.z as f32,
                 ),
                 yaw,
-                pitch: pitch + bob_pitch,
+                pitch,
                 roll: bob_roll,
                 bob_x,
                 bob_y,
+                bob_pitch,
             },
             CameraPerspective::ThirdPersonRear | CameraPerspective::ThirdPersonFront => {
                 let is_front = self.perspective == CameraPerspective::ThirdPersonFront;
@@ -232,6 +235,7 @@ impl CameraController {
                     roll: 0.0,
                     bob_x: 0.0,
                     bob_y: 0.0,
+                    bob_pitch: 0.0,
                 }
             }
         }

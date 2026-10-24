@@ -74,6 +74,7 @@ pub struct App {
     pub skin_manager: SkinManager,
     pub camera: Camera,
     pub mouse_grabbed: bool,
+    pub mouse_delta: (f32, f32),
     pub pressed_keys: HashSet<KeyCode>,
 
     // Interaction & Combat (Stage 11)
@@ -157,6 +158,7 @@ impl App {
             skin_manager: SkinManager::new(Path::new("assets")),
             camera: Camera::default(),
             mouse_grabbed: false,
+            mouse_delta: (0.0, 0.0),
             pressed_keys: HashSet::new(),
 
             interaction_renderer: None,
@@ -619,6 +621,7 @@ impl App {
         self.camera.roll = pose.roll + hurt_roll;
         self.camera.bob_x = pose.bob_x;
         self.camera.bob_y = pose.bob_y;
+        self.camera.bob_pitch = pose.bob_pitch;
 
         // MCP 1.8.9 EntityRenderer.getMouseOver parity:
         // Ray origin is ALWAYS player's eyes (interpolated position + eye height),
@@ -3634,8 +3637,10 @@ impl App {
 
         if self.last_physics_tick.elapsed() >= Duration::from_millis(50) {
             // Drop excess lagging debt past the 10-tick clamp matching MCP Timer.java (elapsedTicks clamp)
-            // to prevent multiple consecutive 10-tick bursts from depleting the anticheat Timer balance.
-            self.last_physics_tick = Instant::now();
+            // while preserving the sub-tick fractional time for smooth camera interpolation.
+            let excess = self.last_physics_tick.elapsed();
+            let excess_ticks = excess.as_millis() / 50;
+            self.last_physics_tick += Duration::from_millis((excess_ticks * 50) as u64);
         }
 
         // Update profiler snapshot in HUD
@@ -4140,6 +4145,77 @@ impl ApplicationHandler for App {
                 self.handle_incoming_packets();
                 self.profiler.record_stage(FrameStage::Network, net_start.elapsed());
 
+                // Fixed sub-tick fractional time for smooth rendering interpolation (MCP Timer.renderPartialTicks parity)
+                let dt_secs = self.last_physics_tick.elapsed().as_secs_f32();
+                let partial_ticks = (dt_secs / 0.05).clamp(0.0, 1.0);
+
+                // Apply accumulated raw mouse input once per frame (MCP EntityRenderer.updateCameraAndRender parity)
+                let (mdx, mdy) = (self.mouse_delta.0, self.mouse_delta.1);
+                self.mouse_delta = (0.0, 0.0);
+                if (mdx != 0.0 || mdy != 0.0) && self.mouse_grabbed && !self.is_cursor_needed() {
+                    let sensitivity = self.config.mouse.sensitivity;
+                    let invert_y = self.config.mouse.invert_y;
+                    self.camera_controller.handle_mouse_input(
+                        &mut self.player,
+                        mdx,
+                        mdy,
+                        sensitivity,
+                        invert_y,
+                    );
+                    self.player_look = (self.player.yaw, self.player.pitch);
+                    if let Some(sm) = &mut self.screen_manager {
+                        if let Some(ig) = &mut sm.in_game {
+                            ig.look = self.player_look;
+                        }
+                    }
+                }
+
+                // Camera and player movement update for current frame (before nametags and GUI pass)
+                if self.has_spawned || is_in_game {
+                    // Smooth vehicle camera positioning
+                    if let Some(rid) = self.riding_entity_id {
+                        if let Some(ent) = self.world.entity_tracker.entities.get(&rid) {
+                            let (offset_x, offset_y, offset_z) = match &ent.kind {
+                                world::EntityKind::Object { object_type: 1, .. } => (0.0, -0.3, 0.0),
+                                world::EntityKind::Object { object_type: 10, .. } => (0.0, 0.0, 0.0),
+                                _ => (0.0, 0.75, 0.0),
+                            };
+                            let v_pos = ent.interpolated_pos(partial_ticks);
+                            self.player.pos = glam::DVec3::new(
+                                v_pos.x + offset_x,
+                                v_pos.y + offset_y,
+                                v_pos.z + offset_z,
+                            );
+                            self.player.prev_pos = self.player.pos;
+                        }
+                    }
+
+                    let pose = self.camera_controller.compute_camera_pose(
+                        &self.world,
+                        &self.player,
+                        partial_ticks,
+                        self.config.video.view_bobbing,
+                    );
+                    let hurt_roll = self.get_hurt_camera_roll(partial_ticks);
+                    self.camera.position = pose.position;
+                    self.camera.yaw = pose.yaw;
+                    self.camera.pitch = pose.pitch;
+                    self.camera.roll = pose.roll + hurt_roll;
+                    self.camera.bob_x = pose.bob_x;
+                    self.camera.bob_y = pose.bob_y;
+                    self.camera.bob_pitch = pose.bob_pitch;
+
+                    // Smooth bow draw zoom (MCP AbstractClientPlayer FOV modifier)
+                    if self.item_use_state.is_bow_drawing() {
+                        let pull = (self.item_use_state.ticks_used as f32 + partial_ticks) / 20.0;
+                        let pull = (pull * pull + pull * 2.0) / 3.0;
+                        let pull = pull.min(1.0);
+                        self.camera.fov = self.config.video.fov * (1.0 - pull * pull * 0.15);
+                    } else {
+                        self.camera.fov = self.config.video.fov;
+                    }
+                }
+
                 let scale_factor = self.window.as_ref().unwrap().scale_factor() as f32;
                 let scaled_res = ScaledResolution::new(
                     window_size.width,
@@ -4154,10 +4230,6 @@ impl ApplicationHandler for App {
                     size_in_pixels: [window_size.width, window_size.height],
                     pixels_per_point: scaled_res.scale_factor,
                 };
-
-                // Update benchmark snapshot & calculate player nametags for HUD
-                let dt_ms = (self.last_physics_tick.elapsed().as_millis() as f32).clamp(0.0, 50.0);
-                let partial_ticks = (dt_ms / 50.0).clamp(0.0, 1.0);
 
                 let mut nametags = Vec::new();
                 let vp = self.camera.view_proj_matrix();
@@ -4569,53 +4641,7 @@ impl ApplicationHandler for App {
                     GuiOutput::None => {}
                 }
 
-                // Camera and player movement update (interpolated from 20 TPS physics ticks)
-                if self.has_spawned || is_in_game {
-                    let dt_secs = self.last_physics_tick.elapsed().as_secs_f32();
-                    let partial_ticks = (dt_secs / 0.05).clamp(0.0, 1.0);
 
-                    // Smooth vehicle camera positioning
-                    if let Some(rid) = self.riding_entity_id {
-                        if let Some(ent) = self.world.entity_tracker.entities.get(&rid) {
-                            let (offset_x, offset_y, offset_z) = match &ent.kind {
-                                world::EntityKind::Object { object_type: 1, .. } => (0.0, -0.3, 0.0),
-                                world::EntityKind::Object { object_type: 10, .. } => (0.0, 0.0, 0.0),
-                                _ => (0.0, 0.75, 0.0),
-                            };
-                            let v_pos = ent.interpolated_pos(partial_ticks);
-                            self.player.pos = glam::DVec3::new(
-                                v_pos.x + offset_x,
-                                v_pos.y + offset_y,
-                                v_pos.z + offset_z,
-                            );
-                            self.player.prev_pos = self.player.pos;
-                        }
-                    }
-
-                    let pose = self.camera_controller.compute_camera_pose(
-                        &self.world,
-                        &self.player,
-                        partial_ticks,
-                        self.config.video.view_bobbing,
-                    );
-                    let hurt_roll = self.get_hurt_camera_roll(partial_ticks);
-                    self.camera.position = pose.position;
-                    self.camera.yaw = pose.yaw;
-                    self.camera.pitch = pose.pitch;
-                    self.camera.roll = pose.roll + hurt_roll;
-                    self.camera.bob_x = pose.bob_x;
-                    self.camera.bob_y = pose.bob_y;
-
-                    // Smooth bow draw zoom (MCP AbstractClientPlayer FOV modifier)
-                    if self.item_use_state.is_bow_drawing() {
-                        let pull = (self.item_use_state.ticks_used as f32 + partial_ticks) / 20.0;
-                        let pull = (pull * pull + pull * 2.0) / 3.0;
-                        let pull = pull.min(1.0);
-                        self.camera.fov = self.config.video.fov * (1.0 - pull * pull * 0.15);
-                    } else {
-                        self.camera.fov = self.config.video.fov;
-                    }
-                }
 
                 // Acquire next swapchain surface texture
                 let render_start = Instant::now();
@@ -4681,8 +4707,6 @@ impl ApplicationHandler for App {
                         let (visible_opaque, visible_translucent) =
                             cm.get_visible_sections(&frustum, self.camera.position);
 
-                        let dt_secs = self.last_physics_tick.elapsed().as_secs_f32();
-                        let partial_ticks = (dt_secs / 0.05).clamp(0.0, 1.0);
                         let eye_pos = self.player.get_interpolated_eye_pos(partial_ticks);
                         let fwd = self.camera.forward();
                         let look_dir = glam::DVec3::new(fwd.x as f64, fwd.y as f64, fwd.z as f64);
@@ -4760,8 +4784,6 @@ impl ApplicationHandler for App {
 
                         // 2. Render entities with depth writes and testing
                         if let Some(er) = &mut self.entity_renderer {
-                            let dt_ms = (self.last_physics_tick.elapsed().as_millis() as f32).clamp(0.0, 50.0);
-                            let partial_ticks = (dt_ms / 50.0).clamp(0.0, 1.0);
                             er.update_uniforms(&gpu.queue, &self.camera, render_dist_blocks);
 
                             let local_player_entity = if self.camera_controller.perspective != CameraPerspective::FirstPerson {
@@ -4821,8 +4843,6 @@ impl ApplicationHandler for App {
 
                         // 2.5. Render dynamic block entities (TESRs)
                         if let Some(ber) = &mut self.block_entity_renderer {
-                            let dt_ms = (self.last_physics_tick.elapsed().as_millis() as f32).clamp(0.0, 50.0);
-                            let partial_ticks = (dt_ms / 50.0).clamp(0.0, 1.0);
                             ber.render(
                                 &gpu.device,
                                 &gpu.queue,
@@ -4908,21 +4928,8 @@ impl ApplicationHandler for App {
     ) {
         if let winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } = event {
             if self.mouse_grabbed && !self.is_cursor_needed() {
-                let sensitivity = self.config.mouse.sensitivity;
-                let invert_y = self.config.mouse.invert_y;
-                self.camera_controller.handle_mouse_input(
-                    &mut self.player,
-                    dx as f32,
-                    dy as f32,
-                    sensitivity,
-                    invert_y,
-                );
-                self.player_look = (self.player.yaw, self.player.pitch);
-                if let Some(sm) = &mut self.screen_manager {
-                    if let Some(ig) = &mut sm.in_game {
-                        ig.look = self.player_look;
-                    }
-                }
+                self.mouse_delta.0 += dx as f32;
+                self.mouse_delta.1 += dy as f32;
             }
         }
     }
