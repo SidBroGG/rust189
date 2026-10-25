@@ -66,6 +66,8 @@ pub struct App {
     pub pending_connection:
         Option<tokio::sync::oneshot::Receiver<Result<PlaySessionHandle, String>>>,
     pub connecting_server_ip: Option<String>,
+    pub post_tick_transactions: Vec<protocol::ClientboundConfirmTransactionPacket>,
+    pub velocity_pending_packet: bool,
 
     // Rendering & Terrain (Stage 5)
     pub atlas: Option<Arc<TextureAtlas>>,
@@ -151,6 +153,8 @@ impl App {
             position_update_ticks: 0,
             pending_connection: None,
             connecting_server_ip: None,
+            post_tick_transactions: Vec::new(),
+            velocity_pending_packet: false,
 
             atlas: None,
             terrain_renderer: None,
@@ -1693,6 +1697,8 @@ impl App {
             warn!("Server connection closed");
             self.session = None;
             self.has_spawned = false;
+            self.post_tick_transactions.clear();
+            self.velocity_pending_packet = false;
             self.world.clear();
             if let Some(cm) = &mut self.chunk_manager {
                 cm.clear();
@@ -1712,22 +1718,12 @@ impl App {
             return;
         }
 
-        // If player has already spawned into multiplayer, only process incoming packets
-        // when physical ticks are running (MCP runTick parity). This ensures ConfirmTransaction
-        // and EntityVelocity are sequenced in lockstep with 20 TPS physics and flying packets!
-        if self.has_spawned && self.timer.elapsed_ticks == 0 {
-            return;
-        }
-
         let mut session_handle = self.session.take().unwrap();
         let mut packets = Vec::new();
         while let Ok(pkt) = session_handle.incoming_rx.try_recv() {
             packets.push(pkt);
         }
         self.session = Some(session_handle);
-
-        let mut velocity_applied_this_tick = false;
-        let mut post_tick_transactions = Vec::new();
 
         for packet in packets {
             match packet {
@@ -1751,6 +1747,8 @@ impl App {
                     }
                     self.profiler.loaded_chunks = 0;
                     self.player_entity_id = jg.entity_id;
+                    self.post_tick_transactions.clear();
+                    self.velocity_pending_packet = false;
                     self.world.dimension = jg.dimension;
                     self.player_gamemode = jg.game_mode;
                     self.player_health = 20.0;
@@ -1862,6 +1860,8 @@ impl App {
                         }
                     }
                     self.timer.reset();
+                    self.post_tick_transactions.clear();
+                    self.velocity_pending_packet = false;
                     self.pressed_keys.clear();
                     self.is_left_clicking = false;
                     self.is_right_clicking = false;
@@ -1952,16 +1952,10 @@ impl App {
                     // Teleportation dismounts the player from any vehicle / lobby cage
                     self.riding_entity_id = None;
 
-                    // If not an actual teleport, preserve local camera rotation to avoid sudden look snapping
-                    let confirmed_yaw = if is_teleport { new_yaw } else { self.player.yaw };
-                    let confirmed_pitch = if is_teleport { new_pitch } else { self.player.pitch };
-
+                    // MCP NetHandlerPlayClient line 716-717:
+                    // entityplayer.setPositionAndRotation(d0, d1, d2, f, f1) sets both pos and prev_pos
                     self.player
-                        .set_position_and_rotation(new_x, new_y, new_z, confirmed_yaw, confirmed_pitch);
-                    if !is_teleport {
-                        // Maintain old_pos as prev_pos so camera interpolation glides smoothly instead of snapping
-                        self.player.prev_pos = old_pos;
-                    }
+                        .set_position_and_rotation(new_x, new_y, new_z, new_yaw, new_pitch);
                     self.player.distance_walked_modified = 0.0;
                     self.player.prev_distance_walked_modified = 0.0;
 
@@ -2572,16 +2566,18 @@ impl App {
                         .animation(anim.entity_id, anim.animation);
                 }
                 ClientboundPlayPacket::EntityVelocity(ev) => {
-                    let is_local_player = ev.entity_id == self.player_entity_id
-                        || (self.player_entity_id != 0 && !self.world.entity_tracker.entities.contains_key(&ev.entity_id));
+                    let is_local_player = ev.entity_id == self.player_entity_id;
                     if is_local_player {
-                        self.player_entity_id = ev.entity_id;
-                        self.player.apply_velocity(
-                            ev.velocity_x as f64 / 8000.0,
-                            ev.velocity_y as f64 / 8000.0,
-                            ev.velocity_z as f64 / 8000.0,
+                        let vx = ev.velocity_x as f64 / 8000.0;
+                        let vy = ev.velocity_y as f64 / 8000.0;
+                        let vz = ev.velocity_z as f64 / 8000.0;
+                        info!(
+                            entity_id = ev.entity_id,
+                            vx, vy, vz,
+                            "Applied EntityVelocity to local player"
                         );
-                        velocity_applied_this_tick = true;
+                        self.player.apply_velocity(vx, vy, vz);
+                        self.velocity_pending_packet = true;
                         self.hurt_time = 10;
                         self.max_hurt_time = 10;
                     }
@@ -2598,6 +2594,7 @@ impl App {
                         exp.player_motion_y as f64,
                         exp.player_motion_z as f64,
                     );
+                    self.velocity_pending_packet = true;
                 }
                 ClientboundPlayPacket::PlayerAbilities(pa) => {
                     self.player.capabilities.is_invulnerable = pa.invulnerable;
@@ -2730,10 +2727,10 @@ impl App {
                 }
                 ClientboundPlayPacket::ConfirmTransaction(ct) => {
                     // MCP NetHandlerPlayClient.handleConfirmTransaction & GrimAC velocity sandwich parity:
-                    // If velocity was applied on this tick, defer confirming post-velocity transactions
+                    // If velocity was applied, defer confirming post-velocity transactions
                     // until immediately after the physical movement packet is sent.
-                    if velocity_applied_this_tick {
-                        post_tick_transactions.push(ct);
+                    if self.velocity_pending_packet {
+                        self.post_tick_transactions.push(ct);
                     } else if !ct.accepted {
                         if let Some(s) = &self.session {
                             s.send(OutgoingPlayPacket::ConfirmTransaction {
@@ -2810,10 +2807,8 @@ impl App {
                 }
                 ClientboundPlayPacket::EntityStatus(es) => {
                     self.world.entity_tracker.status(es.entity_id, es.status);
-                    let is_local_player = es.entity_id == self.player_entity_id
-                        || (self.player_entity_id != 0 && !self.world.entity_tracker.entities.contains_key(&es.entity_id));
+                    let is_local_player = es.entity_id == self.player_entity_id;
                     if is_local_player {
-                        self.player_entity_id = es.entity_id;
                         if es.status == 2 {
                             self.hurt_time = 10;
                             self.max_hurt_time = 10;
@@ -3984,7 +3979,8 @@ impl App {
                         }
 
                         // Flush any post-velocity anticheat transactions immediately after movement packet
-                        for ct in post_tick_transactions.drain(..) {
+                        self.velocity_pending_packet = false;
+                        for ct in self.post_tick_transactions.drain(..) {
                             s.send(OutgoingPlayPacket::ConfirmTransaction {
                                 window_id: ct.window_id,
                                 action_number: ct.action_number,
@@ -4007,17 +4003,6 @@ impl App {
                     ig.pos = self.player_pos;
                     ig.look = self.player_look;
                 }
-            }
-        }
-
-        // Safety flush for any remaining post-tick transactions
-        if let Some(s) = &self.session {
-            for ct in post_tick_transactions.drain(..) {
-                s.send(OutgoingPlayPacket::ConfirmTransaction {
-                    window_id: ct.window_id,
-                    action_number: ct.action_number,
-                    accepted: true,
-                });
             }
         }
 
