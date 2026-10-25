@@ -445,6 +445,17 @@ impl PlayerMovement {
             }
         }
 
+        // Motion cutoff threshold matching MCP `EntityLivingBase.onLivingUpdate` lines 1974-1987
+        if self.motion.x.abs() < 0.005 {
+            self.motion.x = 0.0;
+        }
+        if self.motion.y.abs() < 0.005 {
+            self.motion.y = 0.0;
+        }
+        if self.motion.z.abs() < 0.005 {
+            self.motion.z = 0.0;
+        }
+
         self.check_environment(world);
 
         let mut strafe = input.move_strafe;
@@ -647,6 +658,8 @@ impl PlayerMovement {
                 }
             }
         }
+
+
 
         // Distance walked on ground for view bobbing (MCP `Entity.java` line 872)
         let dx = self.pos.x - self.prev_pos.x;

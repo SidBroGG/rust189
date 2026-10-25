@@ -1712,12 +1712,22 @@ impl App {
             return;
         }
 
+        // If player has already spawned into multiplayer, only process incoming packets
+        // when physical ticks are running (MCP runTick parity). This ensures ConfirmTransaction
+        // and EntityVelocity are sequenced in lockstep with 20 TPS physics and flying packets!
+        if self.has_spawned && self.timer.elapsed_ticks == 0 {
+            return;
+        }
+
         let mut session_handle = self.session.take().unwrap();
         let mut packets = Vec::new();
         while let Ok(pkt) = session_handle.incoming_rx.try_recv() {
             packets.push(pkt);
         }
         self.session = Some(session_handle);
+
+        let mut velocity_applied_this_tick = false;
+        let mut post_tick_transactions = Vec::new();
 
         for packet in packets {
             match packet {
@@ -1883,7 +1893,8 @@ impl App {
                         "Received PlayerPosLook setback/teleport from server"
                     );
 
-                    // Update player position according to relative/absolute flags
+                    // Update player position according to relative/absolute flags (MCP NetHandlerPlayClient.handlePlayerPosLook)
+                    let old_pos = self.player.pos;
                     let mut new_x = self.player.pos.x;
                     let mut new_y = self.player.pos.y;
                     let mut new_z = self.player.pos.z;
@@ -1923,6 +1934,14 @@ impl App {
                         new_pitch = pos_look.pitch;
                     }
 
+                    let delta = glam::DVec3::new(new_x - old_pos.x, new_y - old_pos.y, new_z - old_pos.z);
+                    let is_teleport = delta.length_squared() > 100.0 || !self.has_spawned;
+
+                    if is_teleport {
+                        self.player.motion = glam::DVec3::ZERO;
+                        self.player.fall_distance = 0.0;
+                    }
+
                     // Reset health, death and hurt states if player was dead/dying (e.g. minigame respawn / spectator teleport)
                     if self.player_health <= 0.0 || self.death_time > 0 {
                         self.player_health = 20.0;
@@ -1933,8 +1952,16 @@ impl App {
                     // Teleportation dismounts the player from any vehicle / lobby cage
                     self.riding_entity_id = None;
 
+                    // If not an actual teleport, preserve local camera rotation to avoid sudden look snapping
+                    let confirmed_yaw = if is_teleport { new_yaw } else { self.player.yaw };
+                    let confirmed_pitch = if is_teleport { new_pitch } else { self.player.pitch };
+
                     self.player
-                        .set_position_and_rotation(new_x, new_y, new_z, new_yaw, new_pitch);
+                        .set_position_and_rotation(new_x, new_y, new_z, confirmed_yaw, confirmed_pitch);
+                    if !is_teleport {
+                        // Maintain old_pos as prev_pos so camera interpolation glides smoothly instead of snapping
+                        self.player.prev_pos = old_pos;
+                    }
                     self.player.distance_walked_modified = 0.0;
                     self.player.prev_distance_walked_modified = 0.0;
 
@@ -1979,7 +2006,9 @@ impl App {
                     self.is_right_clicking = false;
                     self.item_use_state.stop();
                     self.breaking_block_pos = None;
-                    self.player.fall_distance = 0.0;
+                    if is_teleport {
+                        self.player.fall_distance = 0.0;
+                    }
 
                     // Do not arbitrarily erase placed blocks on setback/teleport; server sends authoritative BlockChange if rejected
                     self.predicted_blocks.clear();
@@ -2008,14 +2037,16 @@ impl App {
                         });
                     }
 
-                    let eye_h = self.player.get_eye_height() as f32;
-                    self.camera.position = glam::Vec3::new(
-                        self.player.pos.x as f32,
-                        (self.player.pos.y as f32) + eye_h,
-                        self.player.pos.z as f32,
-                    );
-                    self.camera.yaw = self.player.yaw;
-                    self.camera.pitch = self.player.pitch;
+                    if is_teleport {
+                        let eye_h = self.player.get_eye_height() as f32;
+                        self.camera.position = glam::Vec3::new(
+                            self.player.pos.x as f32,
+                            (self.player.pos.y as f32) + eye_h,
+                            self.player.pos.z as f32,
+                        );
+                        self.camera.yaw = self.player.yaw;
+                        self.camera.pitch = self.player.pitch;
+                    }
 
                     // Ensure mouse is captured on spawn/teleport (MCP setIngameFocus parity)
                     if !self.is_cursor_needed() {
@@ -2541,12 +2572,18 @@ impl App {
                         .animation(anim.entity_id, anim.animation);
                 }
                 ClientboundPlayPacket::EntityVelocity(ev) => {
-                    if ev.entity_id == self.player_entity_id {
+                    let is_local_player = ev.entity_id == self.player_entity_id
+                        || (self.player_entity_id != 0 && !self.world.entity_tracker.entities.contains_key(&ev.entity_id));
+                    if is_local_player {
+                        self.player_entity_id = ev.entity_id;
                         self.player.apply_velocity(
                             ev.velocity_x as f64 / 8000.0,
                             ev.velocity_y as f64 / 8000.0,
                             ev.velocity_z as f64 / 8000.0,
                         );
+                        velocity_applied_this_tick = true;
+                        self.hurt_time = 10;
+                        self.max_hurt_time = 10;
                     }
                     self.world.entity_tracker.velocity(
                         ev.entity_id,
@@ -2692,12 +2729,12 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::ConfirmTransaction(ct) => {
-                    // MCP NetHandlerPlayClient.handleConfirmTransaction parity:
-                    // Server and anticheats (GrimAC, Vulcan, Watchdog) send transactions to synchronize player ticks.
-                    // Anticheats send transactions with window_id 0, 255 (-1), or arbitrary IDs even when no container is open.
-                    // If not accepted (!ct.accepted), the client MUST unconditionally confirm with accepted: true,
-                    // otherwise anticheats trigger a 30-second timeout kick (max-transaction-time: 30).
-                    if !ct.accepted {
+                    // MCP NetHandlerPlayClient.handleConfirmTransaction & GrimAC velocity sandwich parity:
+                    // If velocity was applied on this tick, defer confirming post-velocity transactions
+                    // until immediately after the physical movement packet is sent.
+                    if velocity_applied_this_tick {
+                        post_tick_transactions.push(ct);
+                    } else if !ct.accepted {
                         if let Some(s) = &self.session {
                             s.send(OutgoingPlayPacket::ConfirmTransaction {
                                 window_id: ct.window_id,
@@ -2719,6 +2756,7 @@ impl App {
                     let prev_health = self.player_health;
                     self.player_health = uh.health;
                     self.player_food = uh.food.clamp(0, 20) as u8;
+                    self.player.food_level = uh.food as f32;
                     self.player_saturation = uh.food_saturation;
 
                     if uh.health < prev_health {
@@ -2772,7 +2810,10 @@ impl App {
                 }
                 ClientboundPlayPacket::EntityStatus(es) => {
                     self.world.entity_tracker.status(es.entity_id, es.status);
-                    if es.entity_id == self.player_entity_id {
+                    let is_local_player = es.entity_id == self.player_entity_id
+                        || (self.player_entity_id != 0 && !self.world.entity_tracker.entities.contains_key(&es.entity_id));
+                    if is_local_player {
+                        self.player_entity_id = es.entity_id;
                         if es.status == 2 {
                             self.hurt_time = 10;
                             self.max_hurt_time = 10;
@@ -3941,6 +3982,15 @@ impl App {
                                 self.last_reported_look = self.player_look;
                             }
                         }
+
+                        // Flush any post-velocity anticheat transactions immediately after movement packet
+                        for ct in post_tick_transactions.drain(..) {
+                            s.send(OutgoingPlayPacket::ConfirmTransaction {
+                                window_id: ct.window_id,
+                                action_number: ct.action_number,
+                                accepted: true,
+                            });
+                        }
                     }
                 }
             } else if self.session.is_some() {
@@ -3957,6 +4007,17 @@ impl App {
                     ig.pos = self.player_pos;
                     ig.look = self.player_look;
                 }
+            }
+        }
+
+        // Safety flush for any remaining post-tick transactions
+        if let Some(s) = &self.session {
+            for ct in post_tick_transactions.drain(..) {
+                s.send(OutgoingPlayPacket::ConfirmTransaction {
+                    window_id: ct.window_id,
+                    action_number: ct.action_number,
+                    accepted: true,
+                });
             }
         }
 
