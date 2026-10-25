@@ -246,6 +246,90 @@ pub fn get_block_collision_boxes(
         _ => {}
     }
 
+    // Bed (26): 9/16 height (0.5625) (MCP BlockBed)
+    if id == 26 {
+        let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.5625, fz + 1.0);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Lily Pad (111): 1/64 height (0.015625) (MCP BlockLilyPad)
+    if id == 111 {
+        let bb = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.015625, fz + 1.0);
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Cauldron (118): base (5/16 = 0.3125) + 4 walls (MCP BlockCauldron)
+    if id == 118 {
+        let base = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.3125, fz + 1.0);
+        if base.intersects(mask) {
+            boxes.push(base);
+        }
+        let f = 0.125;
+        let west = AABB::new(fx, fy, fz, fx + f, fy + 1.0, fz + 1.0);
+        if west.intersects(mask) {
+            boxes.push(west);
+        }
+        let north = AABB::new(fx, fy, fz, fx + 1.0, fy + 1.0, fz + f);
+        if north.intersects(mask) {
+            boxes.push(north);
+        }
+        let east = AABB::new(fx + 1.0 - f, fy, fz, fx + 1.0, fy + 1.0, fz + 1.0);
+        if east.intersects(mask) {
+            boxes.push(east);
+        }
+        let south = AABB::new(fx, fy, fz + 1.0 - f, fx + 1.0, fy + 1.0, fz + 1.0);
+        if south.intersects(mask) {
+            boxes.push(south);
+        }
+        return;
+    }
+
+    // Anvil (145): MCP BlockAnvil
+    if id == 145 {
+        let is_x_axis = (meta & 1) != 0;
+        let bb = if is_x_axis {
+            AABB::new(fx, fy, fz + 0.125, fx + 1.0, fy + 1.0, fz + 0.875)
+        } else {
+            AABB::new(fx + 0.125, fy, fz, fx + 0.875, fy + 1.0, fz + 1.0)
+        };
+        if bb.intersects(mask) {
+            boxes.push(bb);
+        }
+        return;
+    }
+
+    // Hopper (154): base (10/16 = 0.625) + 4 walls (MCP BlockHopper)
+    if id == 154 {
+        let base = AABB::new(fx, fy, fz, fx + 1.0, fy + 0.625, fz + 1.0);
+        if base.intersects(mask) {
+            boxes.push(base);
+        }
+        let f = 0.125;
+        let west = AABB::new(fx, fy, fz, fx + f, fy + 1.0, fz + 1.0);
+        if west.intersects(mask) {
+            boxes.push(west);
+        }
+        let north = AABB::new(fx, fy, fz, fx + 1.0, fy + 1.0, fz + f);
+        if north.intersects(mask) {
+            boxes.push(north);
+        }
+        let east = AABB::new(fx + 1.0 - f, fy, fz, fx + 1.0, fy + 1.0, fz + 1.0);
+        if east.intersects(mask) {
+            boxes.push(east);
+        }
+        let south = AABB::new(fx, fy, fz + 1.0 - f, fx + 1.0, fy + 1.0, fz + 1.0);
+        if south.intersects(mask) {
+            boxes.push(south);
+        }
+        return;
+    }
+
     // Ladders (65): 0.125 block thickness along facing wall (MCP `BlockLadder.setBlockBoundsBasedOnState`)
     if id == 65 {
         let f = 0.125;
@@ -791,6 +875,16 @@ impl World {
                     if !state.is_air() {
                         get_block_collision_boxes(self, bx, by, bz, state, mask, &mut list);
                     }
+                }
+            }
+        }
+
+        // Include hard entity collision boxes (MCP EntityBoat & EntityMinecart parity)
+        for entity in self.entity_tracker.entities.values() {
+            if entity.is_solid_collision_entity() {
+                let bb = entity.bounding_box();
+                if bb.intersects(mask) {
+                    list.push(bb);
                 }
             }
         }

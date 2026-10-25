@@ -405,13 +405,7 @@ impl TrackedEntity {
     /// Returns the AxisAlignedBB for this entity according to vanilla dimensions.
     pub fn bounding_box(&self) -> crate::physics::aabb::AABB {
         let (width, height) = match &self.kind {
-            EntityKind::Player { .. } => {
-                if self.is_sneaking {
-                    (0.6, 1.65)
-                } else {
-                    (0.6, 1.8)
-                }
-            }
+            EntityKind::Player { .. } => (0.6, 1.8),
             EntityKind::Mob { mob_type } => match *mob_type {
                 30 => {
                     if self.is_armor_stand_marker {
@@ -505,6 +499,15 @@ impl TrackedEntity {
             self.pos.y + height,
             self.pos.z + half_w,
         )
+    }
+
+    /// Returns true if this entity has a hard collision box that blocks movement (MCP Boat and Minecart parity).
+    #[inline]
+    pub fn is_solid_collision_entity(&self) -> bool {
+        match self.kind {
+            EntityKind::Object { object_type, .. } => matches!(object_type, 1 | 10),
+            _ => false,
+        }
     }
 }
 

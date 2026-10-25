@@ -2,6 +2,7 @@ mod app;
 mod auth;
 mod config;
 mod logging;
+mod timer;
 
 use app::App;
 use assets::{check_fast_integrity, AssetManager, AssetProgress, IntegrityStatus};

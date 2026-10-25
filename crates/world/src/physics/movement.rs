@@ -91,7 +91,6 @@ pub struct PlayerMovement {
 impl PlayerMovement {
     pub const WIDTH: f32 = 0.6;
     pub const HEIGHT: f32 = 1.8;
-    pub const SNEAK_HEIGHT: f32 = 1.65;
     pub const STEP_HEIGHT: f32 = 0.6;
     pub const EYE_HEIGHT: f32 = 1.62;
     pub const SNEAK_EYE_HEIGHT: f32 = 1.54;
@@ -102,12 +101,8 @@ impl PlayerMovement {
     }
 
     #[inline]
-    pub fn current_height(is_sneaking: bool) -> f64 {
-        if is_sneaking {
-            Self::SNEAK_HEIGHT as f64
-        } else {
-            Self::HEIGHT as f64
-        }
+    pub fn current_height(_is_sneaking: bool) -> f64 {
+        Self::HEIGHT as f64
     }
 
     pub fn new(x: f64, y: f64, z: f64) -> Self {
@@ -118,7 +113,7 @@ impl PlayerMovement {
             y,
             z - half_w,
             x + half_w,
-            y + Self::current_height(false),
+            y + (Self::HEIGHT as f64),
             z + half_w,
         );
         Self {
@@ -187,7 +182,7 @@ impl PlayerMovement {
     pub fn set_position(&mut self, x: f64, y: f64, z: f64) {
         self.pos = DVec3::new(x, y, z);
         let half_w = Self::half_width();
-        let h = Self::current_height(self.is_sneaking);
+        let h = Self::HEIGHT as f64;
         self.bounding_box = AABB::new(
             x - half_w,
             y,
@@ -215,7 +210,7 @@ impl PlayerMovement {
         self.pitch = pitch;
 
         let half_w = Self::half_width();
-        let h = Self::current_height(self.is_sneaking);
+        let h = Self::HEIGHT as f64;
         self.bounding_box = AABB::new(
             x - half_w,
             y,
@@ -465,13 +460,9 @@ impl PlayerMovement {
             strafe = (strafe as f64 * 0.3) as f32;
             forward = (forward as f64 * 0.3) as f32;
             self.is_sprinting = false;
-            if !self.is_sneaking {
-                self.is_sneaking = true;
-                self.bounding_box.max_y = self.bounding_box.min_y + Self::current_height(true);
-            }
-        } else if self.is_sneaking {
+            self.is_sneaking = true;
+        } else {
             self.is_sneaking = false;
-            self.bounding_box.max_y = self.bounding_box.min_y + Self::current_height(false);
         }
 
         // Push out of solid full cubes (MCP `EntityPlayerSP` lines 795-798)

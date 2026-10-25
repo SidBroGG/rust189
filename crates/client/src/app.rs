@@ -1,15 +1,16 @@
-use assets::SkinManager;
 use crate::config::ClientConfig;
+use crate::timer::GameTimer;
+use assets::SkinManager;
 use egui::Color32;
 use egui_wgpu::ScreenDescriptor;
 use gui::{
-    matches_winit_key, winit_key_to_standard, winit_mouse_to_standard, GuiIntegration,
-    GuiOutput, HudBossBarInfo, HudItemInfo, HudPotionInfo, Language, NametagInfo,
-    ScaledResolution, ScreenManager,
+    matches_winit_key, winit_key_to_standard, winit_mouse_to_standard, GuiIntegration, GuiOutput,
+    HudBossBarInfo, HudItemInfo, HudPotionInfo, Language, NametagInfo, ScaledResolution,
+    ScreenManager,
 };
 use protocol::{
-    connect_offline, BlockFace, ClientStatusAction, ClientboundPlayPacket, DiggingAction,
-    NbtTag, OutgoingPlayPacket, PlaySessionHandle, Position, Slot, UseEntityAction,
+    connect_offline, BlockFace, ClientStatusAction, ClientboundPlayPacket, DiggingAction, NbtTag,
+    OutgoingPlayPacket, PlaySessionHandle, Position, Slot, UseEntityAction,
 };
 use render::{
     BlockEntityRenderer, Camera, ChunkMeshManager, EntityRenderer, Frustum, GpuContext,
@@ -50,7 +51,7 @@ pub struct App {
     pub world: World,
     pub profiler: PerformanceProfiler,
     pub session: Option<PlaySessionHandle>,
-    pub last_physics_tick: Instant,
+    pub timer: GameTimer,
     pub player: PlayerMovement,
     pub camera_controller: CameraController,
     pub player_entity_id: i32,
@@ -62,7 +63,8 @@ pub struct App {
     pub last_reported_pos: (f64, f64, f64),
     pub last_reported_look: (f32, f32),
     pub position_update_ticks: u32,
-    pub pending_connection: Option<tokio::sync::oneshot::Receiver<Result<PlaySessionHandle, String>>>,
+    pub pending_connection:
+        Option<tokio::sync::oneshot::Receiver<Result<PlaySessionHandle, String>>>,
     pub connecting_server_ip: Option<String>,
 
     // Rendering & Terrain (Stage 5)
@@ -135,7 +137,7 @@ impl App {
             world: World::new(),
             profiler: PerformanceProfiler::new(),
             session: None,
-            last_physics_tick: Instant::now(),
+            timer: GameTimer::new(20.0),
             player: PlayerMovement::new(0.0, 64.0, 0.0),
             camera_controller,
             player_entity_id: 0,
@@ -226,7 +228,9 @@ impl App {
         if self.current_reported_held_slot != self.selected_hotbar_slot {
             self.current_reported_held_slot = self.selected_hotbar_slot;
             if let Some(s) = &self.session {
-                s.send(OutgoingPlayPacket::HeldItemChange(self.selected_hotbar_slot as i16));
+                s.send(OutgoingPlayPacket::HeldItemChange(
+                    self.selected_hotbar_slot as i16,
+                ));
             }
         }
     }
@@ -265,7 +269,9 @@ impl App {
                         let block_name = Self::block_name_from_id(block_id);
                         for elem in elements {
                             if let protocol::NbtTag::String(target_name) = elem {
-                                let norm_target = target_name.strip_prefix("minecraft:").unwrap_or(target_name);
+                                let norm_target = target_name
+                                    .strip_prefix("minecraft:")
+                                    .unwrap_or(target_name);
                                 if norm_target.eq_ignore_ascii_case(block_name) {
                                     return true;
                                 }
@@ -324,9 +330,13 @@ impl App {
 
     /// Extracts an enchantment level from a Slot's NBT data.
     pub fn get_slot_enchantment_level(slot: &Slot, ench_id: i16) -> u32 {
-        let Some(NbtTag::Compound(root)) = &slot.nbt else { return 0; };
+        let Some(NbtTag::Compound(root)) = &slot.nbt else {
+            return 0;
+        };
         let list_opt = root.get("ench").or_else(|| root.get("StoredEnchantments"));
-        let Some(NbtTag::List { elements, .. }) = list_opt else { return 0; };
+        let Some(NbtTag::List { elements, .. }) = list_opt else {
+            return 0;
+        };
         for elem in elements {
             if let NbtTag::Compound(map) = elem {
                 let id = match map.get("id") {
@@ -349,24 +359,41 @@ impl App {
     /// Retrieves active player mining parameters (Efficiency, Haste, Mining Fatigue, Aqua Affinity).
     pub fn get_player_mining_params(&self) -> (u32, u32, u32, bool) {
         let held_slot = self.get_current_held_slot();
-        let efficiency_level = held_slot.as_ref().map(|s| Self::get_slot_enchantment_level(s, 32)).unwrap_or(0);
+        let efficiency_level = held_slot
+            .as_ref()
+            .map(|s| Self::get_slot_enchantment_level(s, 32))
+            .unwrap_or(0);
 
-        let haste_level = self.active_potions.iter()
+        let haste_level = self
+            .active_potions
+            .iter()
             .find(|p| p.id == 3)
             .map(|p| (p.amplifier as u32) + 1)
             .unwrap_or(0);
 
-        let mining_fatigue_level = self.active_potions.iter()
+        let mining_fatigue_level = self
+            .active_potions
+            .iter()
             .find(|p| p.id == 4)
             .map(|p| (p.amplifier as u32) + 1)
             .unwrap_or(0);
 
-        let helmet_slot = self.screen_manager.as_ref()
+        let helmet_slot = self
+            .screen_manager
+            .as_ref()
             .and_then(|sm| sm.in_game.as_ref())
             .and_then(|ig| ig.player_inventory.slots.get(5).cloned().flatten());
-        let has_aqua_affinity = helmet_slot.as_ref().map(|s| Self::get_slot_enchantment_level(s, 6) > 0).unwrap_or(false);
+        let has_aqua_affinity = helmet_slot
+            .as_ref()
+            .map(|s| Self::get_slot_enchantment_level(s, 6) > 0)
+            .unwrap_or(false);
 
-        (efficiency_level, haste_level, mining_fatigue_level, has_aqua_affinity)
+        (
+            efficiency_level,
+            haste_level,
+            mining_fatigue_level,
+            has_aqua_affinity,
+        )
     }
 
     /// Converts a Protocol 47 Slot into displayable HUD item info with name and max durability.
@@ -480,7 +507,13 @@ impl App {
             .and_then(|n| n.get_compound("display"))
             .and_then(|d| d.get_string("Name"));
         let final_name = custom_name.unwrap_or(name);
-        let mut info = HudItemInfo::new(slot.item_id, slot.item_count, slot.item_damage, max_dur, final_name);
+        let mut info = HudItemInfo::new(
+            slot.item_id,
+            slot.item_count,
+            slot.item_damage,
+            max_dur,
+            final_name,
+        );
         info.is_enchanted = slot.is_enchanted();
         info
     }
@@ -584,7 +617,9 @@ impl App {
         if self.player_health <= 0.0 {
             return true;
         }
-        self.screen_manager.as_ref().map_or(true, |sm| sm.is_cursor_needed())
+        self.screen_manager
+            .as_ref()
+            .map_or(true, |sm| sm.is_cursor_needed())
     }
 
     /// Computes camera roll angle from damage hurt shake and death tilt (MCP 1.8.9 EntityRenderer.hurtCameraEffect)
@@ -607,7 +642,7 @@ impl App {
     }
 
     pub fn recalculate_current_target(&mut self) {
-        let pt = (self.last_physics_tick.elapsed().as_secs_f32() / 0.05).clamp(0.0, 1.0);
+        let pt = self.timer.render_partial_ticks;
         let pose = self.camera_controller.compute_camera_pose(
             &self.world,
             &self.player,
@@ -641,7 +676,10 @@ impl App {
     }
 
     pub fn handle_left_click(&mut self) {
-        let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+        let is_in_game = self
+            .screen_manager
+            .as_ref()
+            .map_or(false, |sm| sm.in_game.is_some());
         if !is_in_game {
             return;
         }
@@ -688,7 +726,11 @@ impl App {
                     );
 
                     if let Some(ent) = self.world.entity_tracker.entities.get(&entity_id) {
-                        let pos = glam::Vec3::new(ent.pos.x as f32, (ent.pos.y + 0.8) as f32, ent.pos.z as f32);
+                        let pos = glam::Vec3::new(
+                            ent.pos.x as f32,
+                            (ent.pos.y + 0.8) as f32,
+                            ent.pos.z as f32,
+                        );
                         if let Some(ir) = &mut self.interaction_renderer {
                             if is_crit {
                                 ir.spawn_crit_particles(pos, false, 14);
@@ -726,8 +768,16 @@ impl App {
                     }
                     if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
                         let tex_name = Self::block_texture_name(block.id());
-                        let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
-                        let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                        let region = atlas
+                            .regions
+                            .get(tex_name)
+                            .copied()
+                            .unwrap_or(atlas.fallback_region);
+                        let center = glam::Vec3::new(
+                            pos.0 as f32 + 0.5,
+                            pos.1 as f32 + 0.5,
+                            pos.2 as f32 + 0.5,
+                        );
                         ir.spawn_digging_particles(center, region, 16);
                     }
                     self.breaking_block_pos = None;
@@ -783,8 +833,16 @@ impl App {
                     }
                     if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
                         let tex_name = Self::block_texture_name(block.id());
-                        let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
-                        let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                        let region = atlas
+                            .regions
+                            .get(tex_name)
+                            .copied()
+                            .unwrap_or(atlas.fallback_region);
+                        let center = glam::Vec3::new(
+                            pos.0 as f32 + 0.5,
+                            pos.1 as f32 + 0.5,
+                            pos.2 as f32 + 0.5,
+                        );
                         ir.spawn_digging_particles(center, region, 16);
                     }
                     self.breaking_block_pos = None;
@@ -828,7 +886,10 @@ impl App {
 
     /// Drops the item or item stack from the currently selected hotbar slot (MCP EntityPlayerSP.dropOneItem).
     pub fn execute_drop_item(&mut self, drop_all: bool) {
-        let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+        let is_in_game = self
+            .screen_manager
+            .as_ref()
+            .map_or(false, |sm| sm.in_game.is_some());
         if !is_in_game || self.player_health <= 0.0 || self.player_gamemode == 3 {
             return;
         }
@@ -867,7 +928,10 @@ impl App {
     }
 
     pub fn handle_right_click(&mut self) {
-        let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+        let is_in_game = self
+            .screen_manager
+            .as_ref()
+            .map_or(false, |sm| sm.in_game.is_some());
         if !is_in_game {
             return;
         }
@@ -882,13 +946,18 @@ impl App {
         match self.current_target {
             TargetHit::Entity(eh) => {
                 let entity_id = eh.entity_id;
-                let rel_target = self.world.entity_tracker.entities.get(&entity_id).map(|ent| {
-                    (
-                        (eh.hit_pos.x - ent.pos.x) as f32,
-                        (eh.hit_pos.y - ent.pos.y) as f32,
-                        (eh.hit_pos.z - ent.pos.z) as f32,
-                    )
-                });
+                let rel_target = self
+                    .world
+                    .entity_tracker
+                    .entities
+                    .get(&entity_id)
+                    .map(|ent| {
+                        (
+                            (eh.hit_pos.x - ent.pos.x) as f32,
+                            (eh.hit_pos.y - ent.pos.y) as f32,
+                            (eh.hit_pos.z - ent.pos.z) as f32,
+                        )
+                    });
 
                 if let Some(s) = &self.session {
                     // 1. Send InteractAt with relative click position (MCP isPlayerRightClickingOnEntity)
@@ -920,19 +989,25 @@ impl App {
 
                 // If holding usable item (food, sword blocking, bow), start using it
                 let held_damage = held_slot.as_ref().map_or(0, |s| s.item_damage);
-                let action = ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
+                let action =
+                    ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
                 if action != ItemUseAction::None {
-                    self.item_use_state.start_using_with_damage(self.held_item_id, held_damage);
+                    self.item_use_state
+                        .start_using_with_damage(self.held_item_id, held_damage);
                 }
             }
             TargetHit::Block(bh) => {
-                let block = self.world.get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
+                let block = self
+                    .world
+                    .get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
                 let cursor_x = (bh.cursor_x * 16.0) as u8;
                 let cursor_y = (bh.cursor_y * 16.0) as u8;
                 let cursor_z = (bh.cursor_z * 16.0) as u8;
 
                 // 1. Interactive block activation (Doors, Trapdoors, Fence Gates, Levers, Buttons, Containers)
-                if (!self.player.is_sneaking || self.held_item_id <= 0) && is_interactive_block(block.id()) {
+                if (!self.player.is_sneaking || self.held_item_id <= 0)
+                    && is_interactive_block(block.id())
+                {
                     let mut block_toggled = false;
 
                     // Wooden Doors (64, 193..=197)
@@ -961,7 +1036,12 @@ impl App {
                     else if block.id() == 96 {
                         let toggled_meta = block.meta() ^ 4;
                         let new_state = BlockState::new(block.id(), toggled_meta);
-                        self.world.set_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2, new_state);
+                        self.world.set_block(
+                            bh.block_pos.0,
+                            bh.block_pos.1,
+                            bh.block_pos.2,
+                            new_state,
+                        );
                         let chunk_x = bh.block_pos.0 >> 4;
                         let chunk_z = bh.block_pos.2 >> 4;
                         let sec_idx = ((bh.block_pos.1 >> 4) as usize).min(15);
@@ -974,7 +1054,12 @@ impl App {
                     else if matches!(block.id(), 107 | 183..=187) {
                         let toggled_meta = block.meta() ^ 4;
                         let new_state = BlockState::new(block.id(), toggled_meta);
-                        self.world.set_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2, new_state);
+                        self.world.set_block(
+                            bh.block_pos.0,
+                            bh.block_pos.1,
+                            bh.block_pos.2,
+                            new_state,
+                        );
                         let chunk_x = bh.block_pos.0 >> 4;
                         let chunk_z = bh.block_pos.2 >> 4;
                         let sec_idx = ((bh.block_pos.1 >> 4) as usize).min(15);
@@ -987,7 +1072,12 @@ impl App {
                     else if matches!(block.id(), 69 | 77 | 143) {
                         let toggled_meta = block.meta() ^ 8;
                         let new_state = BlockState::new(block.id(), toggled_meta);
-                        self.world.set_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2, new_state);
+                        self.world.set_block(
+                            bh.block_pos.0,
+                            bh.block_pos.1,
+                            bh.block_pos.2,
+                            new_state,
+                        );
                         let chunk_x = bh.block_pos.0 >> 4;
                         let chunk_z = bh.block_pos.2 >> 4;
                         let sec_idx = ((bh.block_pos.1 >> 4) as usize).min(15);
@@ -1013,13 +1103,18 @@ impl App {
                 }
 
                 // 2. Block placement (blocks 1..255, except non-placeable technical blocks and custom server items)
-                let is_placeable_block = is_placeable_block_item(self.held_item_id as u16) && !is_custom_server_item;
+                let is_placeable_block =
+                    is_placeable_block_item(self.held_item_id as u16) && !is_custom_server_item;
                 if is_placeable_block {
                     let place_pos = if is_replaceable_block(block.id()) {
                         bh.block_pos
                     } else {
                         let (dx, dy, dz) = bh.face.normal();
-                        (bh.block_pos.0 + dx, bh.block_pos.1 + dy, bh.block_pos.2 + dz)
+                        (
+                            bh.block_pos.0 + dx,
+                            bh.block_pos.1 + dy,
+                            bh.block_pos.2 + dz,
+                        )
                     };
 
                     let place_aabb = AABB::new(
@@ -1035,18 +1130,21 @@ impl App {
                     let mut can_predict_locally = true;
                     let has_solid_collision = block_blocks_movement(self.held_item_id as u16);
                     if has_solid_collision {
-                        let (px, py, pz) = (self.player.pos.x, self.player.pos.y, self.player.pos.z);
+                        let (px, py, pz) =
+                            (self.player.pos.x, self.player.pos.y, self.player.pos.z);
                         let h = if self.player.is_sneaking { 1.65 } else { 1.8 };
-                        let player_curr_bb = AABB::new(px - 0.3, py, pz - 0.3, px + 0.3, py + h, pz + 0.3);
+                        let player_curr_bb =
+                            AABB::new(px - 0.3, py, pz - 0.3, px + 0.3, py + h, pz + 0.3);
                         let collides_player = self.player.bounding_box.intersects(&place_aabb)
                             || player_curr_bb.intersects(&place_aabb);
 
-                        let collides_entity = self.world.entity_tracker.entities.values().any(|ent| {
-                            if ent.id == self.player_entity_id || ent.is_armor_stand_marker {
-                                return false;
-                            }
-                            ent.bounding_box().intersects(&place_aabb)
-                        });
+                        let collides_entity =
+                            self.world.entity_tracker.entities.values().any(|ent| {
+                                if ent.id == self.player_entity_id || ent.is_armor_stand_marker {
+                                    return false;
+                                }
+                                ent.bounding_box().intersects(&place_aabb)
+                            });
 
                         if collides_player || collides_entity {
                             // MCP 1.8.9 ItemBlock.canPlaceBlockAt parity: do not predict block locally inside entity,
@@ -1083,7 +1181,8 @@ impl App {
                             place_pos.2,
                             BlockState::new(self.held_item_id as u16, meta),
                         );
-                        self.predicted_blocks.insert(place_pos, self.position_update_ticks);
+                        self.predicted_blocks
+                            .insert(place_pos, self.position_update_ticks);
                         let chunk_x = place_pos.0 >> 4;
                         let chunk_z = place_pos.2 >> 4;
                         let sec_idx = ((place_pos.1 >> 4) as usize).min(15);
@@ -1092,7 +1191,8 @@ impl App {
                         }
 
                         // Immediate client-side inventory prediction for zero-latency HUD responsiveness
-                        let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                        let is_creative =
+                            self.player.capabilities.is_creative || self.player_gamemode == 1;
                         if !is_creative {
                             if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
                                 if item.count <= 1 {
@@ -1136,7 +1236,8 @@ impl App {
                         s.send(OutgoingPlayPacket::Animation);
                     }
 
-                    let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    let is_creative =
+                        self.player.capabilities.is_creative || self.player_gamemode == 1;
                     if !is_creative && !matches!(self.held_item_id, 259 | 290..=294 | 256) {
                         if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
                             if item.count <= 1 {
@@ -1152,7 +1253,8 @@ impl App {
 
                 // 4. Usable items (Bow, Swords blocking, Food, Potions/Milk)
                 let held_damage = held_slot.as_ref().map_or(0, |s| s.item_damage);
-                let action = ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
+                let action =
+                    ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
                 if action != ItemUseAction::None {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
@@ -1165,16 +1267,16 @@ impl App {
                         });
                         // DO NOT send Animation: swinging arm cancels bow drawing & eating in MCP / Spigot!
                     }
-                    self.item_use_state.start_using_with_damage(self.held_item_id, held_damage);
+                    self.item_use_state
+                        .start_using_with_damage(self.held_item_id, held_damage);
                     return;
                 }
 
                 // 5. Throwables / Projectiles / Instant-use items (Snowball, Egg, Ender Pearl, Exp Bottle, Splash Potion, Fishing Rod, Eye of Ender, Boat)
                 let is_splash_potion = self.held_item_id == 373 && (held_damage & 0x4000) != 0;
-                let is_throwable = matches!(
-                    self.held_item_id,
-                    332 | 344 | 368 | 384 | 346 | 381 | 333
-                ) || is_splash_potion;
+                let is_throwable =
+                    matches!(self.held_item_id, 332 | 344 | 368 | 384 | 346 | 381 | 333)
+                        || is_splash_potion;
                 if is_throwable {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
@@ -1188,12 +1290,14 @@ impl App {
                         s.send(OutgoingPlayPacket::Animation);
                     }
 
-                    let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    let is_creative =
+                        self.player.capabilities.is_creative || self.player_gamemode == 1;
                     if self.held_item_id == 368 && is_creative {
                         self.launch_creative_pearl();
                     }
 
-                    if !is_creative && self.held_item_id != 346 { // fishing rod is not consumed on cast
+                    if !is_creative && self.held_item_id != 346 {
+                        // fishing rod is not consumed on cast
                         if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
                             if item.count <= 1 {
                                 self.hotbar_items[self.selected_hotbar_slot] = None;
@@ -1229,7 +1333,8 @@ impl App {
             }
             TargetHit::Miss => {
                 let held_damage = held_slot.as_ref().map_or(0, |s| s.item_damage);
-                let action = ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
+                let action =
+                    ItemUseState::get_action_for_item_with_damage(self.held_item_id, held_damage);
                 if action != ItemUseAction::None {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
@@ -1241,15 +1346,15 @@ impl App {
                             cursor_z: 0,
                         });
                     }
-                    self.item_use_state.start_using_with_damage(self.held_item_id, held_damage);
+                    self.item_use_state
+                        .start_using_with_damage(self.held_item_id, held_damage);
                     return;
                 }
 
                 let is_splash_potion = self.held_item_id == 373 && (held_damage & 0x4000) != 0;
-                let is_throwable = matches!(
-                    self.held_item_id,
-                    332 | 344 | 368 | 384 | 346 | 381 | 333
-                ) || is_splash_potion;
+                let is_throwable =
+                    matches!(self.held_item_id, 332 | 344 | 368 | 384 | 346 | 381 | 333)
+                        || is_splash_potion;
                 if is_throwable {
                     if let Some(s) = &self.session {
                         s.send(OutgoingPlayPacket::PlayerBlockPlacement {
@@ -1263,7 +1368,8 @@ impl App {
                         s.send(OutgoingPlayPacket::Animation);
                     }
 
-                    let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                    let is_creative =
+                        self.player.capabilities.is_creative || self.player_gamemode == 1;
                     if self.held_item_id == 368 && is_creative {
                         self.launch_creative_pearl();
                     }
@@ -1370,7 +1476,9 @@ impl App {
 
         let pick_item = match self.current_target {
             TargetHit::Block(bh) => {
-                let block = self.world.get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
+                let block = self
+                    .world
+                    .get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
                 world::get_block_pick_item(block.id(), block.meta())
             }
             TargetHit::Entity(eh) => {
@@ -1468,7 +1576,9 @@ impl App {
                 if let Some(ig) = &sm.in_game {
                     for slot_idx in 9..36 {
                         if let Some(slot) = &ig.player_inventory.slots[slot_idx] {
-                            if slot.item_id == item_id && (item_damage == 0 || slot.item_damage == item_damage) {
+                            if slot.item_id == item_id
+                                && (item_damage == 0 || slot.item_damage == item_damage)
+                            {
                                 main_inv_found = Some((slot_idx, slot.clone()));
                                 break;
                             }
@@ -1481,8 +1591,10 @@ impl App {
                 let action_num = if let Some(sm) = &mut self.screen_manager {
                     if let Some(ig) = &mut sm.in_game {
                         let num = ig.player_inventory.next_action_number();
-                        ig.player_inventory.handle_hotbar_swap(inv_slot as i16, self.selected_hotbar_slot as u8);
-                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                        ig.player_inventory
+                            .handle_hotbar_swap(inv_slot as i16, self.selected_hotbar_slot as u8);
+                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate()
+                        {
                             let item_info = slot_opt
                                 .as_ref()
                                 .filter(|s| s.item_id > 0 && s.item_count > 0)
@@ -1667,11 +1779,12 @@ impl App {
                             ig.add_chat_message("§aSuccessfully connected to world!".into());
                         }
                     }
-                    self.last_physics_tick = Instant::now();
+                    self.timer.reset();
 
                     // Automatically grab mouse cursor on entering world
                     if let Some(w) = &self.window {
-                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                        let _ = w
+                            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
                             .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
                         w.set_cursor_visible(false);
                         self.mouse_grabbed = true;
@@ -1738,7 +1851,7 @@ impl App {
                             ig.death_ticks = 0;
                         }
                     }
-                    self.last_physics_tick = Instant::now();
+                    self.timer.reset();
                     self.pressed_keys.clear();
                     self.is_left_clicking = false;
                     self.is_right_clicking = false;
@@ -1748,7 +1861,8 @@ impl App {
                     self.current_reported_held_slot = self.selected_hotbar_slot;
                     self.riding_entity_id = None;
                     if let Some(w) = &self.window {
-                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                        let _ = w
+                            .set_cursor_grab(winit::window::CursorGrabMode::Confined)
                             .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
                         w.set_cursor_visible(false);
                         self.mouse_grabbed = true;
@@ -1819,7 +1933,8 @@ impl App {
                     // Teleportation dismounts the player from any vehicle / lobby cage
                     self.riding_entity_id = None;
 
-                    self.player.set_position_and_rotation(new_x, new_y, new_z, new_yaw, new_pitch);
+                    self.player
+                        .set_position_and_rotation(new_x, new_y, new_z, new_yaw, new_pitch);
                     self.player.distance_walked_modified = 0.0;
                     self.player.prev_distance_walked_modified = 0.0;
 
@@ -1858,7 +1973,6 @@ impl App {
                             ig.look = self.player_look;
                         }
                     }
-                    self.last_physics_tick = Instant::now();
 
                     // Reset mining and item usage states on teleport to avoid walking into anticheat setbacks
                     self.is_left_clicking = false;
@@ -1873,7 +1987,11 @@ impl App {
                     // MCP parity: teleport confirmed immediately to server with C06.
                     // Sync last_reported_pos and last_reported_look with the confirmed position
                     // to prevent huge delta on the next physics tick from triggering anticheat setback.
-                    self.last_reported_pos = (self.player.pos.x, self.player.bounding_box.min_y, self.player.pos.z);
+                    self.last_reported_pos = (
+                        self.player.pos.x,
+                        self.player.bounding_box.min_y,
+                        self.player.pos.z,
+                    );
                     self.last_reported_look = (self.player.yaw, self.player.pitch);
                     self.position_update_ticks = 0;
 
@@ -1902,8 +2020,11 @@ impl App {
                     // Ensure mouse is captured on spawn/teleport (MCP setIngameFocus parity)
                     if !self.is_cursor_needed() {
                         if let Some(w) = &self.window {
-                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            let _ = w
+                                .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| {
+                                    w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                });
                             w.set_cursor_visible(false);
                             self.mouse_grabbed = true;
                         }
@@ -1927,7 +2048,9 @@ impl App {
                             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                                 let nx = cd.chunk_x + dx;
                                 let nz = cd.chunk_z + dz;
-                                if self.world.chunks.contains_key(&(nx, nz)) && cm.has_chunk_mesh(nx, nz) {
+                                if self.world.chunks.contains_key(&(nx, nz))
+                                    && cm.has_chunk_mesh(nx, nz)
+                                {
                                     for sec_idx in 0..16 {
                                         if cm.has_mesh(nx, nz, sec_idx) {
                                             cm.mark_section_dirty(nx, sec_idx, nz);
@@ -1952,9 +2075,13 @@ impl App {
                             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
                                 let nx = cd.chunk_x + dx;
                                 let nz = cd.chunk_z + dz;
-                                if self.world.chunks.contains_key(&(nx, nz)) && cm.has_chunk_mesh(nx, nz) {
+                                if self.world.chunks.contains_key(&(nx, nz))
+                                    && cm.has_chunk_mesh(nx, nz)
+                                {
                                     for sec_idx in 0..16 {
-                                        if (cd.bit_mask & (1 << sec_idx)) != 0 && cm.has_mesh(nx, nz, sec_idx) {
+                                        if (cd.bit_mask & (1 << sec_idx)) != 0
+                                            && cm.has_mesh(nx, nz, sec_idx)
+                                        {
                                             cm.mark_section_dirty(nx, sec_idx, nz);
                                         }
                                     }
@@ -1987,7 +2114,9 @@ impl App {
                             break;
                         }
                         let bit_count = meta.bit_mask.count_ones() as usize;
-                        let expected = bit_count * (8192 + 2048 + if bulk.sky_light_sent { 2048 } else { 0 }) + 256;
+                        let expected = bit_count
+                            * (8192 + 2048 + if bulk.sky_light_sent { 2048 } else { 0 })
+                            + 256;
 
                         if let Some(chunk) = self.world.get_chunk_mut(meta.x, meta.z) {
                             match chunk.load_from_raw_payload(
@@ -2039,7 +2168,9 @@ impl App {
                                     && cm.has_chunk_mesh(nx, nz)
                                 {
                                     for sec_idx in 0..16 {
-                                        if (bit_mask & (1 << sec_idx)) != 0 && cm.has_mesh(nx, nz, sec_idx) {
+                                        if (bit_mask & (1 << sec_idx)) != 0
+                                            && cm.has_mesh(nx, nz, sec_idx)
+                                        {
                                             cm.mark_section_dirty(nx, sec_idx, nz);
                                         }
                                     }
@@ -2050,7 +2181,8 @@ impl App {
 
                     // Scan and register block entities (chests, signs, skulls, etc.) for all loaded chunks
                     for &(chunk_x, chunk_z, bit_mask) in &loaded_meta {
-                        self.world.scan_and_register_block_entities(chunk_x, chunk_z, bit_mask);
+                        self.world
+                            .scan_and_register_block_entities(chunk_x, chunk_z, bit_mask);
                     }
 
                     self.profiler.loaded_chunks = self.world.chunk_count();
@@ -2070,7 +2202,8 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::BlockChange(bc) => {
-                    self.predicted_blocks.remove(&(bc.position.x, bc.position.y, bc.position.z));
+                    self.predicted_blocks
+                        .remove(&(bc.position.x, bc.position.y, bc.position.z));
                     self.world.set_block(
                         bc.position.x,
                         bc.position.y,
@@ -2098,7 +2231,10 @@ impl App {
                         }
                         if rel_y == 0 && sec_idx > 0 && cm.has_mesh(chunk_x, chunk_z, sec_idx - 1) {
                             cm.mark_section_dirty(chunk_x, sec_idx - 1, chunk_z);
-                        } else if rel_y == 15 && sec_idx < 15 && cm.has_mesh(chunk_x, chunk_z, sec_idx + 1) {
+                        } else if rel_y == 15
+                            && sec_idx < 15
+                            && cm.has_mesh(chunk_x, chunk_z, sec_idx + 1)
+                        {
                             cm.mark_section_dirty(chunk_x, sec_idx + 1, chunk_z);
                         }
                     }
@@ -2144,7 +2280,8 @@ impl App {
                             cm.mark_section_dirty(mbc.chunk_x, sec_y, mbc.chunk_z);
                         }
                         for (nx, ny, nz) in neighbor_sections {
-                            if self.world.chunks.contains_key(&(nx, nz)) && cm.has_mesh(nx, nz, ny) {
+                            if self.world.chunks.contains_key(&(nx, nz)) && cm.has_mesh(nx, nz, ny)
+                            {
                                 cm.mark_section_dirty(nx, ny, nz);
                             }
                         }
@@ -2204,7 +2341,8 @@ impl App {
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             if sc.action == 1 {
-                                ig.scoreboard.remove_score(&sc.objective_name, &sc.score_holder);
+                                ig.scoreboard
+                                    .remove_score(&sc.objective_name, &sc.score_holder);
                             } else {
                                 ig.scoreboard.set_score(
                                     sc.objective_name,
@@ -2223,7 +2361,8 @@ impl App {
                             } else {
                                 Some(dsb.score_name)
                             };
-                            ig.scoreboard.set_display_slot(dsb.position as usize, slot_name);
+                            ig.scoreboard
+                                .set_display_slot(dsb.position as usize, slot_name);
                         }
                     }
                 }
@@ -2346,7 +2485,10 @@ impl App {
                     );
                 }
                 ClientboundPlayPacket::DestroyEntities(de) => {
-                    if self.riding_entity_id.map_or(false, |rid| de.entity_ids.contains(&rid)) {
+                    if self
+                        .riding_entity_id
+                        .map_or(false, |rid| de.entity_ids.contains(&rid))
+                    {
                         self.riding_entity_id = None;
                     }
                     self.world.entity_tracker.destroy_entities(&de.entity_ids);
@@ -2362,12 +2504,9 @@ impl App {
                     );
                 }
                 ClientboundPlayPacket::EntityLook(l) => {
-                    self.world.entity_tracker.look(
-                        l.entity_id,
-                        l.yaw,
-                        l.pitch,
-                        l.on_ground,
-                    );
+                    self.world
+                        .entity_tracker
+                        .look(l.entity_id, l.yaw, l.pitch, l.on_ground);
                 }
                 ClientboundPlayPacket::EntityLookMove(lm) => {
                     self.world.entity_tracker.look_move(
@@ -2392,10 +2531,14 @@ impl App {
                     );
                 }
                 ClientboundPlayPacket::EntityHeadLook(hl) => {
-                    self.world.entity_tracker.head_look(hl.entity_id, hl.head_yaw);
+                    self.world
+                        .entity_tracker
+                        .head_look(hl.entity_id, hl.head_yaw);
                 }
                 ClientboundPlayPacket::Animation(anim) => {
-                    self.world.entity_tracker.animation(anim.entity_id, anim.animation);
+                    self.world
+                        .entity_tracker
+                        .animation(anim.entity_id, anim.animation);
                 }
                 ClientboundPlayPacket::EntityVelocity(ev) => {
                     if ev.entity_id == self.player_entity_id {
@@ -2442,8 +2585,11 @@ impl App {
                         }
                         if !self.is_cursor_needed() {
                             if let Some(w) = &self.window {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                let _ = w
+                                    .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                    .or_else(|_| {
+                                        w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                    });
                                 w.set_cursor_visible(false);
                                 self.mouse_grabbed = true;
                             }
@@ -2456,7 +2602,9 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::EntityEquipment(eq) => {
-                    self.world.entity_tracker.equipment(eq.entity_id, eq.slot, eq.item);
+                    self.world
+                        .entity_tracker
+                        .equipment(eq.entity_id, eq.slot, eq.item);
                 }
                 ClientboundPlayPacket::EntityMetadata(em) => {
                     if em.entity_id == self.player_entity_id {
@@ -2468,20 +2616,29 @@ impl App {
                             }
                         }
                     }
-                    self.world.entity_tracker.update_metadata(em.entity_id, em.metadata);
+                    self.world
+                        .entity_tracker
+                        .update_metadata(em.entity_id, em.metadata);
                 }
                 ClientboundPlayPacket::AttachEntity(ae) => {
                     if ae.leash == 0 {
                         if ae.entity_id == self.player_entity_id {
-                            self.riding_entity_id = if ae.vehicle_id >= 0 { Some(ae.vehicle_id) } else { None };
+                            self.riding_entity_id = if ae.vehicle_id >= 0 {
+                                Some(ae.vehicle_id)
+                            } else {
+                                None
+                            };
                             if let Some(veh_id) = self.riding_entity_id {
                                 if let Some(ent) = self.world.entity_tracker.entities.get(&veh_id) {
-                                    self.player.pos = glam::DVec3::new(ent.pos.x, ent.pos.y + 0.35, ent.pos.z);
+                                    self.player.pos =
+                                        glam::DVec3::new(ent.pos.x, ent.pos.y + 0.35, ent.pos.z);
                                     self.player.prev_pos = self.player.pos;
                                 }
                             }
                         }
-                        self.world.entity_tracker.attach(ae.entity_id, ae.vehicle_id);
+                        self.world
+                            .entity_tracker
+                            .attach(ae.entity_id, ae.vehicle_id);
                     }
                 }
                 ClientboundPlayPacket::Disconnect(dc) => {
@@ -2518,8 +2675,13 @@ impl App {
                             info!(brand = %brand, "Received server brand");
                         }
                     } else if cp.channel == "MC|TrList" {
-                        if let Ok((_win_id, recipes)) = world::MerchantTradeRecipe::decode_tr_list(&cp.data) {
-                            info!(count = recipes.len(), "Decoded villager trade recipes from MC|TrList");
+                        if let Ok((_win_id, recipes)) =
+                            world::MerchantTradeRecipe::decode_tr_list(&cp.data)
+                        {
+                            info!(
+                                count = recipes.len(),
+                                "Decoded villager trade recipes from MC|TrList"
+                            );
                             if let Some(sm) = &mut self.screen_manager {
                                 if let Some(ig) = &mut sm.in_game {
                                     ig.container_ui_state.villager_trades = recipes;
@@ -2567,7 +2729,9 @@ impl App {
 
                     if self.player_health <= 0.0 {
                         self.death_time = 0;
-                        if !self.player.capabilities.is_flying && !self.player.capabilities.allow_flying {
+                        if !self.player.capabilities.is_flying
+                            && !self.player.capabilities.allow_flying
+                        {
                             if let Some(w) = &self.window {
                                 let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
                                 w.set_cursor_visible(true);
@@ -2595,8 +2759,11 @@ impl App {
                         }
                         if !self.is_cursor_needed() {
                             if let Some(w) = &self.window {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                let _ = w
+                                    .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                    .or_else(|_| {
+                                        w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                    });
                                 w.set_cursor_visible(false);
                                 self.mouse_grabbed = true;
                             }
@@ -2615,7 +2782,9 @@ impl App {
                             self.max_hurt_time = 10;
                             self.player_health = 0.0;
                             self.death_time = 0;
-                            if !self.player.capabilities.is_flying && !self.player.capabilities.allow_flying {
+                            if !self.player.capabilities.is_flying
+                                && !self.player.capabilities.allow_flying
+                            {
                                 if let Some(w) = &self.window {
                                     let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
                                     w.set_cursor_visible(true);
@@ -2656,7 +2825,8 @@ impl App {
                     if ss.window_id == 0 {
                         if let Some(sm) = &mut self.screen_manager {
                             if let Some(ig) = &mut sm.in_game {
-                                ig.player_inventory.set_slot(ss.slot as usize, ss.item.clone());
+                                ig.player_inventory
+                                    .set_slot(ss.slot as usize, ss.item.clone());
                             }
                         }
                         match ss.slot {
@@ -2688,14 +2858,17 @@ impl App {
                                 if c.window_id == ss.window_id as u8 {
                                     c.set_slot(ss.slot as usize, ss.item.clone());
                                     c.sync_player_slots_to(&mut ig.player_inventory);
-                                    for (h_idx, slot) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                    for (h_idx, slot) in
+                                        ig.player_inventory.slots[36..45].iter().enumerate()
+                                    {
                                         let h_info = slot
                                             .as_ref()
                                             .filter(|s| s.item_id > 0 && s.item_count > 0)
                                             .map(Self::get_item_info_from_slot);
                                         self.hotbar_items[h_idx] = h_info.clone();
                                         if h_idx == self.selected_hotbar_slot {
-                                            self.held_item_id = h_info.map(|i| i.item_id).unwrap_or(0);
+                                            self.held_item_id =
+                                                h_info.map(|i| i.item_id).unwrap_or(0);
                                         }
                                     }
                                 }
@@ -2728,7 +2901,8 @@ impl App {
                                     let hotbar_idx = idx - 36;
                                     self.hotbar_items[hotbar_idx] = item_info.clone();
                                     if hotbar_idx == self.selected_hotbar_slot {
-                                        self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                        self.held_item_id =
+                                            item_info.map(|i| i.item_id).unwrap_or(0);
                                     }
                                 }
                                 _ => {}
@@ -2744,14 +2918,17 @@ impl App {
                                         }
                                     }
                                     c.sync_player_slots_to(&mut ig.player_inventory);
-                                    for (h_idx, slot) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                    for (h_idx, slot) in
+                                        ig.player_inventory.slots[36..45].iter().enumerate()
+                                    {
                                         let h_info = slot
                                             .as_ref()
                                             .filter(|s| s.item_id > 0 && s.item_count > 0)
                                             .map(Self::get_item_info_from_slot);
                                         self.hotbar_items[h_idx] = h_info.clone();
                                         if h_idx == self.selected_hotbar_slot {
-                                            self.held_item_id = h_info.map(|i| i.item_id).unwrap_or(0);
+                                            self.held_item_id =
+                                                h_info.map(|i| i.item_id).unwrap_or(0);
                                         }
                                     }
                                 }
@@ -2783,7 +2960,10 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::CloseWindow(cw) => {
-                    info!(window_id = cw.window_id, "Closing container window from server");
+                    info!(
+                        window_id = cw.window_id,
+                        "Closing container window from server"
+                    );
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
                             ig.container_ui_state.villager_trades.clear();
@@ -2795,8 +2975,11 @@ impl App {
                     }
                     if !self.is_cursor_needed() {
                         if let Some(w) = &self.window {
-                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            let _ = w
+                                .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| {
+                                    w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                });
                             w.set_cursor_visible(false);
                             self.mouse_grabbed = true;
                         }
@@ -2823,7 +3006,9 @@ impl App {
                             world::block_entity::BlockEntity::Sign(s) => Some(s.lines.clone()),
                             _ => None,
                         })
-                        .unwrap_or_else(|| [String::new(), String::new(), String::new(), String::new()]);
+                        .unwrap_or_else(|| {
+                            [String::new(), String::new(), String::new(), String::new()]
+                        });
 
                     if let Some(sm) = &mut self.screen_manager {
                         if let Some(ig) = &mut sm.in_game {
@@ -2839,8 +3024,16 @@ impl App {
                 }
                 ClientboundPlayPacket::EntityEffect(ee) => {
                     if ee.entity_id == self.player_entity_id {
-                        let info = Self::get_potion_info(ee.effect_id as u8, ee.amplifier as u8, ee.duration);
-                        if let Some(pos) = self.active_potions.iter().position(|p| p.id == ee.effect_id as u8) {
+                        let info = Self::get_potion_info(
+                            ee.effect_id as u8,
+                            ee.amplifier as u8,
+                            ee.duration,
+                        );
+                        if let Some(pos) = self
+                            .active_potions
+                            .iter()
+                            .position(|p| p.id == ee.effect_id as u8)
+                        {
                             self.active_potions[pos] = info;
                         } else {
                             self.active_potions.push(info);
@@ -2887,18 +3080,26 @@ impl App {
                         }
                         if !self.is_cursor_needed() {
                             if let Some(w) = &self.window {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                    .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                                let _ = w
+                                    .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                    .or_else(|_| {
+                                        w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                    });
                                 w.set_cursor_visible(false);
                                 self.mouse_grabbed = true;
                             }
                         }
                     } else if cgs.state == 4 {
                         // State 4: Win Game / End Poem & Credits (0: show credits, 1: respawn immediately)
-                        info!(value = cgs.value, "Handling ChangeGameState state 4 (Win Game / End Credits)");
+                        info!(
+                            value = cgs.value,
+                            "Handling ChangeGameState state 4 (Win Game / End Credits)"
+                        );
                         if cgs.value == 1.0 {
                             if let Some(s) = &self.session {
-                                s.send(OutgoingPlayPacket::ClientStatus(ClientStatusAction::PerformRespawn));
+                                s.send(OutgoingPlayPacket::ClientStatus(
+                                    ClientStatusAction::PerformRespawn,
+                                ));
                             }
                         } else {
                             if let Some(sm) = &mut self.screen_manager {
@@ -2915,14 +3116,22 @@ impl App {
                     }
                 }
                 ClientboundPlayPacket::Maps(maps_pkt) => {
-                    let map_entry = self.world.maps.entry(maps_pkt.map_id).or_insert_with(|| world::map::MapData::new(maps_pkt.map_id));
+                    let map_entry = self
+                        .world
+                        .maps
+                        .entry(maps_pkt.map_id)
+                        .or_insert_with(|| world::map::MapData::new(maps_pkt.map_id));
                     map_entry.scale = maps_pkt.scale as u8;
-                    map_entry.decorations = maps_pkt.icons.into_iter().map(|icon| world::map::MapDecoration {
-                        icon_type: icon.icon_type,
-                        direction: icon.direction,
-                        x: icon.x,
-                        z: icon.z,
-                    }).collect();
+                    map_entry.decorations = maps_pkt
+                        .icons
+                        .into_iter()
+                        .map(|icon| world::map::MapDecoration {
+                            icon_type: icon.icon_type,
+                            direction: icon.direction,
+                            x: icon.x,
+                            z: icon.z,
+                        })
+                        .collect();
                     if maps_pkt.columns > 0 {
                         map_entry.update_data(
                             maps_pkt.x as usize,
@@ -2944,7 +3153,9 @@ impl App {
                 }
                 ClientboundPlayPacket::BlockAction(ba) => {
                     let pos = (ba.position.x, ba.position.y, ba.position.z);
-                    if let Some(world::BlockEntity::Chest(chest)) = self.world.block_entities.get_mut(&pos) {
+                    if let Some(world::BlockEntity::Chest(chest)) =
+                        self.world.block_entities.get_mut(&pos)
+                    {
                         let was_closed = chest.is_static_closed();
                         if ba.data1 == 1 {
                             chest.num_players_using = ba.data2 as i32;
@@ -2959,12 +3170,16 @@ impl App {
                 }
                 ClientboundPlayPacket::UpdateSign(us) => {
                     let pos = (us.position.x, us.position.y, us.position.z);
-                    if let Some(world::BlockEntity::Sign(sign)) = self.world.block_entities.get_mut(&pos) {
+                    if let Some(world::BlockEntity::Sign(sign)) =
+                        self.world.block_entities.get_mut(&pos)
+                    {
                         sign.lines = us.lines;
                     } else {
                         let mut sign = world::SignBlockEntity::new(false, 0);
                         sign.lines = us.lines;
-                        self.world.block_entities.insert(pos, world::BlockEntity::Sign(sign));
+                        self.world
+                            .block_entities
+                            .insert(pos, world::BlockEntity::Sign(sign));
                     }
                 }
                 ClientboundPlayPacket::UpdateTileEntity(ute) => {
@@ -2973,7 +3188,9 @@ impl App {
                         match ute.action {
                             1 => {
                                 if let Some(NbtTag::String(id_str)) = map.get("EntityId") {
-                                    if let Some(world::BlockEntity::MobSpawner(spawner)) = self.world.block_entities.get_mut(&pos) {
+                                    if let Some(world::BlockEntity::MobSpawner(spawner)) =
+                                        self.world.block_entities.get_mut(&pos)
+                                    {
                                         spawner.mob_type = id_str.clone();
                                     }
                                 }
@@ -2985,7 +3202,9 @@ impl App {
                                         (b.id(), b.meta())
                                     })
                                     .collect();
-                                if let Some(world::BlockEntity::Beacon(beacon)) = self.world.block_entities.get_mut(&pos) {
+                                if let Some(world::BlockEntity::Beacon(beacon)) =
+                                    self.world.block_entities.get_mut(&pos)
+                                {
                                     beacon.is_active = true;
                                     beacon.recalculate_beam(pos.1, |by| {
                                         let idx = (by - (pos.1 + 1)) as usize;
@@ -2994,50 +3213,74 @@ impl App {
                                 }
                             }
                             4 => {
-                                let skull_type = map.get("SkullType").and_then(|t| match t {
-                                    NbtTag::Byte(b) => Some(*b as u8),
-                                    _ => None,
-                                }).unwrap_or(0);
-                                let rot = map.get("Rot").and_then(|t| match t {
-                                    NbtTag::Byte(b) => Some(*b as u8),
-                                    _ => None,
-                                }).unwrap_or(0);
-                                if let Some(world::BlockEntity::Skull(skull)) = self.world.block_entities.get_mut(&pos) {
+                                let skull_type = map
+                                    .get("SkullType")
+                                    .and_then(|t| match t {
+                                        NbtTag::Byte(b) => Some(*b as u8),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
+                                let rot = map
+                                    .get("Rot")
+                                    .and_then(|t| match t {
+                                        NbtTag::Byte(b) => Some(*b as u8),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
+                                if let Some(world::BlockEntity::Skull(skull)) =
+                                    self.world.block_entities.get_mut(&pos)
+                                {
                                     skull.skull_type = skull_type;
                                     skull.rotation = rot;
                                 } else {
                                     let skull = world::SkullBlockEntity::new(skull_type, rot, 1);
-                                    self.world.block_entities.insert(pos, world::BlockEntity::Skull(skull));
+                                    self.world
+                                        .block_entities
+                                        .insert(pos, world::BlockEntity::Skull(skull));
                                 }
                             }
                             6 => {
-                                let base_col = map.get("Base").and_then(|t| match t {
-                                    NbtTag::Int(i) => Some(*i as u8),
-                                    _ => None,
-                                }).unwrap_or(0);
+                                let base_col = map
+                                    .get("Base")
+                                    .and_then(|t| match t {
+                                        NbtTag::Int(i) => Some(*i as u8),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
                                 let mut patterns = Vec::new();
                                 if let Some(NbtTag::List { elements, .. }) = map.get("Patterns") {
                                     for elem in elements {
                                         if let NbtTag::Compound(comp) = elem {
-                                            let pat = comp.get("Pattern").and_then(|p| match p {
-                                                NbtTag::String(s) => Some(s.clone()),
-                                                _ => None,
-                                            }).unwrap_or_default();
-                                            let col = comp.get("Color").and_then(|c| match c {
-                                                NbtTag::Int(i) => Some(*i as u8),
-                                                _ => None,
-                                            }).unwrap_or(0);
+                                            let pat = comp
+                                                .get("Pattern")
+                                                .and_then(|p| match p {
+                                                    NbtTag::String(s) => Some(s.clone()),
+                                                    _ => None,
+                                                })
+                                                .unwrap_or_default();
+                                            let col = comp
+                                                .get("Color")
+                                                .and_then(|c| match c {
+                                                    NbtTag::Int(i) => Some(*i as u8),
+                                                    _ => None,
+                                                })
+                                                .unwrap_or(0);
                                             patterns.push((pat, col));
                                         }
                                     }
                                 }
-                                if let Some(world::BlockEntity::Banner(banner)) = self.world.block_entities.get_mut(&pos) {
+                                if let Some(world::BlockEntity::Banner(banner)) =
+                                    self.world.block_entities.get_mut(&pos)
+                                {
                                     banner.base_color = base_col;
                                     banner.patterns = patterns;
                                 } else {
-                                    let mut banner = world::BannerBlockEntity::new(base_col, false, 0);
+                                    let mut banner =
+                                        world::BannerBlockEntity::new(base_col, false, 0);
                                     banner.patterns = patterns;
-                                    self.world.block_entities.insert(pos, world::BlockEntity::Banner(banner));
+                                    self.world
+                                        .block_entities
+                                        .insert(pos, world::BlockEntity::Banner(banner));
                                 }
                             }
                             _ => {}
@@ -3050,18 +3293,14 @@ impl App {
             }
         }
 
-        // 20 TPS Fixed Physics & Entity Tick
-        // Catch up to 10 ticks per frame without dropping ticks (matching MCP Timer.elapsedTicks clamp)
-        if self.last_physics_tick.elapsed() > Duration::from_millis(1000) {
-            self.last_physics_tick = Instant::now() - Duration::from_millis(50);
-        }
-
-        let mut ticks_run = 0;
-        while self.last_physics_tick.elapsed() >= Duration::from_millis(50) && ticks_run < 10 {
-            self.last_physics_tick += Duration::from_millis(50);
-            ticks_run += 1;
+        // 20 TPS Fixed Physics & Entity Tick (MCP Timer.elapsedTicks parity)
+        for _ in 0..self.timer.elapsed_ticks {
             self.world.entity_tracker.tick();
-            let ppos = glam::Vec3::new(self.player.pos.x as f32, self.player.pos.y as f32, self.player.pos.z as f32);
+            let ppos = glam::Vec3::new(
+                self.player.pos.x as f32,
+                self.player.pos.y as f32,
+                self.player.pos.z as f32,
+            );
             self.world.tick_block_entities(ppos);
 
             let mut finished_closing = Vec::new();
@@ -3092,7 +3331,12 @@ impl App {
                                 let mut hit_ground = false;
                                 let mut hit_pos = entity.pos;
                                 if dist > 1e-4 {
-                                    if let Some(hit) = world::physics::raycast::ray_trace_voxels(&self.world, from, dir, dist) {
+                                    if let Some(hit) = world::physics::raycast::ray_trace_voxels(
+                                        &self.world,
+                                        from,
+                                        dir,
+                                        dist,
+                                    ) {
                                         hit_ground = true;
                                         hit_pos = hit.hit_pos;
                                     }
@@ -3101,12 +3345,19 @@ impl App {
                                     let bx = entity.pos.x.floor() as i32;
                                     let by = entity.pos.y.floor() as i32;
                                     let bz = entity.pos.z.floor() as i32;
-                                    if world::block_blocks_movement(self.world.block_at(bx, by, bz).id()) {
+                                    if world::block_blocks_movement(
+                                        self.world.block_at(bx, by, bz).id(),
+                                    ) {
                                         hit_ground = true;
                                     }
                                 }
                                 if hit_ground {
-                                    physics_updates.push((entity.id, hit_pos, glam::Vec3::ZERO, true));
+                                    physics_updates.push((
+                                        entity.id,
+                                        hit_pos,
+                                        glam::Vec3::ZERO,
+                                        true,
+                                    ));
                                 }
                             }
                         }
@@ -3116,19 +3367,27 @@ impl App {
                                 vel.y -= 0.04;
                                 vel *= 0.98;
 
-                                let next_pos = entity.pos + glam::DVec3::new(
-                                    vel.x as f64,
-                                    vel.y as f64,
-                                    vel.z as f64,
-                                );
+                                let next_pos = entity.pos
+                                    + glam::DVec3::new(vel.x as f64, vel.y as f64, vel.z as f64);
 
                                 let floor_bx = entity.pos.x.floor() as i32;
                                 let floor_by = next_pos.y.floor() as i32;
                                 let floor_bz = entity.pos.z.floor() as i32;
 
-                                if world::block_blocks_movement(self.world.block_at(floor_bx, floor_by, floor_bz).id()) {
-                                    let land_pos = glam::DVec3::new(next_pos.x, (floor_by + 1) as f64, next_pos.z);
-                                    physics_updates.push((entity.id, land_pos, glam::Vec3::ZERO, true));
+                                if world::block_blocks_movement(
+                                    self.world.block_at(floor_bx, floor_by, floor_bz).id(),
+                                ) {
+                                    let land_pos = glam::DVec3::new(
+                                        next_pos.x,
+                                        (floor_by + 1) as f64,
+                                        next_pos.z,
+                                    );
+                                    physics_updates.push((
+                                        entity.id,
+                                        land_pos,
+                                        glam::Vec3::ZERO,
+                                        true,
+                                    ));
                                 } else {
                                     physics_updates.push((entity.id, next_pos, vel, false));
                                 }
@@ -3140,18 +3399,21 @@ impl App {
                                 vel.y -= 0.04;
                                 vel *= 0.98;
 
-                                let next_pos = entity.pos + glam::DVec3::new(
-                                    vel.x as f64,
-                                    vel.y as f64,
-                                    vel.z as f64,
-                                );
+                                let next_pos = entity.pos
+                                    + glam::DVec3::new(vel.x as f64, vel.y as f64, vel.z as f64);
 
                                 let floor_bx = entity.pos.x.floor() as i32;
                                 let floor_by = next_pos.y.floor() as i32;
                                 let floor_bz = entity.pos.z.floor() as i32;
 
-                                if world::block_blocks_movement(self.world.block_at(floor_bx, floor_by, floor_bz).id()) {
-                                    let land_pos = glam::DVec3::new(next_pos.x, (floor_by + 1) as f64, next_pos.z);
+                                if world::block_blocks_movement(
+                                    self.world.block_at(floor_bx, floor_by, floor_bz).id(),
+                                ) {
+                                    let land_pos = glam::DVec3::new(
+                                        next_pos.x,
+                                        (floor_by + 1) as f64,
+                                        next_pos.z,
+                                    );
                                     let final_vel = if object_type == 50 {
                                         glam::Vec3::new(
                                             vel.x * 0.7,
@@ -3162,7 +3424,8 @@ impl App {
                                         glam::Vec3::ZERO
                                     };
                                     let on_ground = object_type == 70 || final_vel.y == 0.0;
-                                    physics_updates.push((entity.id, land_pos, final_vel, on_ground));
+                                    physics_updates
+                                        .push((entity.id, land_pos, final_vel, on_ground));
                                 } else {
                                     physics_updates.push((entity.id, next_pos, vel, false));
                                 }
@@ -3193,7 +3456,9 @@ impl App {
                 let dir = to - from;
                 let dist = dir.length();
                 if dist > 1e-4 {
-                    if let Some(hit) = world::physics::raycast::ray_trace_voxels(&self.world, from, dir, dist) {
+                    if let Some(hit) =
+                        world::physics::raycast::ray_trace_voxels(&self.world, from, dir, dist)
+                    {
                         pearl_tp = Some(hit.hit_pos);
                     }
                 }
@@ -3257,7 +3522,8 @@ impl App {
                         ItemUseAction::Eat | ItemUseAction::Drink
                     ) {
                         // Do NOT send ReleaseUseItem on completion; server finishes drinking/eating automatically!
-                        let is_creative = self.player.capabilities.is_creative || self.player_gamemode == 1;
+                        let is_creative =
+                            self.player.capabilities.is_creative || self.player_gamemode == 1;
                         if !is_creative {
                             if let Some(item) = &mut self.hotbar_items[self.selected_hotbar_slot] {
                                 let was_potion = self.item_use_state.item_id == 373;
@@ -3280,7 +3546,9 @@ impl App {
                         }
                         self.item_use_state.stop();
                     }
-                } else if self.right_click_delay_timer == 0 && self.item_use_state.active_action == ItemUseAction::None {
+                } else if self.right_click_delay_timer == 0
+                    && self.item_use_state.active_action == ItemUseAction::None
+                {
                     self.handle_right_click();
                 }
             }
@@ -3289,12 +3557,16 @@ impl App {
                 ir.tick_particles(0.05);
             }
 
-            let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+            let is_in_game = self
+                .screen_manager
+                .as_ref()
+                .map_or(false, |sm| sm.in_game.is_some());
             let (player_chunk_x, player_chunk_z) = world::World::chunk_coords(
                 self.player.pos.x.floor() as i32,
                 self.player.pos.z.floor() as i32,
             );
-            let player_chunk_loaded = self.session.is_none() || self.world.is_chunk_loaded(player_chunk_x, player_chunk_z);
+            let player_chunk_loaded = self.session.is_none()
+                || self.world.is_chunk_loaded(player_chunk_x, player_chunk_z);
             let can_simulate_physics = self.has_spawned || (self.session.is_none() && is_in_game);
             let prev_sprint = self.player.is_sprinting;
             let prev_sneak = self.player.is_sneaking;
@@ -3304,13 +3576,23 @@ impl App {
                 let mut input = PlayerInput::default();
 
                 if is_in_game && !cursor_needed && self.player_health > 0.0 {
-                    if self.pressed_keys.contains(&KeyCode::KeyW) { input.move_forward += 1.0; }
-                    if self.pressed_keys.contains(&KeyCode::KeyS) { input.move_forward -= 1.0; }
-                    if self.pressed_keys.contains(&KeyCode::KeyA) { input.move_strafe += 1.0; }
-                    if self.pressed_keys.contains(&KeyCode::KeyD) { input.move_strafe -= 1.0; }
+                    if self.pressed_keys.contains(&KeyCode::KeyW) {
+                        input.move_forward += 1.0;
+                    }
+                    if self.pressed_keys.contains(&KeyCode::KeyS) {
+                        input.move_forward -= 1.0;
+                    }
+                    if self.pressed_keys.contains(&KeyCode::KeyA) {
+                        input.move_strafe += 1.0;
+                    }
+                    if self.pressed_keys.contains(&KeyCode::KeyD) {
+                        input.move_strafe -= 1.0;
+                    }
                     input.jump = self.pressed_keys.contains(&KeyCode::Space);
-                    input.sneak = self.pressed_keys.contains(&KeyCode::ShiftLeft) || self.pressed_keys.contains(&KeyCode::ShiftRight);
-                    input.sprint = self.pressed_keys.contains(&KeyCode::ControlLeft) || self.pressed_keys.contains(&KeyCode::ControlRight);
+                    input.sneak = self.pressed_keys.contains(&KeyCode::ShiftLeft)
+                        || self.pressed_keys.contains(&KeyCode::ShiftRight);
+                    input.sprint = self.pressed_keys.contains(&KeyCode::ControlLeft)
+                        || self.pressed_keys.contains(&KeyCode::ControlRight);
 
                     let speed_mult = self.item_use_state.movement_speed_multiplier();
                     input.move_forward *= speed_mult;
@@ -3331,7 +3613,11 @@ impl App {
                         if self.block_hit_delay == 0 {
                             match self.current_target {
                                 TargetHit::Block(ref b) => {
-                                    let block = self.world.get_block(b.block_pos.0, b.block_pos.1, b.block_pos.2);
+                                    let block = self.world.get_block(
+                                        b.block_pos.0,
+                                        b.block_pos.1,
+                                        b.block_pos.2,
+                                    );
                                     if self.can_destroy_block(block.id()) {
                                         self.handle_left_click();
                                     }
@@ -3372,7 +3658,8 @@ impl App {
                                         .id(),
                                 );
 
-                                let (eff_lvl, haste_lvl, fatigue_lvl, aqua_aff) = self.get_player_mining_params();
+                                let (eff_lvl, haste_lvl, fatigue_lvl, aqua_aff) =
+                                    self.get_player_mining_params();
 
                                 let rel_damage = get_player_relative_block_hardness(
                                     block.id(),
@@ -3388,10 +3675,20 @@ impl App {
 
                                 self.breaking_block_damage += rel_damage;
 
-                                if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
+                                if let (Some(ir), Some(atlas)) =
+                                    (&mut self.interaction_renderer, &self.atlas)
+                                {
                                     let tex_name = Self::block_texture_name(block.id());
-                                    let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
-                                    let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                                    let region = atlas
+                                        .regions
+                                        .get(tex_name)
+                                        .copied()
+                                        .unwrap_or(atlas.fallback_region);
+                                    let center = glam::Vec3::new(
+                                        pos.0 as f32 + 0.5,
+                                        pos.1 as f32 + 0.5,
+                                        pos.2 as f32 + 0.5,
+                                    );
                                     ir.spawn_digging_particles(center, region, 2);
                                 }
 
@@ -3412,10 +3709,20 @@ impl App {
                                         cm.mark_section_dirty(chunk_x, sec_idx, chunk_z);
                                     }
 
-                                    if let (Some(ir), Some(atlas)) = (&mut self.interaction_renderer, &self.atlas) {
+                                    if let (Some(ir), Some(atlas)) =
+                                        (&mut self.interaction_renderer, &self.atlas)
+                                    {
                                         let tex_name = Self::block_texture_name(block.id());
-                                        let region = atlas.regions.get(tex_name).copied().unwrap_or(atlas.fallback_region);
-                                        let center = glam::Vec3::new(pos.0 as f32 + 0.5, pos.1 as f32 + 0.5, pos.2 as f32 + 0.5);
+                                        let region = atlas
+                                            .regions
+                                            .get(tex_name)
+                                            .copied()
+                                            .unwrap_or(atlas.fallback_region);
+                                        let center = glam::Vec3::new(
+                                            pos.0 as f32 + 0.5,
+                                            pos.1 as f32 + 0.5,
+                                            pos.2 as f32 + 0.5,
+                                        );
                                         ir.spawn_digging_particles(center, region, 16);
                                     }
 
@@ -3425,7 +3732,11 @@ impl App {
                                     // Continuous mining: automatically begin mining next targeted block if allowed
                                     self.recalculate_current_target();
                                     if let TargetHit::Block(ref b) = self.current_target {
-                                        let next_block = self.world.get_block(b.block_pos.0, b.block_pos.1, b.block_pos.2);
+                                        let next_block = self.world.get_block(
+                                            b.block_pos.0,
+                                            b.block_pos.1,
+                                            b.block_pos.2,
+                                        );
                                         if self.can_destroy_block(next_block.id()) {
                                             self.handle_left_click();
                                         }
@@ -3444,7 +3755,11 @@ impl App {
                             self.breaking_block_damage = 0.0;
 
                             if let TargetHit::Block(ref b) = self.current_target {
-                                let next_block = self.world.get_block(b.block_pos.0, b.block_pos.1, b.block_pos.2);
+                                let next_block = self.world.get_block(
+                                    b.block_pos.0,
+                                    b.block_pos.1,
+                                    b.block_pos.2,
+                                );
                                 if self.can_destroy_block(next_block.id()) {
                                     self.handle_left_click();
                                 }
@@ -3453,7 +3768,11 @@ impl App {
                     } else {
                         match self.current_target {
                             TargetHit::Block(ref b) => {
-                                let block = self.world.get_block(b.block_pos.0, b.block_pos.1, b.block_pos.2);
+                                let block = self.world.get_block(
+                                    b.block_pos.0,
+                                    b.block_pos.1,
+                                    b.block_pos.2,
+                                );
                                 if self.can_destroy_block(block.id()) {
                                     self.handle_left_click();
                                 }
@@ -3474,7 +3793,9 @@ impl App {
                         vehicle_exists = true;
                         let (offset_x, offset_y, offset_z) = match &ent.kind {
                             world::EntityKind::Object { object_type: 1, .. } => (0.0, -0.3, 0.0),
-                            world::EntityKind::Object { object_type: 10, .. } => (0.0, 0.0, 0.0),
+                            world::EntityKind::Object {
+                                object_type: 10, ..
+                            } => (0.0, 0.0, 0.0),
                             _ => (0.0, 0.75, 0.0),
                         };
                         self.player.prev_pos = glam::DVec3::new(
@@ -3508,11 +3829,14 @@ impl App {
 
                 // Underwater breathing logic (MCP 1.8.9 EntityLivingBase.onEntityUpdate)
                 let eye_y = self.player.pos.y + self.player.get_eye_height() as f64;
-                let eye_block = self.world.get_block(
-                    self.player.pos.x.floor() as i32,
-                    eye_y.floor() as i32,
-                    self.player.pos.z.floor() as i32,
-                ).id();
+                let eye_block = self
+                    .world
+                    .get_block(
+                        self.player.pos.x.floor() as i32,
+                        eye_y.floor() as i32,
+                        self.player.pos.z.floor() as i32,
+                    )
+                    .id();
                 let is_head_in_water = eye_block == 8 || eye_block == 9;
                 if is_head_in_water {
                     self.player_air = (self.player_air - 1).max(0);
@@ -3578,7 +3902,8 @@ impl App {
                             let d2 = self.player_pos.2 - self.last_reported_pos.2;
                             let d3 = (self.player_look.0 - self.last_reported_look.0) as f64;
                             let d4 = (self.player_look.1 - self.last_reported_look.1) as f64;
-                            let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4 || self.position_update_ticks >= 20;
+                            let flag2 = d0 * d0 + d1 * d1 + d2 * d2 > 9.0e-4
+                                || self.position_update_ticks >= 20;
                             let flag3 = d3 != 0.0 || d4 != 0.0;
 
                             if flag2 && flag3 {
@@ -3635,14 +3960,6 @@ impl App {
             }
         }
 
-        if self.last_physics_tick.elapsed() >= Duration::from_millis(50) {
-            // Drop excess lagging debt past the 10-tick clamp matching MCP Timer.java (elapsedTicks clamp)
-            // while preserving the sub-tick fractional time for smooth camera interpolation.
-            let excess = self.last_physics_tick.elapsed();
-            let excess_ticks = excess.as_millis() / 50;
-            self.last_physics_tick += Duration::from_millis((excess_ticks * 50) as u64);
-        }
-
         // Update profiler snapshot in HUD
         if let Some(sm) = &mut self.screen_manager {
             if let Some(ig) = &mut sm.in_game {
@@ -3683,7 +4000,8 @@ impl ApplicationHandler for App {
             }
         };
 
-        let gpu = match pollster::block_on(GpuContext::new(window.clone(), self.config.video.vsync)) {
+        let gpu = match pollster::block_on(GpuContext::new(window.clone(), self.config.video.vsync))
+        {
             Ok(g) => g,
             Err(e) => {
                 error!(error = %e, "Failed to initialize wgpu context");
@@ -3706,7 +4024,9 @@ impl ApplicationHandler for App {
             (&self.config.scoreboard).into(),
         );
 
-        let atlas = Arc::new(TextureAtlas::build(Path::new("assets/minecraft/textures/blocks")));
+        let atlas = Arc::new(TextureAtlas::build(Path::new(
+            "assets/minecraft/textures/blocks",
+        )));
         let terrain_renderer = TerrainRenderer::new(
             &gpu.device,
             &gpu.queue,
@@ -3717,7 +4037,10 @@ impl ApplicationHandler for App {
         );
         let chunk_manager = ChunkMeshManager::new();
 
-        let default_steve = self.skin_manager.default_skin_for(&uuid::Uuid::nil()).clone();
+        let default_steve = self
+            .skin_manager
+            .default_skin_for(&uuid::Uuid::nil())
+            .clone();
         let arrow_path = Path::new("assets/minecraft/textures/entity/arrow.png");
         let arrow_img = image::open(arrow_path).ok().map(|img| img.to_rgba8());
         let entity_renderer = EntityRenderer::new(
@@ -3727,10 +4050,8 @@ impl ApplicationHandler for App {
             &default_steve,
             arrow_img.as_ref(),
         );
-        let block_entity_renderer = BlockEntityRenderer::new(
-            &gpu.device,
-            gpu.surface_config.format,
-        );
+        let block_entity_renderer =
+            BlockEntityRenderer::new(&gpu.device, gpu.surface_config.format);
 
         self.camera.aspect = (gpu.size.width as f32) / (gpu.size.height.max(1) as f32);
         self.camera.fov = self.config.video.fov as f32;
@@ -3758,13 +4079,25 @@ impl ApplicationHandler for App {
         info!("Client window initialized successfully");
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _window_id: WindowId, event: WindowEvent) {
-        if self.window.is_none() || self.gpu.is_none() || self.gui.is_none() || self.screen_manager.is_none() {
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        _window_id: WindowId,
+        event: WindowEvent,
+    ) {
+        if self.window.is_none()
+            || self.gpu.is_none()
+            || self.gui.is_none()
+            || self.screen_manager.is_none()
+        {
             return;
         }
 
         // Rebinding keybinds intercept
-        let is_rebinding = self.screen_manager.as_ref().map_or(false, |sm| sm.is_rebinding());
+        let is_rebinding = self
+            .screen_manager
+            .as_ref()
+            .map_or(false, |sm| sm.is_rebinding());
         if is_rebinding {
             match &event {
                 WindowEvent::KeyboardInput {
@@ -3815,13 +4148,19 @@ impl ApplicationHandler for App {
 
         match event {
             WindowEvent::Focused(focused) => {
-                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                let is_in_game = self
+                    .screen_manager
+                    .as_ref()
+                    .map_or(false, |sm| sm.in_game.is_some());
                 let cursor_needed = self.is_cursor_needed();
                 if is_in_game {
                     if focused && !cursor_needed && !self.mouse_grabbed {
                         if let Some(w) = &self.window {
-                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            let _ = w
+                                .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| {
+                                    w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                });
                             w.set_cursor_visible(false);
                             self.mouse_grabbed = true;
                         }
@@ -3857,61 +4196,68 @@ impl ApplicationHandler for App {
                 self.camera.aspect = size.width as f32 / size.height.max(1) as f32;
                 self.window.as_ref().unwrap().request_redraw();
             }
-            WindowEvent::MouseInput {
-                button,
-                state,
-                ..
-            } if (!consumed || (self.mouse_grabbed && !self.is_cursor_needed())) => {
-                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+            WindowEvent::MouseInput { button, state, .. }
+                if (!consumed || (self.mouse_grabbed && !self.is_cursor_needed())) =>
+            {
+                let is_in_game = self
+                    .screen_manager
+                    .as_ref()
+                    .map_or(false, |sm| sm.in_game.is_some());
                 let cursor_needed = self.is_cursor_needed();
 
                 match button {
-                    winit::event::MouseButton::Left => {
-                        match state {
-                            winit::event::ElementState::Pressed => {
-                                if is_in_game && !cursor_needed && !self.mouse_grabbed {
-                                    if let Some(w) = &self.window {
-                                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
-                                        w.set_cursor_visible(false);
-                                        self.mouse_grabbed = true;
-                                    }
-                                } else if is_in_game && self.mouse_grabbed {
-                                    self.is_left_clicking = true;
-                                    self.handle_left_click();
+                    winit::event::MouseButton::Left => match state {
+                        winit::event::ElementState::Pressed => {
+                            if is_in_game && !cursor_needed && !self.mouse_grabbed {
+                                if let Some(w) = &self.window {
+                                    let _ = w
+                                        .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                        .or_else(|_| {
+                                            w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                        });
+                                    w.set_cursor_visible(false);
+                                    self.mouse_grabbed = true;
                                 }
-                            }
-                            winit::event::ElementState::Released => {
-                                self.is_left_clicking = false;
-                                self.handle_left_release();
+                            } else if is_in_game && self.mouse_grabbed {
+                                self.is_left_clicking = true;
+                                self.handle_left_click();
                             }
                         }
-                    }
-                    winit::event::MouseButton::Right => {
-                        match state {
-                            winit::event::ElementState::Pressed => {
-                                if is_in_game && !cursor_needed && !self.mouse_grabbed {
-                                    if let Some(w) = &self.window {
-                                        let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                            .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
-                                        w.set_cursor_visible(false);
-                                        self.mouse_grabbed = true;
-                                    }
-                                } else if is_in_game && self.mouse_grabbed {
-                                    self.is_right_clicking = true;
-                                    if self.right_click_delay_timer == 0 {
-                                        self.handle_right_click();
-                                    }
+                        winit::event::ElementState::Released => {
+                            self.is_left_clicking = false;
+                            self.handle_left_release();
+                        }
+                    },
+                    winit::event::MouseButton::Right => match state {
+                        winit::event::ElementState::Pressed => {
+                            if is_in_game && !cursor_needed && !self.mouse_grabbed {
+                                if let Some(w) = &self.window {
+                                    let _ = w
+                                        .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                        .or_else(|_| {
+                                            w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                        });
+                                    w.set_cursor_visible(false);
+                                    self.mouse_grabbed = true;
+                                }
+                            } else if is_in_game && self.mouse_grabbed {
+                                self.is_right_clicking = true;
+                                if self.right_click_delay_timer == 0 {
+                                    self.handle_right_click();
                                 }
                             }
-                            winit::event::ElementState::Released => {
-                                self.is_right_clicking = false;
-                                self.handle_right_release();
-                            }
                         }
-                    }
+                        winit::event::ElementState::Released => {
+                            self.is_right_clicking = false;
+                            self.handle_right_release();
+                        }
+                    },
                     winit::event::MouseButton::Middle => {
-                        if state == winit::event::ElementState::Pressed && is_in_game && self.mouse_grabbed && !cursor_needed {
+                        if state == winit::event::ElementState::Pressed
+                            && is_in_game
+                            && self.mouse_grabbed
+                            && !cursor_needed
+                        {
                             self.handle_middle_click();
                         }
                     }
@@ -3919,7 +4265,10 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                let is_in_game = self
+                    .screen_manager
+                    .as_ref()
+                    .map_or(false, |sm| sm.in_game.is_some());
                 let is_tab_list_open = self
                     .screen_manager
                     .as_ref()
@@ -4022,7 +4371,9 @@ impl ApplicationHandler for App {
                                             ig.hud_editor_opened = !ig.hud_editor_opened;
                                             if ig.hud_editor_opened {
                                                 if let Some(w) = &self.window {
-                                                    let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                                    let _ = w.set_cursor_grab(
+                                                        winit::window::CursorGrabMode::None,
+                                                    );
                                                     w.set_cursor_visible(true);
                                                     self.mouse_grabbed = false;
                                                 }
@@ -4040,7 +4391,10 @@ impl ApplicationHandler for App {
                     }
                 }
 
-                if !consumed && !self.is_cursor_needed() && key_event.state == winit::event::ElementState::Pressed {
+                if !consumed
+                    && !self.is_cursor_needed()
+                    && key_event.state == winit::event::ElementState::Pressed
+                {
                     if let PhysicalKey::Code(code) = key_event.physical_key {
                         let slot_opt = match code {
                             KeyCode::Digit1 => Some(0),
@@ -4078,7 +4432,8 @@ impl ApplicationHandler for App {
                         &key_event.physical_key,
                     );
                     if matches_perspective {
-                        self.camera_controller.perspective = self.camera_controller.perspective.cycle();
+                        self.camera_controller.perspective =
+                            self.camera_controller.perspective.cycle();
                         info!(perspective = ?self.camera_controller.perspective, "Cycled camera perspective (F5)");
                     }
 
@@ -4088,7 +4443,10 @@ impl ApplicationHandler for App {
                         &key_event.physical_key,
                     );
                     if matches_drop {
-                        let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                        let is_in_game = self
+                            .screen_manager
+                            .as_ref()
+                            .map_or(false, |sm| sm.in_game.is_some());
                         if is_in_game && !self.is_cursor_needed() {
                             let is_ctrl = self.pressed_keys.contains(&KeyCode::ControlLeft)
                                 || self.pressed_keys.contains(&KeyCode::ControlRight);
@@ -4102,8 +4460,12 @@ impl ApplicationHandler for App {
                         &key_event.physical_key,
                     );
                     if matches_cinematic {
-                        self.camera_controller.cinematic_camera = !self.camera_controller.cinematic_camera;
-                        info!(cinematic = self.camera_controller.cinematic_camera, "Toggled cinematic camera (F8)");
+                        self.camera_controller.cinematic_camera =
+                            !self.camera_controller.cinematic_camera;
+                        info!(
+                            cinematic = self.camera_controller.cinematic_camera,
+                            "Toggled cinematic camera (F8)"
+                        );
                     }
                 }
             }
@@ -4118,10 +4480,14 @@ impl ApplicationHandler for App {
 
                 // Profiler updates & continuous dump
                 self.profiler.on_frame();
-                self.profiler.maybe_dump_telemetry("logs/profile_benchmark.json");
+                self.profiler
+                    .maybe_dump_telemetry("logs/profile_benchmark.json");
 
                 self.camera.fov = self.config.video.fov;
-                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                let is_in_game = self
+                    .screen_manager
+                    .as_ref()
+                    .map_or(false, |sm| sm.in_game.is_some());
                 let cursor_needed = self.is_cursor_needed();
                 if is_in_game {
                     if cursor_needed && self.mouse_grabbed {
@@ -4132,24 +4498,23 @@ impl ApplicationHandler for App {
                         }
                     } else if !cursor_needed && !self.mouse_grabbed {
                         if let Some(w) = &self.window {
-                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            let _ = w
+                                .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| {
+                                    w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                });
                             w.set_cursor_visible(false);
                             self.mouse_grabbed = true;
                         }
                     }
                 }
 
-                // Network packet processing
-                let net_start = Instant::now();
-                self.handle_incoming_packets();
-                self.profiler.record_stage(FrameStage::Network, net_start.elapsed());
+                // 1. Advance authentic 20 TPS GameTimer (MCP Timer.updateTimer parity)
+                self.timer.update();
+                let partial_ticks = self.timer.render_partial_ticks;
 
-                // Fixed sub-tick fractional time for smooth rendering interpolation (MCP Timer.renderPartialTicks parity)
-                let dt_secs = self.last_physics_tick.elapsed().as_secs_f32();
-                let partial_ticks = (dt_secs / 0.05).clamp(0.0, 1.0);
-
-                // Apply accumulated raw mouse input once per frame (MCP EntityRenderer.updateCameraAndRender parity)
+                // 2. Apply accumulated raw mouse input once per frame BEFORE physics and packets
+                // (MCP EntityRenderer.updateCameraAndRender parity)
                 let (mdx, mdy) = (self.mouse_delta.0, self.mouse_delta.1);
                 self.mouse_delta = (0.0, 0.0);
                 if (mdx != 0.0 || mdy != 0.0) && self.mouse_grabbed && !self.is_cursor_needed() {
@@ -4170,14 +4535,24 @@ impl ApplicationHandler for App {
                     }
                 }
 
+                // 3. Network packet processing and fixed 20 TPS physics ticks
+                let net_start = Instant::now();
+                self.handle_incoming_packets();
+                self.profiler
+                    .record_stage(FrameStage::Network, net_start.elapsed());
+
                 // Camera and player movement update for current frame (before nametags and GUI pass)
                 if self.has_spawned || is_in_game {
                     // Smooth vehicle camera positioning
                     if let Some(rid) = self.riding_entity_id {
                         if let Some(ent) = self.world.entity_tracker.entities.get(&rid) {
                             let (offset_x, offset_y, offset_z) = match &ent.kind {
-                                world::EntityKind::Object { object_type: 1, .. } => (0.0, -0.3, 0.0),
-                                world::EntityKind::Object { object_type: 10, .. } => (0.0, 0.0, 0.0),
+                                world::EntityKind::Object { object_type: 1, .. } => {
+                                    (0.0, -0.3, 0.0)
+                                }
+                                world::EntityKind::Object {
+                                    object_type: 10, ..
+                                } => (0.0, 0.0, 0.0),
                                 _ => (0.0, 0.75, 0.0),
                             };
                             let v_pos = ent.interpolated_pos(partial_ticks);
@@ -4260,14 +4635,20 @@ impl ApplicationHandler for App {
                         }
                         EntityKind::Mob { mob_type } => {
                             // Holograms and floating server labels are invisible ArmorStands (mob type 30)
-                            if (*mob_type == 30 || entity.custom_name_visible) && entity.custom_name.is_some() {
+                            if (*mob_type == 30 || entity.custom_name_visible)
+                                && entity.custom_name.is_some()
+                            {
                                 entity.custom_name.clone()
                             } else {
                                 None
                             }
                         }
-                        EntityKind::Object { object_type: 78, .. } => {
-                            if (entity.is_invisible || entity.custom_name_visible) && entity.custom_name.is_some() {
+                        EntityKind::Object {
+                            object_type: 78, ..
+                        } => {
+                            if (entity.is_invisible || entity.custom_name_visible)
+                                && entity.custom_name.is_some()
+                            {
                                 entity.custom_name.clone()
                             } else {
                                 None
@@ -4285,16 +4666,33 @@ impl ApplicationHandler for App {
 
                     let pos3d = entity.interpolated_pos(partial_ticks);
                     let height = match &entity.kind {
-                        EntityKind::Player { .. } => if entity.is_sneaking { 1.95 } else { 2.25 },
-                        EntityKind::Mob { mob_type } if *mob_type == 30 => {
-                            if entity.is_invisible { 0.2 } else { 1.9 }
+                        EntityKind::Player { .. } => {
+                            if entity.is_sneaking {
+                                1.95
+                            } else {
+                                2.25
+                            }
                         }
-                        EntityKind::Object { object_type: 78, .. } => {
-                            if entity.is_invisible { 0.2 } else { 1.9 }
+                        EntityKind::Mob { mob_type } if *mob_type == 30 => {
+                            if entity.is_invisible {
+                                0.2
+                            } else {
+                                1.9
+                            }
+                        }
+                        EntityKind::Object {
+                            object_type: 78, ..
+                        } => {
+                            if entity.is_invisible {
+                                0.2
+                            } else {
+                                1.9
+                            }
                         }
                         _ => 1.9,
                     };
-                    let target = glam::Vec3::new(pos3d.x as f32, (pos3d.y + height) as f32, pos3d.z as f32);
+                    let target =
+                        glam::Vec3::new(pos3d.x as f32, (pos3d.y + height) as f32, pos3d.z as f32);
                     let dist = (target - cam_pos).length();
                     if dist > 0.5 && dist < 64.0 {
                         let clip = vp * glam::Vec4::new(target.x, target.y, target.z, 1.0);
@@ -4327,11 +4725,14 @@ impl ApplicationHandler for App {
                         ig.hud_data.food = self.player_food;
                         ig.hud_data.saturation = self.player_saturation;
                         let eye_y = self.player.pos.y + self.player.get_eye_height() as f64;
-                        let eye_block = self.world.get_block(
-                            self.player.pos.x.floor() as i32,
-                            eye_y.floor() as i32,
-                            self.player.pos.z.floor() as i32,
-                        ).id();
+                        let eye_block = self
+                            .world
+                            .get_block(
+                                self.player.pos.x.floor() as i32,
+                                eye_y.floor() as i32,
+                                self.player.pos.z.floor() as i32,
+                            )
+                            .id();
                         let is_head_in_water = eye_block == 8 || eye_block == 9;
                         ig.hud_data.air = self.player_air;
                         ig.hud_data.is_in_water = is_head_in_water;
@@ -4340,15 +4741,25 @@ impl ApplicationHandler for App {
                         ig.hud_data.selected_hotbar_slot = self.selected_hotbar_slot;
                         ig.hud_data.hotbar_items = self.hotbar_items.clone();
                         ig.hud_data.armor_items = self.armor_items.clone();
-                        ig.hud_data.held_item = self.hotbar_items[self.selected_hotbar_slot].clone();
+                        ig.hud_data.held_item =
+                            self.hotbar_items[self.selected_hotbar_slot].clone();
 
                         let mut total_armor = 0u8;
                         for item in &self.armor_items {
                             if let Some(a) = item {
                                 total_armor += match a.item_id {
-                                    310 => 3, 311 => 8, 312 => 6, 313 => 3,
-                                    306 => 2, 307 => 6, 308 => 5, 309 => 2,
-                                    298 => 1, 299 => 3, 300 => 2, 301 => 1,
+                                    310 => 3,
+                                    311 => 8,
+                                    312 => 6,
+                                    313 => 3,
+                                    306 => 2,
+                                    307 => 6,
+                                    308 => 5,
+                                    309 => 2,
+                                    298 => 1,
+                                    299 => 3,
+                                    300 => 2,
+                                    301 => 1,
                                     _ => 0,
                                 };
                             }
@@ -4369,7 +4780,9 @@ impl ApplicationHandler for App {
                         ig.hud_data.boss_bars = self.active_boss_bars.clone();
                         ig.hud_data.ping_ms = self.profiler.calculate_snapshot().rtt_ms as i32;
                         ig.hud_data.gamemode = ig.gamemode;
-                        ig.hud_data.is_creative = self.player.capabilities.is_creative || ig.is_creative || ig.gamemode == 1;
+                        ig.hud_data.is_creative = self.player.capabilities.is_creative
+                            || ig.is_creative
+                            || ig.gamemode == 1;
                     }
                     let is_fullscreen = self
                         .window
@@ -4389,7 +4802,8 @@ impl ApplicationHandler for App {
                     gui.begin_frame(window);
                     sm.render(&gui.context)
                 };
-                self.profiler.record_stage(FrameStage::Gui, gui_start.elapsed());
+                self.profiler
+                    .record_stage(FrameStage::Gui, gui_start.elapsed());
 
                 match gui_output {
                     GuiOutput::Quit => {
@@ -4432,7 +4846,9 @@ impl ApplicationHandler for App {
                     GuiOutput::Respawn => {
                         info!("Respawn requested, sending ClientStatus perform respawn packet");
                         if let Some(s) = &self.session {
-                            s.send(OutgoingPlayPacket::ClientStatus(ClientStatusAction::PerformRespawn));
+                            s.send(OutgoingPlayPacket::ClientStatus(
+                                ClientStatusAction::PerformRespawn,
+                            ));
                         }
                         self.player_health = 20.0;
                         self.player_air = 300;
@@ -4445,8 +4861,11 @@ impl ApplicationHandler for App {
                             }
                         }
                         if let Some(w) = &self.window {
-                            let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                .or_else(|_| w.set_cursor_grab(winit::window::CursorGrabMode::Locked));
+                            let _ = w
+                                .set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                .or_else(|_| {
+                                    w.set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                });
                             w.set_cursor_visible(false);
                             self.mouse_grabbed = true;
                         }
@@ -4542,17 +4961,22 @@ impl ApplicationHandler for App {
                                         if let Some(ref c) = ig.active_container {
                                             c.sync_player_slots_to(&mut ig.player_inventory);
                                         }
-                                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                        for (idx, slot_opt) in
+                                            ig.player_inventory.slots[36..45].iter().enumerate()
+                                        {
                                             let item_info = slot_opt
                                                 .as_ref()
                                                 .filter(|s| s.item_id > 0 && s.item_count > 0)
                                                 .map(Self::get_item_info_from_slot);
                                             self.hotbar_items[idx] = item_info.clone();
                                             if idx == self.selected_hotbar_slot {
-                                                self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                                self.held_item_id =
+                                                    item_info.map(|i| i.item_id).unwrap_or(0);
                                             }
                                         }
-                                        for (idx, slot_opt) in ig.player_inventory.slots[5..9].iter().enumerate() {
+                                        for (idx, slot_opt) in
+                                            ig.player_inventory.slots[5..9].iter().enumerate()
+                                        {
                                             self.armor_items[idx] = slot_opt
                                                 .as_ref()
                                                 .filter(|s| s.item_id > 0 && s.item_count > 0)
@@ -4570,14 +4994,17 @@ impl ApplicationHandler for App {
                                         if let Some(ref c) = ig.active_container {
                                             c.sync_player_slots_to(&mut ig.player_inventory);
                                         }
-                                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                        for (idx, slot_opt) in
+                                            ig.player_inventory.slots[36..45].iter().enumerate()
+                                        {
                                             let item_info = slot_opt
                                                 .as_ref()
                                                 .filter(|s| s.item_id > 0 && s.item_count > 0)
                                                 .map(Self::get_item_info_from_slot);
                                             self.hotbar_items[idx] = item_info.clone();
                                             if idx == self.selected_hotbar_slot {
-                                                self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                                self.held_item_id =
+                                                    item_info.map(|i| i.item_id).unwrap_or(0);
                                             }
                                         }
                                     }
@@ -4601,14 +5028,17 @@ impl ApplicationHandler for App {
                                                 c.slots[s_idx] = item.clone();
                                             }
                                         }
-                                        for (idx, slot_opt) in ig.player_inventory.slots[36..45].iter().enumerate() {
+                                        for (idx, slot_opt) in
+                                            ig.player_inventory.slots[36..45].iter().enumerate()
+                                        {
                                             let item_info = slot_opt
                                                 .as_ref()
                                                 .filter(|s| s.item_id > 0 && s.item_count > 0)
                                                 .map(Self::get_item_info_from_slot);
                                             self.hotbar_items[idx] = item_info.clone();
                                             if idx == self.selected_hotbar_slot {
-                                                self.held_item_id = item_info.map(|i| i.item_id).unwrap_or(0);
+                                                self.held_item_id =
+                                                    item_info.map(|i| i.item_id).unwrap_or(0);
                                             }
                                         }
                                     }
@@ -4641,8 +5071,6 @@ impl ApplicationHandler for App {
                     GuiOutput::None => {}
                 }
 
-
-
                 // Acquire next swapchain surface texture
                 let render_start = Instant::now();
                 let window = self.window.as_ref().unwrap();
@@ -4668,17 +5096,24 @@ impl ApplicationHandler for App {
                     }
                 };
 
-                let mut encoder = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("frame-encoder"),
-                });
+                let mut encoder =
+                    gpu.device
+                        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("frame-encoder"),
+                        });
 
                 let view = output
                     .texture
                     .create_view(&wgpu::TextureViewDescriptor::default());
 
-                let is_in_game = self.screen_manager.as_ref().map_or(false, |sm| sm.in_game.is_some());
+                let is_in_game = self
+                    .screen_manager
+                    .as_ref()
+                    .map_or(false, |sm| sm.in_game.is_some());
                 if is_in_game {
-                    if let (Some(cm), Some(tr)) = (&mut self.chunk_manager, &mut self.terrain_renderer) {
+                    if let (Some(cm), Some(tr)) =
+                        (&mut self.chunk_manager, &mut self.terrain_renderer)
+                    {
                         let out_w = output.texture.width();
                         let out_h = output.texture.height();
                         if tr.depth_texture.width() != out_w || tr.depth_texture.height() != out_h {
@@ -4696,12 +5131,19 @@ impl ApplicationHandler for App {
                         }
 
                         cm.upload_pending(&gpu.device, 6);
-                        let dt_ms = (self.last_frame_time.elapsed().as_millis() as u64).clamp(1, 100);
+                        let dt_ms =
+                            (self.last_frame_time.elapsed().as_millis() as u64).clamp(1, 100);
                         tr.update_animations(&gpu.queue, dt_ms);
 
                         let render_dist_blocks = (self.config.video.render_distance as f32) * 16.0;
                         let time_secs = (self.world.time as f32) / 20.0;
-                        tr.update_uniforms(&gpu.queue, &self.camera, render_dist_blocks, time_secs, self.config.video.antialiasing);
+                        tr.update_uniforms(
+                            &gpu.queue,
+                            &self.camera,
+                            render_dist_blocks,
+                            time_secs,
+                            self.config.video.antialiasing,
+                        );
 
                         let frustum = Frustum::from_view_proj(self.camera.view_proj_matrix());
                         let (visible_opaque, visible_translucent) =
@@ -4725,8 +5167,17 @@ impl ApplicationHandler for App {
 
                             match self.current_target {
                                 TargetHit::Block(bh) => {
-                                    let state = self.world.get_block(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2);
-                                    let aabb = get_block_selection_box(bh.block_pos.0, bh.block_pos.1, bh.block_pos.2, state);
+                                    let state = self.world.get_block(
+                                        bh.block_pos.0,
+                                        bh.block_pos.1,
+                                        bh.block_pos.2,
+                                    );
+                                    let aabb = get_block_selection_box(
+                                        bh.block_pos.0,
+                                        bh.block_pos.1,
+                                        bh.block_pos.2,
+                                        state,
+                                    );
                                     ir.update_selection_box(&gpu.device, &aabb);
                                 }
                                 _ => {
@@ -4739,7 +5190,9 @@ impl ApplicationHandler for App {
                                 if let Some(atlas) = &self.atlas {
                                     ir.update_block_cracks(&gpu.device, pos, stage, atlas);
                                 }
-                            } else if let Some((&pos, &stage)) = self.server_break_progress.iter().next() {
+                            } else if let Some((&pos, &stage)) =
+                                self.server_break_progress.iter().next()
+                            {
                                 if let Some(atlas) = &self.atlas {
                                     ir.update_block_cracks(&gpu.device, pos, stage as usize, atlas);
                                 }
@@ -4786,8 +5239,12 @@ impl ApplicationHandler for App {
                         if let Some(er) = &mut self.entity_renderer {
                             er.update_uniforms(&gpu.queue, &self.camera, render_dist_blocks);
 
-                            let local_player_entity = if self.camera_controller.perspective != CameraPerspective::FirstPerson {
-                                let uuid = self.screen_manager.as_ref()
+                            let local_player_entity = if self.camera_controller.perspective
+                                != CameraPerspective::FirstPerson
+                            {
+                                let uuid = self
+                                    .screen_manager
+                                    .as_ref()
                                     .and_then(|sm| sm.in_game.as_ref())
                                     .and_then(|ig| ig.tab_list.entries.keys().next().copied())
                                     .unwrap_or_else(|| Uuid::nil());
@@ -4819,7 +5276,8 @@ impl ApplicationHandler for App {
                                         nbt: None,
                                     })
                                 };
-                                lp.equipment[0] = to_slot(&self.hotbar_items[self.selected_hotbar_slot as usize]);
+                                lp.equipment[0] =
+                                    to_slot(&self.hotbar_items[self.selected_hotbar_slot as usize]);
                                 lp.equipment[1] = to_slot(&self.armor_items[3]); // boots
                                 lp.equipment[2] = to_slot(&self.armor_items[2]); // leggings
                                 lp.equipment[3] = to_slot(&self.armor_items[1]); // chestplate
@@ -4895,7 +5353,8 @@ impl ApplicationHandler for App {
 
                 gpu.queue.submit(Some(encoder.finish()));
                 output.present();
-                self.profiler.record_stage(FrameStage::Render, render_start.elapsed());
+                self.profiler
+                    .record_stage(FrameStage::Render, render_start.elapsed());
 
                 // Precision frame rate limiter (hybrid sleep + spin-wait)
                 let max_fps = self.config.video.max_fps;
@@ -4904,8 +5363,8 @@ impl ApplicationHandler for App {
                     let frame_elapsed = frame_start.elapsed();
                     if frame_elapsed < target_frame_time {
                         let remaining = target_frame_time - frame_elapsed;
-                        if remaining > Duration::from_millis(2) {
-                            std::thread::sleep(remaining - Duration::from_millis(1));
+                        if remaining > Duration::from_millis(4) {
+                            std::thread::sleep(remaining - Duration::from_millis(2));
                         }
                         while frame_start.elapsed() < target_frame_time {
                             std::hint::spin_loop();
@@ -4960,7 +5419,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_destroy_block_rules() {
-        let mut app = App::new(crate::config::ClientConfig::default(), std::path::PathBuf::from("config.toml"));
+        let mut app = App::new(
+            crate::config::ClientConfig::default(),
+            std::path::PathBuf::from("config.toml"),
+        );
 
         // Air (0) and Bedrock (7) are never breakable
         assert!(!app.can_destroy_block(0));
@@ -5029,8 +5491,17 @@ mod tests {
         app.selected_hotbar_slot = 0;
 
         // Can destroy stone (id 1) and cobblestone (id 4), but NOT dirt (id 3)
-        assert!(app.can_destroy_block(1), "Adventure mode should allow destroying stone with CanDestroy tag");
-        assert!(app.can_destroy_block(4), "Adventure mode should allow destroying cobblestone with CanDestroy tag");
-        assert!(!app.can_destroy_block(3), "Adventure mode must forbid destroying dirt without CanDestroy tag");
+        assert!(
+            app.can_destroy_block(1),
+            "Adventure mode should allow destroying stone with CanDestroy tag"
+        );
+        assert!(
+            app.can_destroy_block(4),
+            "Adventure mode should allow destroying cobblestone with CanDestroy tag"
+        );
+        assert!(
+            !app.can_destroy_block(3),
+            "Adventure mode must forbid destroying dirt without CanDestroy tag"
+        );
     }
 }
